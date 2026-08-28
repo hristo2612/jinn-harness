@@ -1,6 +1,7 @@
-# The cron seam's provider guest: holds the schedule, listens on
-# `jinn:cron/tick`, emits typed fire events, provides `jinn:cron`, and keeps
-# run history + state through its granted `jinn:fs`. Compiles for
+# The cron seam's provider guest: holds the schedule, holds one
+# `jinn:clock` periodic alarm (`tick-ms`) and plans at `activate` plus every
+# wake, emits typed fire events, provides `jinn:cron`, and keeps run history
+# + state through its granted `jinn:fs`. Compiles for
 # wasm32-unknown-unknown ONLY and is deliberately NOT a workspace member
 # (see the workspace manifest's note); `cron-kit` builds and encodes it.
 [package]

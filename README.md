@@ -13,11 +13,13 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
-Phase 1.3 — the first real capability: cron as a seam triple
+Phase 1.5 — kernel pin `01133c45` (M2-K2): cron on `jinn:clock` alarms, the
+timer stand-in retired; the phase-1.4 soak continues across the bump
+(`SOAK.md`). The capability itself is cron as a seam triple
 (`plugins/cron/`), proven by real-composition tests that boot the pinned
 `jinnd` daemon (`tests/composition`). Kernel frictions found on the way are
 logged in `FINDINGS.md` (the two-way iteration channel — kernel changes are
-never made here). Next: phase 1.4, a week of real duty on a live schedule.
+never made here).
 
 ## Layout
 
@@ -27,7 +29,7 @@ never made here). Next: phase 1.4, a week of real duty on a live schedule.
 | `KERNEL-PIN.md` | The kernel pin: jinnd commit + contract hashes + bump procedure |
 | `kernel-pin/` | Vendored copy of the pinned contract surface (`wit/`, `contracts/`) — integrity-gated against `KERNEL-PIN.md` by `harness-pin` |
 | `tools/harness-pin` | The pin gate: computes/verifies contract hashes (`cargo test -p harness-pin`) |
-| `tools/cron-kit` | Builds the cron seam's components + pinned profile; runs the duty-loop tick driver |
+| `tools/cron-kit` | Builds the cron seam's components + pinned profile |
 | `plugins/` | First-party plugin crates (wasm components) — land per phase, one seam triple at a time |
 | `profiles/` | Named plugin trees — a product is a profile |
 | `tests/composition` | Real-composition gates: boot generated profiles through the REAL pinned jinnd daemon |

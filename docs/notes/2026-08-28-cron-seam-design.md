@@ -2,6 +2,12 @@
 
 ## Why time enters as config edits
 
+> **Superseded 2026-08-28** by the `01133c45` pin bump (jinnd M2-K2): time
+> now enters through the kernel's `jinn:clock` capability, and the config-edit
+> tick with its stand-in plugin and driver is retired. See
+> `docs/notes/2026-08-28-clock-migration.md`. The section below stands as
+> history — it is what the seam was built against.
+
 The pinned kernel has no clock/timer capability and guests are purely
 reactive (FINDINGS.md #1). The only recurring external input the daemon
 serves is a profile edit through its file watcher. So the tick IS a config

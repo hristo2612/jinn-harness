@@ -1,8 +1,9 @@
 //! A real scheduled job: on each fire, probe the data root (write, read
 //! back, compare) and write a cumulative health report. The observable
 //! surface a guest can actually probe is exactly its granted `jinn:fs`
-//! scope — no process, no clock, no directory listing (FINDINGS.md #3, #5);
-//! the report is honest about being that.
+//! scope — no process, no directory listing (FINDINGS.md #3, #5), and no
+//! clock of its own (time is the scheduler's business); the report is
+//! honest about being that.
 //!
 //! The cron-plane peek (`jinn:cron` resolve + `jobs` call) happens in
 //! `activate` and ONLY there: calling back into the scheduler while

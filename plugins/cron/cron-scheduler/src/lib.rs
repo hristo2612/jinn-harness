@@ -1,17 +1,23 @@
 //! The `jinn:cron` provider. All scheduling decisions are `jinn-cron`'s
 //! pure firing law; this guest only wires them to the kernel surfaces:
-//! ticks arrive as events, fires leave as events, state and history persist
-//! through the granted `jinn:fs`. Every CONTRACT crossing is a ledger
-//! event; event-bus emits are not yet traced (FINDINGS.md #2), so each
-//! fire's ledger identity is its per-fire run-record write, whose label
-//! names the job and boundary (contract §Run history).
+//! time arrives through the granted `jinn:clock` (a `now` read at
+//! activation, then the wakes of one periodic alarm), fires leave as
+//! events, state and history persist through the granted `jinn:fs`. Every
+//! contract crossing, every wake, and every fire emit (`DispatchTrace`) is
+//! a ledger event; the per-fire run-record write, whose label names the
+//! job and boundary, is the fire's outcome document (contract §Run
+//! history).
+//!
+//! Alarms do not survive a kernel restart (the clock contract's honest
+//! bound): the activate-time plan is this guest's re-entry — a catch-up
+//! lands at once, never one period later (FINDINGS.md #13).
 
 use std::sync::Mutex;
 
 use jinn_cron::{
     bounded_history, parse_config, plan_tick, read_error_is_absence, run_record_path, FirePayload,
-    JobSpec, RunOutcome, RunRecord, SchedulerState, TickPayload, CRON_CONTRACT, HISTORY_CAP,
-    HISTORY_PATH, QUARANTINE_DIR, STATE_PATH, TICK_TOPIC,
+    JobSpec, ParsedConfig, RunOutcome, RunRecord, SchedulerState, TickPayload, CRON_CONTRACT,
+    HISTORY_CAP, HISTORY_PATH, QUARANTINE_DIR, STATE_PATH, WAKE_TOPIC,
 };
 
 wit_bindgen::generate!({
@@ -21,14 +27,18 @@ wit_bindgen::generate!({
 
 use exports::jinn::plugin::lifecycle::{Guest, GuestFault};
 use jinn::plugin::types::{DispatchMode, Selector};
-use jinn::plugin::{effects, events, fs, services};
+use jinn::plugin::{clock, effects, events, fs, services};
 
 const EFFECT_TOKEN: u64 = 1;
-const LISTEN_TOKEN: u64 = 2;
+/// The token the alarm is requested under; a wake carrying any other
+/// token is not ours.
+const ALARM_TOKEN: u64 = 2;
 
 static JOBS: Mutex<Vec<JobSpec>> = Mutex::new(Vec::new());
 static STATE: Mutex<Option<SchedulerState>> = Mutex::new(None);
 static HISTORY: Mutex<Vec<RunRecord>> = Mutex::new(Vec::new());
+/// Wake editions since activation (`tick-seq`); the activate plan is 0.
+static WAKES: Mutex<u64> = Mutex::new(0);
 
 fn fault(context: &str, error: jinn::plugin::types::KernelError) -> GuestFault {
     GuestFault::Failed(format!("{context}: {error:?}"))
@@ -141,12 +151,44 @@ fn persist_history(records: Vec<RunRecord>) -> Result<(), GuestFault> {
     fs::write(HISTORY_PATH, &bytes).map_err(|error| fault("history write", error))
 }
 
+/// One consultation of the firing law at `tick`: persist state, emit the
+/// due fires, settle their records. Returns the fire count.
+fn run_tick(tick: &TickPayload) -> Result<u64, GuestFault> {
+    let plan = plan_tick(&JOBS.lock().unwrap(), &state(), tick);
+    // State BEFORE history and fires: a torn tick loses a record, never
+    // doubles a fire (contract §Run history).
+    *STATE.lock().unwrap() = Some(plan.state.clone());
+    persist_state(&plan.state)?;
+    let mut records = plan.records;
+    let fired = plan.fires.len() as u64;
+    for fire in &plan.fires {
+        let record = emit_fire(fire);
+        // The per-fire record write: one identifiable granted-write effect
+        // per fire — its ledger label names the job and the boundary; the
+        // kernel's DispatchTrace on the emit is the audit line, this is
+        // the outcome document (contract §Run history).
+        let path = run_record_path(&fire.job, fire.scheduled_ms);
+        let bytes = serde_json::to_vec_pretty(&record).expect("run record encodes");
+        fs::write(&path, &bytes).map_err(|error| fault("run-record write", error))?;
+        records.push(record);
+    }
+    if !records.is_empty() {
+        persist_history(records)?;
+    }
+    Ok(fired)
+}
+
 struct Scheduler;
 
 impl Guest for Scheduler {
     fn activate(config: Vec<u8>) -> Result<(), GuestFault> {
-        let (jobs, faults) = parse_config(&config).map_err(GuestFault::Failed)?;
+        let ParsedConfig {
+            jobs,
+            faults,
+            tick_ms,
+        } = parse_config(&config).map_err(GuestFault::Failed)?;
         *JOBS.lock().unwrap() = jobs;
+        *WAKES.lock().unwrap() = 0;
         // Config faults and persistence faults are run records (contract:
         // never silent).
         let mut fault_records: Vec<RunRecord> = faults
@@ -186,10 +228,20 @@ impl Guest for Scheduler {
         effects::register("cron-scheduler on duty", EFFECT_TOKEN)
             .map_err(|error| fault("effect", error))?;
         services::provide(CRON_CONTRACT).map_err(|error| fault("provide", error))?;
-        events::listen(TICK_TOPIC, LISTEN_TOKEN).map_err(|error| fault("listen", error))?;
         if !fault_records.is_empty() {
             persist_history(fault_records)?;
         }
+        // Time enters: one plan at the clock's `now` (edition 0) — the
+        // restart re-entry, since a periodic alarm's first wake is one
+        // full period out and alarms drop on restart — then the alarm
+        // itself, an effect the kernel cancels with this fiber (R5).
+        let now_ms = clock::now().map_err(|error| fault("clock now", error))?;
+        run_tick(&TickPayload {
+            seq: 0,
+            now_ms,
+            extra: jinn_cron::Extensions::new(),
+        })?;
+        clock::alarm_every(tick_ms, ALARM_TOKEN).map_err(|error| fault("alarm", error))?;
         Ok(())
     }
 
@@ -201,30 +253,27 @@ impl Guest for Scheduler {
         Ok(())
     }
 
-    fn handle_event(_token: u64, _topic: String, payload: Vec<u8>) -> Result<Vec<u8>, GuestFault> {
-        let tick: TickPayload = serde_json::from_slice(&payload)
-            .map_err(|error| GuestFault::Failed(format!("malformed tick: {error}")))?;
-        let plan = plan_tick(&JOBS.lock().unwrap(), &state(), &tick);
-        // State BEFORE history and fires: a torn tick loses a record,
-        // never doubles a fire (contract §Run history).
-        *STATE.lock().unwrap() = Some(plan.state.clone());
-        persist_state(&plan.state)?;
-        let mut records = plan.records;
-        let fired = plan.fires.len() as u64;
-        for fire in &plan.fires {
-            let record = emit_fire(fire);
-            // The per-fire record write: one identifiable granted-write
-            // effect per fire — its ledger label names the job and the
-            // boundary, making the fire ledger-traceable today (contract
-            // §Run history; the kernel bus tap is queued work).
-            let path = run_record_path(&fire.job, fire.scheduled_ms);
-            let bytes = serde_json::to_vec_pretty(&record).expect("run record encodes");
-            fs::write(&path, &bytes).map_err(|error| fault("run-record write", error))?;
-            records.push(record);
-        }
-        if !records.is_empty() {
-            persist_history(records)?;
-        }
+    fn handle_event(token: u64, topic: String, payload: Vec<u8>) -> Result<Vec<u8>, GuestFault> {
+        // Only the kernel's typed wake of OUR alarm is time; anything else
+        // on this entry point is a contract violation, refused loudly.
+        let instant: Option<[u8; 8]> = payload.as_slice().try_into().ok();
+        let (Some(instant), true, true) = (instant, topic == WAKE_TOPIC, token == ALARM_TOKEN)
+        else {
+            return Err(GuestFault::Failed(format!(
+                "unexpected event {topic:?} (token {token}, {} bytes)",
+                payload.len()
+            )));
+        };
+        let seq = {
+            let mut wakes = WAKES.lock().unwrap();
+            *wakes += 1;
+            *wakes
+        };
+        let fired = run_tick(&TickPayload {
+            seq,
+            now_ms: u64::from_le_bytes(instant),
+            extra: jinn_cron::Extensions::new(),
+        })?;
         Ok(serde_json::to_vec(&serde_json::json!({ "fires": fired })).expect("summary encodes"))
     }
 

@@ -13,8 +13,16 @@ pub use schedule::{plan_tick, TickPlan};
 
 /// The contract the scheduler provides.
 pub const CRON_CONTRACT: &str = "jinn:cron";
-/// The topic time enters on.
-pub const TICK_TOPIC: &str = "jinn:cron/tick";
+/// The kernel's clock capability (kernel-pin/contracts/jinn-clock): time
+/// enters the seam through it — a `now` read at activation and the wakes
+/// of one periodic alarm.
+pub const CLOCK_CONTRACT: &str = "jinn:clock";
+/// The topic the kernel delivers alarm wakes on (`handle-event`), payload
+/// = 8-byte little-endian unix milliseconds.
+pub const WAKE_TOPIC: &str = "jinn:clock/alarm";
+/// The scheduler's default alarm period (settings `tick-ms`): how often
+/// the firing law is consulted, hence how late a fire may land.
+pub const DEFAULT_TICK_MS: u64 = 60_000;
 /// Introspection operation: the live job table.
 pub const OP_JOBS: &str = "jobs";
 /// Introspection operation: the bounded run history.
@@ -75,21 +83,26 @@ pub struct JobConfig {
 pub struct CronConfig {
     #[serde(default)]
     pub jobs: Vec<JobConfig>,
+    /// The periodic alarm's period (additive, 0.1.0); absent =
+    /// [`DEFAULT_TICK_MS`]. Must be no finer than the granted `jinn:clock`
+    /// floor — the kernel refuses a finer period and activation fails loudly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tick_ms: Option<u64>,
     #[serde(flatten)]
     pub extra: Extensions,
 }
 
-/// One tick on [`TICK_TOPIC`]: the seam's only time source. The source is
-/// TRUSTED: `seq` is an edition marker for operators, not a guard — the
+/// One consultation of the firing law: the kernel clock's instant plus an
+/// edition. `seq` is an edition marker for operators, not a guard — the
 /// firing law's boundary accounting is the only replay/rewind protection
 /// (contract §Time).
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct TickPayload {
-    /// The tick source's monotonic edition; `0` is the boot seed and is
-    /// never dispatched.
+    /// The per-activation edition: `0` is the activate-time plan (the
+    /// clock's `now` read), then one per alarm wake.
     pub seq: u64,
-    /// Wall-clock milliseconds since the Unix epoch.
+    /// Milliseconds since the Unix epoch, as the kernel clock read it.
     pub now_ms: u64,
     #[serde(flatten)]
     pub extra: Extensions,
@@ -103,7 +116,7 @@ pub struct FirePayload {
     pub job: String,
     /// The boundary that fired.
     pub scheduled_ms: u64,
-    /// The tick clock when it fired.
+    /// The kernel clock when it fired.
     pub now_ms: u64,
     /// Boundaries skipped (recorded, never fired) before this one.
     pub missed_before: u64,
@@ -191,18 +204,30 @@ pub struct SchedulerState {
     pub extra: Extensions,
 }
 
+/// What [`parse_config`] makes of a settings subtree.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ParsedConfig {
+    /// Schedulable jobs, in config order.
+    pub jobs: Vec<JobSpec>,
+    /// One fault per excluded entry (contract: recorded, never silent).
+    pub faults: Vec<String>,
+    /// The alarm period to request (`tick-ms`, defaulted).
+    pub tick_ms: u64,
+}
+
 /// Parses the scheduler's settings subtree: schedulable jobs in config
 /// order, plus one fault string per excluded entry (missing/unrecognized
-/// schedule, zero period, empty topic, empty or duplicate id). A malformed
-/// document is an `Err` — that is an activation failure, not a config
-/// fault.
+/// schedule, zero period, empty topic, empty or duplicate id), plus the
+/// alarm period. A malformed document is an `Err` — that is an activation
+/// failure, not a config fault.
 ///
 /// # Errors
 ///
 /// The document is not valid JSON for [`CronConfig`].
-pub fn parse_config(bytes: &[u8]) -> Result<(Vec<JobSpec>, Vec<String>), String> {
+pub fn parse_config(bytes: &[u8]) -> Result<ParsedConfig, String> {
     let config: CronConfig =
         serde_json::from_slice(bytes).map_err(|error| format!("malformed cron config: {error}"))?;
+    let tick_ms = config.tick_ms.unwrap_or(DEFAULT_TICK_MS);
     let mut jobs: Vec<JobSpec> = Vec::new();
     let mut faults = Vec::new();
     for job in config.jobs {
@@ -241,12 +266,16 @@ pub fn parse_config(bytes: &[u8]) -> Result<(Vec<JobSpec>, Vec<String>), String>
             });
         }
     }
-    Ok((jobs, faults))
+    Ok(ParsedConfig {
+        jobs,
+        faults,
+        tick_ms,
+    })
 }
 
 /// The per-fire run-record path: one identifiable granted-write per fire,
-/// labeled by job and boundary — the fire's ledger identification lane
-/// (contract §Run history) until the kernel's bus tap lands.
+/// labeled by job and boundary — the fire's outcome document beside the
+/// kernel's `DispatchTrace` audit line (contract §Run history).
 #[must_use]
 pub fn run_record_path(job: &str, scheduled_ms: u64) -> String {
     format!("cron/runs/{job}/{scheduled_ms}.json")
@@ -295,7 +324,7 @@ mod tests {
             { "id": "a", "every-ms": 60000, "topic": "cron:a" },
             { "id": "b", "every-ms": 1000, "topic": "cron:b", "payload": {"x": 1} }
         ]}"#;
-        let (jobs, faults) = parse_config(bytes).expect("well-formed");
+        let ParsedConfig { jobs, faults, .. } = parse_config(bytes).expect("well-formed");
         assert!(faults.is_empty(), "{faults:?}");
         assert_eq!(jobs.len(), 2);
         assert_eq!(jobs[0].id, "a");
@@ -310,7 +339,8 @@ mod tests {
             { "id": "ok", "every-ms": 5, "topic": "t" },
             { "id": "silent", "every-ms": 5, "topic": "" }
         ]}"#;
-        let (jobs, faults) = parse_config(bytes).expect("document is valid json");
+        let ParsedConfig { jobs, faults, .. } =
+            parse_config(bytes).expect("document is valid json");
         assert_eq!(jobs.len(), 1, "only the first well-formed entry survives");
         assert_eq!(faults.len(), 3, "{faults:?}");
         assert!(faults[0].contains("zero"));
@@ -325,9 +355,23 @@ mod tests {
 
     #[test]
     fn parse_config_accepts_an_empty_document_as_no_jobs() {
-        let (jobs, faults) = parse_config(b"{}").expect("empty config");
-        assert!(jobs.is_empty());
-        assert!(faults.is_empty());
+        let parsed = parse_config(b"{}").expect("empty config");
+        assert!(parsed.jobs.is_empty());
+        assert!(parsed.faults.is_empty());
+        assert_eq!(parsed.tick_ms, DEFAULT_TICK_MS, "the alarm period defaults");
+    }
+
+    #[test]
+    fn tick_ms_is_an_additive_setting() {
+        let parsed = parse_config(br#"{ "tick-ms": 500, "jobs": [] }"#).expect("parses");
+        assert_eq!(parsed.tick_ms, 500);
+        let config: CronConfig = serde_json::from_slice(br#"{ "jobs": [] }"#).expect("parses");
+        assert!(
+            !serde_json::to_string(&config)
+                .expect("encodes")
+                .contains("tick-ms"),
+            "an absent period stays absent on the wire"
+        );
     }
 
     #[test]
@@ -428,7 +472,7 @@ mod tests {
             { "id": "cal", "cron": "0 * * * *", "topic": "t" },
             { "id": "ok", "every-ms": 5, "topic": "t" }
         ]}"#;
-        let (jobs, faults) = parse_config(bytes).expect("document accepted");
+        let ParsedConfig { jobs, faults, .. } = parse_config(bytes).expect("document accepted");
         assert_eq!(jobs.len(), 1);
         assert_eq!(jobs[0].id, "ok");
         assert_eq!(faults.len(), 1);

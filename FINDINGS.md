@@ -11,7 +11,10 @@ the first real capability. Evidence grades were audited by the independent
 round-1 verification and are stated per entry: entries 1, 2, 3, 6, and 8
 are packet-card-ready (reproducible, shaped); the rest are honest
 observations whose cards need more evidence, marked as such. What HELD is
-at the bottom — the kernel earned that section too.
+at the bottom — the kernel earned that section too. Entries 1 and 2 are
+**closed** as of the `01133c45` pin bump (jinnd M2-K2): each carries a
+closure note appended in place, and the original text stands as the record
+of what the friction was.
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -35,6 +38,20 @@ scope how fine a timer a plugin may hold). Retires `cron-tick-source` and
 `cron-kit tick` outright; `jinn:cron`'s tick topic then has a kernel-side
 emitter.
 
+**Closed 2026-08-28 — retired by pin 01133c45 (jinnd M2-K2).** The kernel
+ships `jinn:clock`: `now` (effect = read), plus `alarm-at` / `alarm-every`
+whose requests are revertible effects (the undo cancels), every wake a
+ledger event `AlarmWake` attributed to the requesting fiber, and the
+resolution floor scoped by the grant (250 ms default, R9). Harness side:
+`cron-tick-source`, `cron-kit tick`, and the `jinn:cron/tick` topic are
+retired outright — `cron-scheduler` holds one periodic alarm at `tick-ms`
+and plans once at `activate` off `now` (see finding 13 for why that second
+call is needed); `DispatchTrace` is the first-class fire line and the
+per-fire run record stays as the outcome document. Measured cost change:
+~5 ledger rows of fiber churn per tick → one `AlarmWake` row per wake (the
+fs write effects and one `DispatchTrace` per fire emit only when something
+actually fires).
+
 ## 2. The event bus has no ledger tap — emits are invisible to Law 2
 
 `DispatchTrace` exists in the ledger schema but is reserved/unwired (known
@@ -53,6 +70,14 @@ per-fire run record through granted `jinn:fs`
 (`cron/runs/<job>/<scheduled-ms>.json`), whose ledgered effect label names
 the job and boundary — fires are ledger-identifiable today. The bus tap
 remains the first-class answer; the mitigation does not replace it.
+
+**Closed 2026-08-28 — retired by pin 01133c45 (jinnd M2-K2).** The tap is
+wired: every bus emit lands exactly one `DispatchTrace { topic, mode,
+listeners, failures, emitter }` ledger event. For cron, the fire emit on a
+job's own topic (e.g. `cron:health`) IS the audit statement "job X fired" —
+first-class, no inference. The per-fire run record
+(`cron/runs/<job>/<scheduled-ms>.json`) stays as the outcome document
+rather than as the fire's only ledger identification.
 
 ## 3. `jinn:fs` world surface is read/write only — thinner than its bundle
 
@@ -149,7 +174,7 @@ whose expiry is itself a ledger event (an honest "no longer revertible").
 
 ## 9. Profile write-back vs external editors — an uncoordinated shared file
 
-The tick driver (and any operator tooling) edits `profile.json` while the
+Operator tooling (formerly the tick driver) edits `profile.json` while the
 daemon holds a bidirectional write-back lane over the same file. Not
 observed clobbering in this phase (no write-back fired in the cron runs),
 but the race is structural: a runtime write-back can overwrite a
@@ -197,13 +222,35 @@ from finding 7 (that is guest-to-guest; this is operator-to-daemon).
 honest fix is a machine-readable status surface (the future API plugin's
 first duty, alongside finding 9's edit lane).
 
+## 13. `alarm-every`'s first wake is one full period out
+
+There is no "fire now, then every P" shape: a periodic alarm's first wake
+lands at `now + P`. A scheduler that only held the alarm would therefore be
+blind for one whole period after every (re)activation — and since alarms do
+not survive a kernel restart, every daemon restart re-opens that hole. At
+the soak's 15-minute duty period it is a 15-minute blind window per
+restart, which is exactly the window a monitoring job must not have.
+
+**Workaround shipped:** `cron-scheduler`'s `activate` calls `now` and runs
+one tick plan immediately, then requests the periodic alarm — the catch-up
+fire lands at once instead of one period later. Cost: an extra
+`ContractCall` plus that plan's own writes on every activation.
+
+**Packet-card shape:** either an `immediate: bool` on `alarm-every` (first
+wake now, then every P), or document `alarm-at(now)` + `alarm-every` as the
+idiom together with a guarantee about their relative delivery ordering.
+
+*Evidence grade:* contract-documented — `contracts/jinn-clock/contract.wit`
+states "first one period from now"; the harness-side workaround is shipped
+in `cron-scheduler`'s `activate`. Low severity.
+
 ---
 
 ## What held (evidence the paradigm carries production shape)
 
-- **Reconcile-by-id is surgical:** every tick restarts exactly the tick
-  fiber; scheduler and consumer keep their fibers (composition:
-  `reschedules_on_config_edit_through_reconcile`).
+- **Reconcile-by-id is surgical:** a config edit restarts exactly the
+  edited entry — the scheduler — and the consumer keeps its fiber
+  (composition: `reschedules_on_config_edit_through_reconcile`).
 - **Pin-by-hash admission, grants, and refusals all ledger-visible:**
   `GrantRefused` lands when the profile withdraws `jinn:cron` from the
   consumer, and the consumer's honest `unavailable` marker follows
@@ -215,4 +262,5 @@ first duty, alongside finding 9's edit lane).
   no-backfill/catch-up semantics proved through a real daemon SIGINT +
   reboot (`restart_fires_once_and_records_the_gap_without_backfill`).
 - **Guest provisions and every broker crossing recorded:** the fire-run
-  ledger is a complete causal story minus the emits (finding 2).
+  ledger is a complete causal story, emits included since the
+  `DispatchTrace` tap landed (finding 2).
