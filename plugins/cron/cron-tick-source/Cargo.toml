@@ -1,0 +1,22 @@
+# The cron seam's timer stand-in: the kernel has no clock/timer capability
+# yet (FINDINGS.md #1), so time enters through the one honest push path — a
+# config reconcile of THIS entry. An operator-lane driver (`cron-kit tick`)
+# rewrites the entry's config `{seq, now-ms}`; the restarted fiber emits the
+# tick. Retired the day a kernel timer capability ships. Not a workspace
+# member (see the workspace manifest's note).
+[package]
+name = "cron-tick-source"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-cron = { path = "../jinn-cron" }
+serde_json = "1.0"
+wit-bindgen = "0.43.0"
+
+[workspace]

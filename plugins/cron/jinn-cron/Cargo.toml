@@ -1,0 +1,15 @@
+# The cron seam's service definition: the `jinn:cron` contract as code —
+# settings namespace, schedule spec, tick/fire payloads, run records, and
+# the firing law as pure functions. Compiled natively (unit tests, tools)
+# and into the wasm guests; it therefore depends on nothing but serde.
+[package]
+name = "jinn-cron"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

@@ -1,0 +1,118 @@
+# `jinn:cron@0.1.0` — the scheduled-work contract
+
+The service definition of the cron seam. This document is the contract's
+prose law; the types in `src/` are its schema. Designed to outlive this
+implementation (the kernel's R12 discipline): within 0.x every change here is
+strictly additive, and the shapes carry explicit version headroom (schedule
+variants, outcome variants).
+
+## Names
+
+| Name | Value | What it is |
+|---|---|---|
+| Contract | `jinn:cron` | Provided by the scheduler; grant it to resolve and call. |
+| Tick topic | `jinn:cron/tick` | Time enters the seam here. Listening requires the topic grant. |
+| Operations | `jobs`, `history` | Read-only introspection calls on the provider (empty request payload, JSON answer). |
+
+All payloads on this seam are UTF-8 JSON with kebab-case keys.
+
+## Settings namespace (the scheduler's config subtree)
+
+```json
+{ "jobs": [ { "id": "health", "every-ms": 900000, "topic": "cron:health",
+              "payload": { "free": "form" } } ] }
+```
+
+- `id` — unique per scheduler; duplicates beyond the first are config faults.
+- `every-ms` — the schedule spec, v0.1: a fixed period anchored at the Unix
+  epoch; boundaries are the instants `k * every-ms` (k ≥ 1). `0` is a config
+  fault. Calendar/cron-expression schedules are a planned **additive**
+  extension (a new field beside `every-ms`, never a reinterpretation).
+- `topic` — where this job's fire events go. Empty is a config fault.
+- `payload` — opaque JSON handed through to every fire event, `null` default.
+
+Config faults never fail activation: faulted entries are excluded and each
+fault is a `config-fault` run record — visible in history, never silent.
+
+## Time (the tick)
+
+The kernel has no clock or timer capability yet (FINDINGS.md #1): a guest
+cannot read time or ask to be woken. Time therefore enters as data on the
+`jinn:cron/tick` topic:
+
+```json
+{ "seq": 12, "now-ms": 1756350000000 }
+```
+
+`seq` is the tick source's monotonic edition (`0` = boot seed; a seed is
+never dispatched). `now-ms` is wall-clock milliseconds since the Unix epoch.
+The scheduler trusts the tick's clock; it never has another one. Ticks whose
+`now-ms` does not advance are no-ops by construction (no new boundary can be
+due).
+
+## The firing law (missed fires, restarts — no silent backfill)
+
+For each job, the scheduler keeps `last`: the newest boundary already
+processed. On a tick at time `T`, the due boundaries are those in
+`(last, T]`:
+
+1. **At most one fire per job per tick.** Only the NEWEST due boundary
+   fires.
+2. **Skipped boundaries are recorded, never fired.** If more than one
+   boundary is due, the earlier ones become a single `skipped` run record
+   (count + range) and the fire event carries `missed-before`.
+3. **Restarts follow the same law.** State persists across scheduler
+   restarts and daemon restarts (`cron/state.json`, snapshot/restore across
+   hot-swaps). Boundaries elapsed while down: newest fires (one catch-up,
+   honestly marked by its `missed-before`), the rest are recorded skipped.
+   There is no backfill, and no fire is ever silently dropped — every
+   boundary ends as exactly one of: fired, skipped-on-record.
+4. **Lost state is a recorded event, not a guess.** A job with no state
+   (new, or state lost) starts its schedule at the current tick: no fire, a
+   `schedule-started` run record, `last = floor(T / every-ms) * every-ms`.
+   Elapsed boundaries before a state loss are unobservable and are NOT
+   reconstructed.
+
+## Fire events
+
+Emitted on the job's `topic`, dispatch mode `serial`, selector `all`:
+
+```json
+{ "job": "health", "scheduled-ms": 1756350000000, "now-ms": 1756350004120,
+  "missed-before": 0, "tick-seq": 12, "payload": null }
+```
+
+Consumers answer with opaque bytes; the count of settled answers lands in the
+job's run record. **A consumer must not call `jinn:cron` (or otherwise call
+back into the scheduler) while handling a fire**: the scheduler is awaiting
+that very delivery, and the call chain deadlocks until the kernel's guest
+deadline kills it (FINDINGS.md #4). Introspection calls belong in `activate`.
+
+## Run history
+
+`cron/history.json` (under the scheduler's `jinn:fs` scope): a JSON array of
+run records, newest last, bounded to the newest 500 — an operational window,
+not an archive. The permanent record is the kernel ledger (Law 2): every
+fire's emit crossing and every history/state write is a ledger event by
+construction. Record shapes (`outcome` is externally tagged, additive):
+
+```json
+{ "job": "health", "scheduled-ms": 1756350000000, "now-ms": 1756350004120,
+  "tick-seq": 12, "outcome": { "fired": { "answers": 1 } } }
+```
+
+Outcomes: `fired { answers }` (0 answers = no live listener answered — a
+visible duty gap, not an error), `skipped { boundaries, first-ms, last-ms }`,
+`schedule-started`, `config-fault { detail }`, `emit-failed { detail }`.
+
+State (`cron/state.json`) is written before history on each tick: if the
+writes are torn apart by a crash, the failure mode is a missing record, never
+a double fire (the write pair is not transactional under `jinn:fs` v0.1 —
+FINDINGS.md #6).
+
+## Provider operations
+
+- `jobs` → `{ "jobs": [ { "id", "every-ms", "topic", "next-ms" } ] }` —
+  `next-ms` is the next boundary strictly after `last` (absent until the
+  schedule has started).
+- `history` → the bounded run-record array, as stored.

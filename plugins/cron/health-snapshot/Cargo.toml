@@ -1,0 +1,21 @@
+# The cron seam's first real consumer: a scheduled data-root health
+# snapshot. Listens for its job's fire events and writes a health report
+# through its granted `jinn:fs` — every fire and every write ledger-visible.
+# Not a workspace member (see the workspace manifest's note).
+[package]
+name = "health-snapshot"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-cron = { path = "../jinn-cron" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+wit-bindgen = "0.43.0"
+
+[workspace]
