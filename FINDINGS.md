@@ -458,25 +458,28 @@ medium — an operator lane that silently drops edits.
 source (`reload` + the apply tail) and the named run's log is the
 transcript; three consecutive suite runs hit it before the mitigation.
 
-## 18. A relative `--profile` path boots the daemon without its watcher
+## 18. A relative `--profile` path fails the watcher AFTER the boot reconcile has written evidence
 
 Started from its runtime root with `--profile profile.json --ledger
-ledger.sqlite` (relative paths), the `4eb4a93` daemon booted, reconciled,
-and served duty — but its file watcher refused to start:
-`ERROR jinnd: file watcher unavailable refused=KernelError { code:
-EffectFailed, message: "No path was found. about [\"\"]" }` (the watched
-directory is the profile's parent, which is empty for a bare file name),
-and the daemon carried on with the operator lane silently dead. Observed
-once on the soak's third-bump start (an operator slip; SOAK.md's own
-start line uses absolute paths, and the clean stop/start cycle that
-followed corrected it). Low severity, but a daemon that can't watch its
-profile should either resolve the path against its working directory or
-refuse to boot — an unwatched profile is a lane the operator believes is
-live.
+ledger.sqlite` (relative paths), the `4eb4a93` daemon booted and
+reconciled — the guests activated, the consumer's `boot.json` and the
+scheduler's catch-up fire landed on disk and on the ledger — and THEN its
+file watcher refused to start (`ERROR jinnd: file watcher unavailable
+refused=KernelError { code: EffectFailed, message: "No path was found.
+about [\"\"]" }`: the watched directory is the profile's parent, empty
+for a bare file name) and the daemon exited 1. Refusing to serve unwatched
+is the right call. The friction is the ORDER: the boot evidence the
+operator waits for (`boot.json`) is written before the watcher is even
+attempted, so a launcher that keys on it reads a refused start as a
+running daemon — exactly what happened on the soak's third-bump start
+(operator slip; `ops.log` carries the correction, the duty gap, and the
+restart with absolute paths per SOAK.md §Start).
 
 **Packet-card shape:** canonicalize `DaemonPaths` at open (an absolute
-profile path is what the watcher needs), and make watcher failure a boot
-refusal rather than an error line.
+profile path is what the watcher needs — resolve against the working
+directory), and validate the watcher before the boot reconcile so a
+refused start writes nothing; a machine-readable readiness signal
+(finding 12) would close the operator side.
 
 *Evidence grade:* reproducible from the log line; one observation.
 

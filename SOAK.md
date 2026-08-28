@@ -175,13 +175,15 @@ planned stop never happened: the host rebooted at 13:36:01Z and the
 `41cb2f47` daemon died with it — logged in `ops.log` as an UNPLANNED
 crash-recovery observation (the disk outcome is a hard kill's: files
 intact, the WAL's last rows committed), which pre-empted the standing
-hard-stop ruling's last use. The `4eb4a93` daemon started over the same
-root, resumed the schedule from the persisted `last` (one catch-up fire
-for the newest missed boundary, the rest one `skipped` record), and then
-performed the first CLEAN stop/start cycle of the soak as the proof that
-the ruling could be retired: `ops.log` carries the reboot line, the
-`pin bump 41cb2f47 -> 4eb4a93` line, and the clean cycle's before/after
-evidence.
+hard-stop ruling's last use. The first `4eb4a93` start was launched
+with relative paths and exited after its boot reconcile (the watcher
+refused — FINDINGS.md #18; an operator slip, corrected in `ops.log`); the
+start per §Start over the same root resumed the schedule from the
+persisted `last` (one catch-up fire for the newest missed boundary, the
+rest one `skipped` record), and then performed the first CLEAN stop/start
+cycle of the soak as the proof that the ruling could be retired:
+`ops.log` carries the reboot line, the `pin bump 41cb2f47 -> 4eb4a93`
+line, the correction, and the clean cycle's before/after evidence.
 
 ## The +7d audit (closes the soak)
 
