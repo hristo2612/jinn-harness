@@ -1,8 +1,9 @@
 # Workspace for the Jinn distribution.
 #
 # Native workspace members are the service-definition crates (pure types +
-# logic, unit-tested on the host), tools/ (repo machinery: the pin gate, the
-# cron kit builder), and tests/ (the real-composition gates). Guest plugin
+# logic, unit-tested on the host), a provider's pure transport codec, tools/
+# (repo machinery: the pin gate, the seam kit builders), and tests/ (the
+# real-composition gates). Guest plugin
 # crates under plugins/ compile for wasm32-unknown-unknown ONLY and are
 # deliberately NOT workspace members (the kernel's own demo-plugin pattern):
 # a cdylib of the plugin world cannot link for the host target. The kit
@@ -11,8 +12,11 @@
 [workspace]
 resolver = "2"
 members = [
+    "plugins/api/jinn-api",
+    "plugins/api/jinn-api-http-wire",
     "plugins/cron/jinn-cron",
     "tests/composition",
+    "tools/api-kit",
     "tools/cron-kit",
     "tools/harness-pin",
 ]

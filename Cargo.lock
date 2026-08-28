@@ -21,6 +21,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
+name = "api-kit"
+version = "0.1.0"
+dependencies = [
+ "cron-kit",
+ "jinn-api",
+ "jinn-cron",
+ "serde_json",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -56,6 +66,7 @@ name = "composition"
 version = "0.1.0"
 dependencies = [
  "harness-pin",
+ "jinn-api",
  "jinn-cron",
  "rusqlite",
  "serde_json",
@@ -231,6 +242,22 @@ name = "itoa"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
+
+[[package]]
+name = "jinn-api"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jinn-api-http-wire"
+version = "0.1.0"
+dependencies = [
+ "jinn-api",
+ "serde_json",
+]
 
 [[package]]
 name = "jinn-cron"

@@ -1,0 +1,25 @@
+# The operator-API seam's status consumer guest: provides `jinn:api-status`
+# (status, health, ledger-tail) from what a guest can HONESTLY observe —
+# the profile document through its granted `jinn:fs`, and provider probes
+# through its granted contracts. What the kernel cannot tell a guest is
+# answered by name with its FINDINGS.md number, never guessed. Compiles
+# for wasm32-unknown-unknown ONLY and is deliberately NOT a workspace
+# member; `api-kit` builds and encodes it.
+[package]
+name = "jinn-status"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-api = { path = "../jinn-api" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Guest-side bindings of the pinned plugin world (kernel-pin/wit).
+wit-bindgen = "0.43.0"
+
+[workspace]

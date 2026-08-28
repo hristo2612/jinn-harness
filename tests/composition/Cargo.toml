@@ -1,6 +1,6 @@
 # The real-composition gate (AGENTS.md standing order 3): boots the cron
-# profile through the REAL pinned jinnd daemon and proves the seam through
-# the loader on REAL time — the scheduler's jinn:clock alarm firing jobs on
+# profile and the operator-API profile through the REAL pinned jinnd
+# daemon and proves each seam through the loader on REAL time — the scheduler's jinn:clock alarm firing jobs on
 # schedule, reschedule on config edit, alarm re-request after a restart,
 # dispose cancelling the alarm, and the AlarmWake / DispatchTrace ledger
 # lines that record all of it. Self-skips LOUDLY when no jinnd checkout is
@@ -17,6 +17,7 @@ publish = false
 
 [dependencies]
 harness-pin = { path = "../../tools/harness-pin" }
+jinn-api = { path = "../../plugins/api/jinn-api" }
 jinn-cron = { path = "../../plugins/cron/jinn-cron" }
 # The ledger is the evidence surface (Law 2): tests read the daemon's
 # append-only SQLite directly. Bundled so CI needs no system sqlite.
