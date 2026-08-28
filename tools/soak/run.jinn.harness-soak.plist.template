@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  User LaunchAgent for the jinn-harness cron soak (SOAK.md §Supervisor).
+
+  `__SOAK__` is the only absolute path here and it is a placeholder:
+  install-launchd.sh substitutes the runtime root derived from $HOME, so
+  this tracked template stays machine-neutral (AGENTS.md repo hygiene).
+
+  KeepAlive is CONDITIONED, not bare. `SuccessfulExit=false` means "restart
+  only when the last exit was unclean": the daemon exits 0 after a clean
+  SIGINT suspend-and-flush, so a planned stop per SOAK.md §Stop stays
+  stopped and the supervisor never fights the operator; a kill -9, a failed
+  flush barrier (exit 1), or a host that dies under it are all unclean, and
+  those are exactly the outages this agent exists to end.
+
+  stdout/stderr are redirected by the wrapper (which knows $HOME), so no
+  Standard*Path key is needed and no second machine path appears here.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>run.jinn.harness-soak</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>__SOAK__/bin/soak-run.sh</string>
+    </array>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <!-- The minimum seconds between STARTS: a daemon that has been up
+         longer relaunches immediately, a crash loop is throttled to this. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>WorkingDirectory</key>
+    <string>__SOAK__</string>
+</dict>
+</plist>
