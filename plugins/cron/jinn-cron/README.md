@@ -11,18 +11,27 @@ variants, outcome variants).
 | Name | Value | What it is |
 |---|---|---|
 | Contract | `jinn:cron` | Provided by the scheduler; grant it to resolve and call. |
-| Tick topic | `jinn:cron/tick` | Time enters the seam here. Listening requires the topic grant. |
 | Operations | `jobs`, `history` | Read-only introspection calls on the provider (empty request payload, JSON answer). |
+| Clock grant | `jinn:clock` | Time enters the seam here. A provider-side requirement: the scheduler holds one periodic alarm whose period is `tick-ms`. Consumers never need it. |
 
 All payloads on this seam are UTF-8 JSON with kebab-case keys.
 
 ## Settings namespace (the scheduler's config subtree)
 
 ```json
-{ "jobs": [ { "id": "health", "every-ms": 900000, "topic": "cron:health",
+{ "tick-ms": 60000,
+  "jobs": [ { "id": "health", "every-ms": 900000, "topic": "cron:health",
               "payload": { "free": "form" } } ] }
 ```
 
+- `tick-ms` — the period of the single `jinn:clock` periodic alarm the
+  scheduler holds; how often the firing law is evaluated. Default `60000`.
+  It must be at least the granted clock resolution floor (250 ms with a bare
+  `"jinn:clock"` grant, coarser with an explicit scope — kernel R9): the
+  kernel refuses a periodic alarm finer than the floor and the scheduler's
+  activation fails loudly rather than running blind. A wake cadence is not a
+  schedule — a job fires on its own `every-ms` boundaries, at worst one
+  `tick-ms` late.
 - `id` — unique per scheduler; duplicates beyond the first are config faults.
 - `every-ms` — the schedule spec, v0.1: a fixed period anchored at the Unix
   epoch; boundaries are the instants `k * every-ms` (k ≥ 1). `0` is a config
@@ -34,28 +43,35 @@ All payloads on this seam are UTF-8 JSON with kebab-case keys.
 Config faults never fail activation: faulted entries are excluded and each
 fault is a `config-fault` run record — visible in history, never silent.
 
-## Time (the tick)
+## Time (the clock)
 
-The kernel has no clock or timer capability yet (FINDINGS.md #1): a guest
-cannot read time or ask to be woken. Time therefore enters as data on the
-`jinn:cron/tick` topic:
+Time enters through the kernel's `jinn:clock` capability, granted to the
+scheduler (FINDINGS.md #1, closed by the `01133c45` pin). Two entries, and
+only two:
+
+- **At `activate`** the scheduler reads `now`, runs one tick plan
+  immediately, and requests `alarm-every(tick-ms, token)`.
+- **At every wake** the kernel delivers
+  `handle-event(token, "jinn:clock/alarm", payload)`, payload = the 8-byte
+  little-endian unix-ms wake instant; that instant is the tick's `now-ms`.
+
+Both paths hand the firing law the same internal tick shape:
 
 ```json
 { "seq": 12, "now-ms": 1756350000000 }
 ```
 
-`seq` is the tick source's monotonic edition (`0` = boot seed; a seed is
-never dispatched). `now-ms` is wall-clock milliseconds since the Unix epoch.
-The scheduler trusts the tick's clock; it never has another one. Ticks whose
+`seq` is a per-activation wake counter (`0` = the activate plan, then 1, 2,
+…). `now-ms` is wall-clock milliseconds since the Unix epoch. Ticks whose
 `now-ms` does not advance are no-ops by construction (no new boundary can be
 due).
 
-**The tick source is trusted.** `seq` is an operator-facing edition marker,
-not a guard: the scheduler does not validate its monotonicity, and a
-repeated `seq` carrying a later clock still fires normally. The firing
-law's boundary accounting is the only replay/rewind protection — a
-duplicate payload and a rewound clock are both no-ops because no new
-boundary is due.
+**The clock is the kernel's** — the scheduler never has another one, and
+`seq` is an operator-facing edition marker, not a guard: it is not validated
+for monotonicity, it restarts at `0` on every activation, and a repeated
+`seq` carrying a later clock still fires normally. The firing law's boundary
+accounting is the only replay/rewind protection — a duplicate payload and a
+rewound clock are both no-ops because no new boundary is due.
 
 ## The firing law (missed fires, restarts — no silent backfill)
 
@@ -74,6 +90,11 @@ processed. On a tick at time `T`, the due boundaries are those in
    honestly marked by its `missed-before`), the rest are recorded skipped.
    There is no backfill, and no fire is ever silently dropped — every
    boundary ends as exactly one of: fired, skipped-on-record.
+   Alarms do NOT survive a kernel restart (`jinn:clock` v0.1), so the
+   restart re-entry is the guest's own act: the scheduler re-requests its
+   alarm in `activate` and plans there off `now`, which lands the catch-up
+   fire immediately at boot instead of one `tick-ms` later (FINDINGS.md
+   #13).
    A persisted `last` may predate a config edit that changed `every-ms`:
    all boundary accounting therefore happens on the CURRENT grid, with
    `last` re-floored to it — a period change mid-window never corrupts the
@@ -100,6 +121,11 @@ back into the scheduler) while handling a fire**: the scheduler is awaiting
 that very delivery, and the call chain deadlocks until the kernel's guest
 deadline kills it (FINDINGS.md #4). Introspection calls belong in `activate`.
 
+Every fire emit lands exactly one `DispatchTrace { topic, mode, listeners,
+failures, emitter }` ledger event, with `topic` the job's own topic. **That
+line is the first-class audit statement "job X fired"** (FINDINGS.md #2,
+closed by the `01133c45` pin) — no inference from surrounding effects.
+
 ## Run history
 
 Two lanes, both under the scheduler's `jinn:fs` scope:
@@ -107,11 +133,10 @@ Two lanes, both under the scheduler's `jinn:fs` scope:
 - **Per-fire records** — `cron/runs/<job>/<scheduled-ms>.json`, one file
   per fire, written after the emit settles and carrying the full run
   record. This write is one granted-contract effect whose ledger label
-  names the job and the boundary: **it is the fire's ledger
-  identification** today. (The emit crossing itself is not yet a ledger
-  event — the kernel's bus tap is queued work, FINDINGS.md #2; when it
-  lands, `DispatchTrace` becomes the first-class record and this lane
-  remains the outcome document.) Job ids are path-safe by construction
+  names the job and the boundary: **it is the fire's outcome document** —
+  how the fire went. That it happened is recorded first-class by the emit's
+  own `DispatchTrace` ledger event (§Fire events); the two lanes answer
+  different questions. Job ids are path-safe by construction
   (`[A-Za-z0-9_-]`, enforced at config parse).
 - **The bounded window** — `cron/history.json`: a JSON array of ALL run
   records (fires, skips, starts, faults), newest last, bounded to the
@@ -172,3 +197,10 @@ On activation the scheduler classifies each persisted document
   `next-ms` is the next boundary strictly after `last` (absent until the
   schedule has started).
 - `history` → the bounded run-record array, as stored.
+
+## Changes
+
+- **0.1.0 (2026-08-28, kernel pin `01133c45`):** the tick topic
+  `jinn:cron/tick` and its payload are withdrawn with the kernel clock's
+  arrival — no external emitter ever existed outside this repo's retired
+  stand-in; `tick-ms` added (additive).

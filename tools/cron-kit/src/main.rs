@@ -1,4 +1,4 @@
-//! The cron seam's kit builder and duty driver (see Cargo.toml for usage).
+//! The cron seam's kit builder (see Cargo.toml for usage).
 //! The build pattern is the kernel demo builder's: compile each guest for
 //! wasm32-unknown-unknown, encode the core module to a component in
 //! process, pin it by content hash (kernel Law 5), and write the profile
@@ -8,8 +8,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use sha2::{Digest, Sha256};
-
-mod tick;
 
 fn plugin_dir(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!("../../plugins/cron/{name}"))
@@ -94,17 +92,16 @@ fn write_artifact(dir: &Path, name: &str, bytes: &[u8], hash: &str) {
     println!("{} {}", hash, file.display());
 }
 
-/// The cron profile: the seam-triple with its grants. The listen grants
-/// (`jinn:cron/tick`, the job topic) and contract grants (`jinn:cron`,
-/// `jinn:fs`) are the profile side's authority decisions — requests are not
-/// grants.
-fn profile(tick: &str, scheduler: &str, snapshot: &str, every_ms: u64) -> String {
+/// The cron profile: the seam's two guests with their grants. The listen
+/// grant (the job topic) and contract grants (`jinn:cron`, `jinn:fs`,
+/// `jinn:clock` — a bare clock grant holds the kernel's default 250 ms
+/// resolution floor) are the profile side's authority decisions — requests
+/// are not grants.
+fn profile(scheduler: &str, snapshot: &str, every_ms: u64, tick_ms: u64) -> String {
     let document = serde_json::json!({ "entries": [
-        { "id": "cron-tick", "package": "cron/cron-tick-source", "hash": tick,
-          "config": { "grants": [], "data": { "seq": 0, "now-ms": 0 } } },
         { "id": "cron-scheduler", "package": "cron/cron-scheduler", "hash": scheduler,
-          "config": { "grants": [jinn_cron::CRON_CONTRACT, jinn_cron::TICK_TOPIC, "jinn:fs"],
-                      "data": { "jobs": [
+          "config": { "grants": [jinn_cron::CRON_CONTRACT, "jinn:fs", jinn_cron::CLOCK_CONTRACT],
+                      "data": { "tick-ms": tick_ms, "jobs": [
                           { "id": "health", "every-ms": every_ms, "topic": "cron:health" }
                       ] } } },
         { "id": "health-snapshot", "package": "cron/health-snapshot", "hash": snapshot,
@@ -114,28 +111,23 @@ fn profile(tick: &str, scheduler: &str, snapshot: &str, every_ms: u64) -> String
     serde_json::to_string_pretty(&document).expect("profile encoding")
 }
 
-fn kit(root: &Path, every_ms: u64) {
+fn kit(root: &Path, every_ms: u64, tick_ms: u64) {
     let artifacts = root.join("artifacts");
-    let (tick, tick_hash) = component("cron-tick-source");
     let (scheduler, scheduler_hash) = component("cron-scheduler");
     let (snapshot, snapshot_hash) = component("health-snapshot");
-    write_artifact(&artifacts, "cron-tick-source", &tick, &tick_hash);
     write_artifact(&artifacts, "cron-scheduler", &scheduler, &scheduler_hash);
     write_artifact(&artifacts, "health-snapshot", &snapshot, &snapshot_hash);
     std::fs::create_dir_all(root).expect("kit root");
     std::fs::write(
         root.join("profile.json"),
-        profile(&tick_hash, &scheduler_hash, &snapshot_hash, every_ms),
+        profile(&scheduler_hash, &snapshot_hash, every_ms, tick_ms),
     )
     .expect("profile write");
     println!("profile {}", root.join("profile.json").display());
 }
 
 fn usage() -> ! {
-    eprintln!(
-        "usage: cron-kit kit <root> [--every-ms N]\n\
-         \x20      cron-kit tick <profile.json> [--interval-s N] [--count M]"
-    );
+    eprintln!("usage: cron-kit kit <root> [--every-ms N] [--tick-ms N]");
     std::process::exit(2);
 }
 
@@ -150,14 +142,10 @@ fn main() {
     match args.first().map(String::as_str) {
         Some("kit") => {
             let root = args.get(1).map(PathBuf::from).unwrap_or_else(|| usage());
-            kit(&root, flag(&args, "--every-ms").unwrap_or(900_000));
-        }
-        Some("tick") => {
-            let profile = args.get(1).map(PathBuf::from).unwrap_or_else(|| usage());
-            tick::drive(
-                &profile,
-                flag(&args, "--interval-s").unwrap_or(60),
-                flag(&args, "--count"),
+            kit(
+                &root,
+                flag(&args, "--every-ms").unwrap_or(900_000),
+                flag(&args, "--tick-ms").unwrap_or(jinn_cron::DEFAULT_TICK_MS),
             );
         }
         _ => usage(),

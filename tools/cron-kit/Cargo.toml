@@ -1,11 +1,9 @@
-# The cron seam's kit builder and duty driver (host machinery, like the
-# demo builder in the kernel repo):
-#   cron-kit kit <root> [--every-ms N]  — compile the three guests for
-#       wasm32-unknown-unknown, encode components, write pinned profile.
-#   cron-kit tick <profile.json> --interval-s N [--count M] — the timer
-#       stand-in's operator-lane driver: rewrite the tick entry's config on
-#       an interval (FINDINGS.md #1; retired when a kernel timer capability
-#       ships).
+# The cron seam's kit builder (host machinery, like the demo builder in the
+# kernel repo):
+#   cron-kit kit <root> [--every-ms N] [--tick-ms N] — compile the two
+#       guests for wasm32-unknown-unknown, encode components, write the
+#       pinned profile. --every-ms sets the health job's period; --tick-ms
+#       sets the scheduler's jinn:clock alarm period (default 60000).
 [package]
 name = "cron-kit"
 version = "0.1.0"

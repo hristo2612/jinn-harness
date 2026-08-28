@@ -1,6 +1,7 @@
 //! Driving one live daemon over one scratch root: kit build (cached),
-//! profile edits (the operator lane — ticks ARE config edits, FINDINGS.md
-//! #1), ledger reads, and honest process shutdown.
+//! profile edits (the operator lane), ledger reads, and honest process
+//! shutdown. Time is the kernel's own (`jinn:clock`): the suite observes
+//! real fires on a fast kit rather than injecting instants.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -11,6 +12,16 @@ use crate::daemon::workspace_root;
 
 /// How long a composition observation may take before the test fails.
 pub const DEADLINE: Duration = Duration::from_secs(30);
+
+/// The suite kit's job period: boundaries every 2 s, so a fire is never
+/// more than one period away and a restart gap of a few seconds spans
+/// several boundaries.
+pub const JOB_PERIOD_MS: u64 = 2_000;
+
+/// The suite kit's alarm period (`tick-ms`): coarser than the kernel's
+/// default 250 ms floor, fine enough that a fire lands within half a
+/// second of its boundary.
+pub const TICK_MS: u64 = 500;
 
 /// Builds the cron kit once per process into a shared cache; tests copy it
 /// into per-test roots. Panics on build failure — the kit building is part
@@ -24,7 +35,8 @@ pub fn shared_kit() -> &'static Path {
         let status = Command::new("cargo")
             .args(["run", "-p", "cron-kit", "--", "kit"])
             .arg(&root)
-            .args(["--every-ms", "60000"])
+            .args(["--every-ms", &JOB_PERIOD_MS.to_string()])
+            .args(["--tick-ms", &TICK_MS.to_string()])
             .current_dir(workspace_root())
             .status()
             .expect("cargo run -p cron-kit");
@@ -153,36 +165,6 @@ impl Daemon {
         std::fs::rename(&staging, &path).expect("profile replaces");
     }
 
-    /// One tick: rewrites the tick entry's config (FINDINGS.md #1 — the
-    /// timer stand-in's push path; `cron-kit tick` is the duty-loop twin of
-    /// this edit), then waits for the watcher to restart the tick fiber.
-    /// An edit that lands before the watcher is armed (the boot window) is
-    /// rewritten until it is seen — the duty driver gets the same
-    /// resilience from its next interval.
-    pub fn tick(&self, seq: u64, now_ms: u64) {
-        let restarts = |log: &str| log.matches(r#"restarted=[EntryId("cron-tick")]"#).count();
-        let before = restarts(&self.log());
-        let deadline = Instant::now() + DEADLINE;
-        loop {
-            self.edit_profile(|document| {
-                entry_config(document, "cron-tick")["data"] =
-                    serde_json::json!({ "seq": seq, "now-ms": now_ms });
-            });
-            let retry = Instant::now() + Duration::from_secs(2);
-            while Instant::now() < retry {
-                if restarts(&self.log()) > before {
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            assert!(
-                Instant::now() < deadline,
-                "timed out landing tick {seq}\n--- daemon log ---\n{}",
-                self.log()
-            );
-        }
-    }
-
     /// Every ledger event's `kind` text, in sequence order (Law 2 — the
     /// ledger is the evidence). The connection is a plain WAL reader — a
     /// read-only handle cannot join the live daemon's WAL and would see a
@@ -200,6 +182,15 @@ impl Daemon {
             .collect::<Result<Vec<_>, _>>()
             .expect("ledger rows");
         kinds
+    }
+
+    /// How many ledger events carry `needle` in their `kind` text.
+    #[must_use]
+    pub fn ledger_count(&self, needle: &str) -> usize {
+        self.ledger_kinds()
+            .iter()
+            .filter(|kind| kind.contains(needle))
+            .count()
     }
 
     /// Interrupts the daemon (the operator's Ctrl-C) and waits for a clean
