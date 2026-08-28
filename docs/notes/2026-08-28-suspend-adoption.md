@@ -21,6 +21,10 @@ path stays in the quarantine proof as the SIGKILL half of the equivalence.
 
 ## Why a torn final tick is tolerated, not asserted away
 
+*(Superseded 2026-08-28 by pin `9e61e47`: the kernel drains the handler
+and the proof asserts exact agreement — see
+`2026-08-28-operator-lane-adoption.md`.)*
+
 A SIGINT can land while the wake handler is mid-tick; the kernel seals the
 journal and refuses the tick's later registrations (finding 15's closure).
 The seam's contract already orders a tick state-first so a torn tick loses
@@ -30,6 +34,10 @@ could do instead as FINDINGS.md #16. Hiding the window by waiting for a
 quiet moment would have proven less.
 
 ## Why config-edit proofs vary their bytes
+
+*(Superseded 2026-08-28 by pin `9e61e47`: `edit_profile_until` is deleted;
+one atomic edit after the readiness line — see
+`2026-08-28-operator-lane-adoption.md`.)*
 
 Three consecutive suite runs lost an edit each: the daemon remembers its
 own write-back by re-reading the file after an apply, so an edit landing

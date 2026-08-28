@@ -11,12 +11,13 @@
 //! reachable (jinnd is private; see KERNEL-PIN.md Gate 2). Locally the
 //! sibling checkout makes this run everywhere the verify gate runs.
 
+use std::ffi::OsStr;
 use std::path::PathBuf;
 use std::sync::OnceLock;
 use std::time::Duration;
 
 use composition::daemon::{jinnd_source, pinned_commit, pinned_daemon};
-use composition::kit::{entry_config, fresh_root, Daemon, JOB_PERIOD_MS, TICK_MS};
+use composition::kit::{entry_config, fresh_root, Daemon, JOB_PERIOD_MS, READY, TICK_MS};
 
 /// The ledger label of the scheduler's alarm request (jinn:clock's effect
 /// label for `alarm-every`).
@@ -43,15 +44,19 @@ fn gate() -> Option<&'static PathBuf> {
         .as_ref()
 }
 
-/// Boots a fresh root and waits for the pair's boot evidence (the
-/// consumer's boot report write — the last activation effect of the tree).
+/// Boots a fresh root and waits for the daemon's READINESS line (pin
+/// `9e61e47`, FINDINGS.md #12 minimum): the watcher is armed and the boot
+/// reconcile is done, so the pair's boot evidence (the consumer's boot
+/// report) is already on disk and the operator lane may edit at once.
 fn booted(name: &str) -> Option<Daemon> {
     let binary = gate()?;
     let root = fresh_root(name);
     let daemon = Daemon::boot(binary, &root);
-    daemon.eventually("the pair to boot (consumer boot report)", || {
-        daemon.data("health/boot.json").is_file()
-    });
+    daemon.await_ready();
+    assert!(
+        daemon.data("health/boot.json").is_file(),
+        "readiness follows the boot reconcile, so the boot evidence precedes it"
+    );
     Some(daemon)
 }
 
@@ -323,7 +328,7 @@ fn reschedules_on_config_edit_through_reconcile() {
     // the entry — and the successor resumes the schedule on the new grid
     // and re-requests the alarm.
     let halved = JOB_PERIOD_MS / 2;
-    daemon.edit_profile_until_restart("cron-scheduler", |document| {
+    daemon.edit_profile_restarting("cron-scheduler", |document| {
         entry_config(document, "cron-scheduler")["data"]["jobs"][0]["every-ms"] =
             serde_json::json!(halved);
     });
@@ -505,13 +510,12 @@ fn a_clean_shutdown_suspends_and_a_restart_resumes_the_schedule() {
         .filter_map(|record| record["scheduled-ms"].as_u64())
         .max()
         .expect("a fired record survived");
-    // `last` may be ONE boundary past the newest history record: a wake
-    // in flight at the SIGINT is sealed mid-tick (FINDINGS.md #16) — state
-    // before history, so the torn tick loses a record, never doubles a
-    // fire (contract §Run history).
-    assert!(
-        last == newest_fired || last == newest_fired + JOB_PERIOD_MS,
-        "state agrees with history up to one torn tick: {state} vs {newest_fired}"
+    // FINDINGS.md #16, flipped by pin `9e61e47`: a wake in flight at the
+    // SIGINT is DRAINED before the journal seals, so `last` never runs a
+    // boundary ahead of the newest history record — no torn tick.
+    assert_eq!(
+        last, newest_fired,
+        "state agrees with history exactly: {state} vs {newest_fired}"
     );
     assert!(
         root.join(format!("data/cron/runs/health/{newest_fired}.json"))
@@ -678,12 +682,12 @@ fn the_clock_grant_gates_the_scheduler() {
     // decision): its activation is refused at the alarm request, the
     // refusal is ledgered, and the fiber fails loudly — contained (R11),
     // never a silently timeless scheduler.
-    daemon.edit_profile_until(
+    daemon.edit_profile(|document| {
+        entry_config(document, "cron-scheduler")["grants"] =
+            serde_json::json!([jinn_cron::CRON_CONTRACT, "jinn:fs"]);
+    });
+    daemon.eventually(
         "the ungranted clock call to be refused on the ledger",
-        |document| {
-            entry_config(document, "cron-scheduler")["grants"] =
-                serde_json::json!([jinn_cron::CRON_CONTRACT, "jinn:fs"]);
-        },
         || {
             daemon
                 .ledger_kinds()
@@ -707,7 +711,7 @@ fn the_cron_grant_gates_the_consumer_peek() {
     };
     // Positive control: re-activate the consumer alone (nonce bump) — the
     // peek deterministically sees the job table.
-    daemon.edit_profile_until_restart("health-snapshot", |document| {
+    daemon.edit_profile_restarting("health-snapshot", |document| {
         entry_config(document, "health-snapshot")["data"]["nonce"] = serde_json::json!(1);
     });
     daemon.eventually("the granted peek to see the job table", || {
@@ -718,7 +722,7 @@ fn the_cron_grant_gates_the_consumer_peek() {
     // Withdraw the jinn:cron grant (the profile side's authority decision):
     // the peek is refused, the refusal is ledgered, and the consumer stays
     // honest about it.
-    daemon.edit_profile_until_restart("health-snapshot", |document| {
+    daemon.edit_profile_restarting("health-snapshot", |document| {
         let config = entry_config(document, "health-snapshot");
         config["grants"] = serde_json::json!(["cron:health", "jinn:fs"]);
         config["data"]["nonce"] = serde_json::json!(2);
@@ -733,5 +737,238 @@ fn the_cron_grant_gates_the_consumer_peek() {
         kinds.contains("GrantRefused"),
         "the refusal is a ledger event (Law 1/2): {kinds}"
     );
+    // FINDINGS.md #17 transcript (`grants-6778`), flipped: each edit was
+    // made ONCE and applied; no delivery was swallowed as the daemon's own
+    // echo under an all-empty success line.
+    assert_eq!(
+        daemon.swallowed_reconciles(),
+        0,
+        "no edit swallowed as an echo:\n{}",
+        daemon.log()
+    );
     daemon.interrupt();
+}
+
+/// FINDINGS.md #12 minimum + #18, through the real daemon: the readiness
+/// line is emitted exactly once, AFTER the boot reconcile logged, with the
+/// watcher armed and the canonical profile path — and the pair's boot
+/// evidence is already on disk when it appears (a launcher keys on this
+/// line, never on `boot.json`).
+#[test]
+fn readiness_is_announced_once_after_the_boot_reconcile() {
+    let Some(daemon) = booted("ready") else {
+        return;
+    };
+    let log = daemon.log();
+    let lines: Vec<&str> = log.lines().collect();
+    let ready = lines
+        .iter()
+        .position(|line| line.contains(READY))
+        .expect("the readiness line");
+    let reconciled = lines
+        .iter()
+        .position(|line| line.contains("reconciled"))
+        .expect("the boot reconcile logged");
+    assert!(
+        reconciled < ready,
+        "readiness follows the boot reconcile:\n{log}"
+    );
+    assert_eq!(
+        daemon.log_count(READY),
+        1,
+        "exactly one readiness line:\n{log}"
+    );
+    assert!(
+        lines[ready].contains(r#""watcher":"armed""#),
+        "{}",
+        lines[ready]
+    );
+    let canonical = daemon
+        .root
+        .join("profile.json")
+        .canonicalize()
+        .expect("the profile exists");
+    assert!(
+        lines[ready].contains(&canonical.display().to_string()),
+        "the line names the canonical profile: {}",
+        lines[ready]
+    );
+    assert!(
+        !log.contains("file watcher unavailable"),
+        "the watcher armed before any evidence:\n{log}"
+    );
+    daemon.interrupt();
+}
+
+/// FINDINGS.md #17 (transcript `grants-6778`) + #12, through the real
+/// daemon: an operator edit landing BEFORE the readiness line — while the
+/// daemon is still booting (its watcher arms before the boot reconcile,
+/// pin `9e61e47`) — is applied, never swallowed as the daemon's own
+/// write-back echo and never unseen. The edit halves the job period; a
+/// fire on an odd boundary of the halved grid proves it took, whichever
+/// way it landed (read by the boot itself, or reconciled right after it).
+#[test]
+fn an_edit_landing_before_readiness_is_applied() {
+    let Some(binary) = gate() else { return };
+    let root = fresh_root("edit-before-ready");
+    let daemon = Daemon::boot(binary, &root);
+    let halved = JOB_PERIOD_MS / 2;
+    daemon.edit_profile(|document| {
+        entry_config(document, "cron-scheduler")["data"]["jobs"][0]["every-ms"] =
+            serde_json::json!(halved);
+    });
+    let edited_before_ready = !daemon.is_ready();
+    daemon.await_ready();
+    assert!(
+        edited_before_ready,
+        "the edit landed before the readiness line (inside the boot window)"
+    );
+    daemon.eventually("a fire on the halved schedule", || {
+        fired_records(&daemon).iter().any(|record| {
+            record["scheduled-ms"]
+                .as_u64()
+                .is_some_and(|ms| ms % JOB_PERIOD_MS == halved)
+        })
+    });
+    assert_eq!(
+        daemon.swallowed_reconciles(),
+        0,
+        "the edit was never mistaken for the daemon's own echo:\n{}",
+        daemon.log()
+    );
+    daemon.interrupt();
+}
+
+/// FINDINGS.md #16 (transcript `clean-stop-6425`), flipped by pin
+/// `9e61e47`: a planned SIGINT landing MID-TICK drains the wake handler
+/// before the journal seals, so the whole tick lands — state, run record
+/// AND history line — never a prefix, nothing refused on the record. The
+/// SIGINT is aimed inside a firing tick (the consumer's probe write the
+/// log announces) over several stop/start cycles on one root; at least one
+/// must land inside the tick, and every one must leave state and history
+/// in exact agreement.
+#[test]
+fn a_stop_landing_mid_tick_lands_the_whole_tick() {
+    let Some(daemon) = booted("mid-tick") else {
+        return;
+    };
+    let root = daemon.root.clone();
+    let binary = gate().expect("gate already passed");
+    // A firing tick, in log order: state write → the consumer's probe,
+    // report → run record → history append. Non-firing wakes write state
+    // alone, so the probe write is the earliest mark that a FIRE is in
+    // flight with related effects still to come.
+    let probe_write = r#"operation="write" path="health/probe.txt""#;
+    let history_append = r#"operation="append" path="cron/history.jsonl""#;
+    let mut daemon = Some(daemon);
+    let mut drained = 0;
+    for cycle in 0..3 {
+        let live = daemon.take().unwrap_or_else(|| Daemon::boot(binary, &root));
+        live.await_ready();
+        let settled = fired_records(&live).len();
+        live.eventually("a settled fire", || fired_records(&live).len() > settled);
+        // Aim: the next fire's probe write, mid-tick.
+        let probes = live.log_count(probe_write);
+        live.interrupt_when("the next fire to be in flight", |live| {
+            live.log_count(probe_write) > probes
+        });
+        let log = log_at(&root);
+        // Drain evidence: the tick's history append logged AFTER the SIGINT.
+        let sigint = log.find("SIGINT: suspending").expect("the SIGINT logged");
+        if log[sigint..].contains(history_append) {
+            drained += 1;
+        }
+        let state = json_at(&root, "cron/state.json").expect("state persisted");
+        let last = state["last"]["health"].as_u64().expect("last");
+        let newest_fired = fired_records_at(&root)
+            .iter()
+            .filter_map(|record| record["scheduled-ms"].as_u64())
+            .max()
+            .expect("a fired record");
+        assert_eq!(
+            last, newest_fired,
+            "cycle {cycle}: the whole tick landed, no torn history line:\n{log}"
+        );
+        assert!(
+            root.join(format!("data/cron/runs/health/{last}.json"))
+                .is_file(),
+            "cycle {cycle}: the tick's run record landed"
+        );
+        let kinds = daemon_kinds_at(&root).join("\n");
+        assert!(
+            !kinds.contains("sealed") && !kinds.contains("InactiveContext"),
+            "cycle {cycle}: nothing refused after a seal:\n{kinds}"
+        );
+        assert!(
+            !kinds.contains("PluginFailed"),
+            "cycle {cycle}: the drained handler never failed:\n{kinds}"
+        );
+        assert!(
+            log.contains("quiescent; ledger flushed; bye"),
+            "cycle {cycle}"
+        );
+    }
+    assert!(
+        drained >= 1,
+        "at least one stop landed inside a tick and drained it"
+    );
+    eprintln!("mid-tick stops drained: {drained}/3");
+}
+
+/// FINDINGS.md #18, flipped by pin `9e61e47`: a RELATIVE `--profile` path
+/// resolves against the working directory — the daemon boots watched,
+/// announces readiness, and serves an edit (the watcher is armed on the
+/// canonical path). SOAK.md's absolute-path caveat retires on this proof.
+#[test]
+fn a_relative_profile_path_boots_watched() {
+    let Some(binary) = gate() else { return };
+    let root = fresh_root("relative");
+    let daemon = Daemon::boot_relative(binary, &root);
+    daemon.await_ready();
+    assert!(
+        !daemon.log().contains("file watcher unavailable"),
+        "{}",
+        daemon.log()
+    );
+    daemon.edit_profile_restarting("health-snapshot", |document| {
+        entry_config(document, "health-snapshot")["data"]["nonce"] = serde_json::json!(7);
+    });
+    daemon.interrupt();
+}
+
+/// FINDINGS.md #18's other half: a watcher that cannot arm (the profile's
+/// directory does not exist) refuses BEFORE the boot reconcile — no
+/// readiness line, no ledger, no data, exit 1. A launcher keyed on the
+/// readiness line can never mistake this for a running daemon.
+#[test]
+fn a_refused_watcher_writes_no_evidence() {
+    let Some(binary) = gate() else { return };
+    let root = fresh_root("unwatched");
+    let missing = root.join("missing");
+    let profile = missing.join("profile.json");
+    let ledger = root.join("ledger.sqlite");
+    let artifacts = root.join("artifacts");
+    let data = root.join("data");
+    let mut daemon = Daemon::spawn(
+        binary,
+        &root,
+        &root,
+        [
+            OsStr::new("--profile"),
+            profile.as_os_str(),
+            OsStr::new("--ledger"),
+            ledger.as_os_str(),
+            OsStr::new("--artifacts"),
+            artifacts.as_os_str(),
+            OsStr::new("--data"),
+            data.as_os_str(),
+        ],
+    );
+    let status = daemon.wait_exit();
+    let log = daemon.log();
+    assert_eq!(status.code(), Some(1), "{log}");
+    assert!(!log.contains(READY), "no readiness line:\n{log}");
+    assert!(!log.contains("reconciled"), "no boot reconcile:\n{log}");
+    assert!(!root.join("ledger.sqlite").exists(), "no ledger evidence");
+    assert!(!root.join("data").exists(), "no data evidence");
 }

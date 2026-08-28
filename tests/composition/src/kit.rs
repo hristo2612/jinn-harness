@@ -3,6 +3,7 @@
 //! shutdown. Time is the kernel's own (`jinn:clock`): the suite observes
 //! real fires on a fast kit rather than injecting instants.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::OnceLock;
@@ -70,17 +71,57 @@ pub struct Daemon {
     stderr: PathBuf,
 }
 
+/// The daemon's machine-readable readiness line (FINDINGS.md #12 minimum,
+/// pin `9e61e47`): emitted on stderr once the watcher is armed AND the boot
+/// reconcile is done — the operator lane keys on this, never on boot
+/// evidence.
+pub const READY: &str = r#""jinnd":"ready""#;
+
 impl Daemon {
-    /// Boots the pinned daemon binary over `root`.
+    /// Boots the pinned daemon binary over `root` with absolute paths.
     #[must_use]
     pub fn boot(binary: &Path, root: &Path) -> Self {
+        let profile = root.join("profile.json");
+        let ledger = root.join("ledger.sqlite");
+        Self::spawn(
+            binary,
+            root,
+            root,
+            [
+                OsStr::new("--profile"),
+                profile.as_os_str(),
+                OsStr::new("--ledger"),
+                ledger.as_os_str(),
+            ],
+        )
+    }
+
+    /// Boots the daemon from `root` as its working directory with RELATIVE
+    /// `--profile`/`--ledger` paths — the shape FINDINGS.md #18 was hit on.
+    #[must_use]
+    pub fn boot_relative(binary: &Path, root: &Path) -> Self {
+        Self::spawn(
+            binary,
+            root,
+            root,
+            ["--profile", "profile.json", "--ledger", "ledger.sqlite"].map(OsStr::new),
+        )
+    }
+
+    /// Spawns the daemon with `args` from `cwd`; its stderr lands under
+    /// `root`.
+    #[must_use]
+    pub fn spawn<'a>(
+        binary: &Path,
+        root: &Path,
+        cwd: &Path,
+        args: impl IntoIterator<Item = &'a OsStr>,
+    ) -> Self {
         let stderr = root.join("daemon.stderr");
         let sink = std::fs::File::create(&stderr).expect("stderr sink");
         let child = Command::new(binary)
-            .arg("--profile")
-            .arg(root.join("profile.json"))
-            .arg("--ledger")
-            .arg(root.join("ledger.sqlite"))
+            .args(args)
+            .current_dir(cwd)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(sink)
@@ -91,6 +132,19 @@ impl Daemon {
             root: root.to_path_buf(),
             stderr,
         }
+    }
+
+    /// Whether the readiness line has been emitted.
+    #[must_use]
+    pub fn is_ready(&self) -> bool {
+        self.log().contains(READY)
+    }
+
+    /// Waits for the readiness line — the ONLY gate the operator lane
+    /// needs before its first edit (the watcher is armed, the boot
+    /// reconcile is done).
+    pub fn await_ready(&self) {
+        self.eventually("the readiness line", || self.is_ready());
     }
 
     /// The daemon's stderr so far (its operator-facing log), ANSI styling
@@ -129,67 +183,31 @@ impl Daemon {
     }
 
     /// Edits the profile document (the operator lane the watcher serves)
-    /// by atomic replace — stage + rename, the duty driver's own write
-    /// shape, so the suite also proves the watcher follows renames.
+    /// by ONE atomic replace — stage + rename, the duty driver's own write
+    /// shape, so the suite also proves the watcher follows renames. One
+    /// edit is enough since pin `9e61e47`: the daemon recognizes its own
+    /// write-back by the bytes it wrote (FINDINGS.md #17 closed) and arms
+    /// its watcher before the boot reconcile (#18, #12 minimum), so an
+    /// edit is never swallowed and never unseen. The pre-`9e61e47`
+    /// mitigation (`edit_profile_until`: rewrite with different bytes until
+    /// the observation holds) is retired.
     pub fn edit_profile(&self, edit: impl FnOnce(&mut serde_json::Value)) {
-        self.edit_profile_bytes(edit, false);
-    }
-
-    /// One atomic edit; `trailing_newline` varies the rendering so two
-    /// attempts never carry the same bytes (see [`Self::edit_profile_until`]).
-    fn edit_profile_bytes(
-        &self,
-        edit: impl FnOnce(&mut serde_json::Value),
-        trailing_newline: bool,
-    ) {
         let path = self.root.join("profile.json");
         let mut document: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).expect("profile readable"))
                 .expect("profile parses");
         edit(&mut document);
-        let mut bytes = serde_json::to_vec_pretty(&document).expect("profile encodes");
-        if trailing_newline {
-            bytes.push(b'\n');
-        }
+        let bytes = serde_json::to_vec_pretty(&document).expect("profile encodes");
         let staging = self.root.join("profile.json.edit-tmp");
         std::fs::write(&staging, bytes).expect("profile stages");
         std::fs::rename(&staging, &path).expect("profile replaces");
     }
 
-    /// Edits the profile until `observed` holds — the operator-lane
-    /// mitigation for two daemon-side windows: an edit landing between the
-    /// boot reconcile and the watcher arming is unseen (FINDINGS.md #12),
-    /// and an edit landing while a reconcile is still applying is
-    /// remembered as the daemon's OWN write-back and every later delivery
-    /// of the same bytes is skipped as its echo (FINDINGS.md #17). So each
-    /// attempt is rewritten atomically with DIFFERENT bytes (a trailing
-    /// newline toggled) — the document is the same, the echo check is not
-    /// fooled.
-    pub fn edit_profile_until(
-        &self,
-        what: &str,
-        edit: impl Fn(&mut serde_json::Value),
-        mut observed: impl FnMut() -> bool,
-    ) {
-        let deadline = Instant::now() + DEADLINE;
-        let mut attempt = 0_u32;
-        while !observed() {
-            assert!(
-                Instant::now() < deadline,
-                "timed out waiting for {what}\n--- daemon log ---\n{}",
-                self.log()
-            );
-            self.edit_profile_bytes(&edit, attempt % 2 == 1);
-            attempt += 1;
-            std::thread::sleep(Duration::from_millis(500));
-        }
-    }
-
-    /// Edits the profile until the daemon reports `id` restarted (see
-    /// [`Self::edit_profile_until`]).
-    pub fn edit_profile_until_restart(&self, id: &str, edit: impl Fn(&mut serde_json::Value)) {
+    /// One edit, then waits for the daemon to report `id` restarted.
+    pub fn edit_profile_restarting(&self, id: &str, edit: impl FnOnce(&mut serde_json::Value)) {
         let restarts_before = self.restart_count(id);
-        self.edit_profile_until(&format!("{id} to restart on its config edit"), edit, || {
+        self.edit_profile(edit);
+        self.eventually(&format!("{id} to restart on its config edit"), || {
             self.restart_count(id) > restarts_before
         });
     }
@@ -200,6 +218,22 @@ impl Daemon {
         self.log()
             .matches(&format!(r#"restarted=[EntryId("{id}")]"#))
             .count()
+    }
+
+    /// How many log lines carry `needle`.
+    #[must_use]
+    pub fn log_count(&self, needle: &str) -> usize {
+        self.log().matches(needle).count()
+    }
+
+    /// The FINDINGS.md #17 signature: a `reconciled` line with EVERY list
+    /// empty — the diff never ran because a delivery was mistaken for the
+    /// daemon's own write-back echo. Since pin `9e61e47` an echo logs no
+    /// `reconciled` line at all and an identical operator rewrite reports
+    /// `unchanged=[…]`, so this count must stay zero.
+    #[must_use]
+    pub fn swallowed_reconciles(&self) -> usize {
+        self.log_count("reconciled created=[] restarted=[] disposed=[] unchanged=[]")
     }
 
     /// Every ledger event's `kind` text, in sequence order (Law 2 — the
@@ -231,27 +265,48 @@ impl Daemon {
     }
 
     /// Interrupts the daemon (the operator's Ctrl-C) and waits for a clean
-    /// exit — the planned-stop path: every fiber suspends, the kernel
-    /// reaches quiescence and flushes the ledger.
-    pub fn interrupt(mut self) {
+    /// exit — the planned-stop path: every fiber suspends (an in-flight
+    /// handler is drained first, pin `9e61e47`), the kernel reaches
+    /// quiescence and flushes the ledger.
+    pub fn interrupt(self) {
+        self.interrupt_when("now", |_| true);
+    }
+
+    /// Spins (1 ms) until `trigger` holds, then interrupts — for landing
+    /// the SIGINT inside a window the daemon's own log announces.
+    pub fn interrupt_when(mut self, what: &str, mut trigger: impl FnMut(&Self) -> bool) {
+        let deadline = Instant::now() + DEADLINE;
+        while !trigger(&self) {
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {what} before the SIGINT\n--- daemon log ---\n{}",
+                self.log()
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
         let status = Command::new("kill")
             .args(["-INT", &self.child.id().to_string()])
             .status()
             .expect("kill -INT");
         assert!(status.success(), "SIGINT delivered");
+        let status = self.wait_exit();
+        assert!(status.success(), "clean shutdown\n{}", self.log());
+    }
+
+    /// Waits for the daemon to exit on its own (a refused start) and
+    /// returns its status; a daemon still serving at [`DEADLINE`] is killed
+    /// and the test fails.
+    pub fn wait_exit(&mut self) -> std::process::ExitStatus {
         let deadline = Instant::now() + DEADLINE;
         loop {
             match self.child.try_wait().expect("daemon wait") {
-                Some(status) => {
-                    assert!(status.success(), "clean shutdown\n{}", self.log());
-                    return;
-                }
+                Some(status) => return status,
                 None if Instant::now() < deadline => {
                     std::thread::sleep(Duration::from_millis(100));
                 }
                 None => {
                     let _ = self.child.kill();
-                    panic!("daemon ignored SIGINT\n{}", self.log());
+                    panic!("daemon still serving\n{}", self.log());
                 }
             }
         }

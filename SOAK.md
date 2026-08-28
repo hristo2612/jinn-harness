@@ -8,9 +8,9 @@ periodic alarm at a 15-minute cadence (`tick-ms`), so the daemon is the only
 process on duty.
 
 **Soak started:** 2026-08-28T04:28:59Z · kernel pin `a17df864` (the pin at
-soak start; bumped mid-soak to `01133c45`, `41cb2f47`, and `4eb4a93`, all
-on 2026-08-28 — see §Pin bump mid-soak, and `KERNEL-PIN.md` owns the
-current pin) · harness `5c828c6` · job `health` every 900 000 ms, wake cadence
+soak start; bumped mid-soak to `01133c45`, `41cb2f47`, `4eb4a93` and
+`9e61e47`, all on 2026-08-28 — see §Pin bump mid-soak, and
+`KERNEL-PIN.md` owns the current pin) · harness `5c828c6` · job `health` every 900 000 ms, wake cadence
 900 000 ms.
 
 ## Layout
@@ -85,8 +85,9 @@ crash loop is throttled to one start per 30 s.
 **What the wrapper adds.** It derives `$SOAK` from `$HOME` (the plist cannot
 expand it), redirects the daemon's stderr into `logs/jinnd.log`, appends one
 `started (launchd; reason=...)` line to `ops.log`, writes `run/jinnd.pid`,
-and `exec`s the daemon with ABSOLUTE `--profile`/`--ledger` paths
-(FINDINGS.md #18). Because it `exec`s, the daemon inherits the wrapper's
+and `exec`s the daemon with absolute `--profile`/`--ledger` paths (its
+canonical form; since pin `9e61e47` the daemon resolves relative paths
+itself, FINDINGS.md #18 closed). Because it `exec`s, the daemon inherits the wrapper's
 pid: `run/jinnd.pid` is the daemon's own pid, the §Health check and §Stop
 are unchanged, and launchd keys `SuccessfulExit` on the daemon's own status.
 
@@ -129,15 +130,20 @@ is needed:
 ```sh
 SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
 printf planned-start > "$SOAK/run/launchd.reason"
+mark=$(wc -l < "$SOAK/logs/jinnd.log")
 launchctl kickstart gui/$(id -u)/run.jinn.harness-soak
-until [ -f "$SOAK/data/health/boot.json" ]; do sleep 1; done   # boot evidence
+until tail -n +"$((mark + 1))" "$SOAK/logs/jinnd.log" | grep -q '"jinnd":"ready"'; do sleep 1; done
 launchctl print gui/$(id -u)/run.jinn.harness-soak | grep -E 'state|pid'
 ```
 
-`boot.json` alone is not proof of a healthy start: the boot reconcile writes
-it BEFORE the file watcher is attempted (FINDINGS.md #18), so confirm the
-job is `running` with a pid, and that `jinnd.log` carries no `file watcher
-unavailable`.
+The start evidence is the daemon's READINESS line (since pin `9e61e47`,
+FINDINGS.md #12 minimum): one machine-readable line in `jinnd.log`,
+`{"jinnd":"ready","watcher":"armed","profile":"…"}`, emitted only once the
+file watcher is armed AND the boot reconcile is done. It is the line to
+key on — never `boot.json`: the watcher now arms (or refuses, exit 1)
+BEFORE any boot evidence is written (FINDINGS.md #18 closed), so a refused
+start leaves no `boot.json` and no readiness line, and a readiness line
+means a serving, watched daemon.
 
 **Unsupervised (the fallback, for a daemon deliberately outside the agent).**
 `detach.py` puts it in its own session — macOS has no `setsid`, and a plain
@@ -146,14 +152,18 @@ Do not run this while the agent is loaded; that is the double start.
 
 ```sh
 SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
+mark=$(wc -l < "$SOAK/logs/jinnd.log")
 /usr/bin/python3 "$SOAK/bin/detach.py" "$SOAK/logs/jinnd.log" \
   "$SOAK/bin/jinnd" --profile "$SOAK/profile.json" --ledger "$SOAK/ledger.sqlite" \
   > "$SOAK/run/jinnd.pid"
-until [ -f "$SOAK/data/health/boot.json" ]; do sleep 1; done   # boot evidence
+until tail -n +"$((mark + 1))" "$SOAK/logs/jinnd.log" | grep -q '"jinnd":"ready"'; do sleep 1; done
 echo "$(date -u +%FT%TZ) started: jinnd $(cat "$SOAK/run/jinnd.pid")" >> "$SOAK/logs/ops.log"
 ```
 
-Absolute `--profile`/`--ledger` paths in both lanes, always (FINDINGS.md #18).
+Both lanes pass absolute paths as a matter of form; a relative
+`--profile` is no longer a hazard (the daemon canonicalizes against its
+working directory before arming the watcher — the third-bump start slip
+recorded in §Pin bump mid-soak cannot recur at this pin).
 
 ## Health check (the one command)
 
@@ -203,10 +213,14 @@ while the soak is healthy — a hard kill is itself a crash-recovery
 observation and must be logged as one (the files survive it too: crash and
 clean stop agree on the disk outcome, only the clean path flushes).
 
-A stop that lands mid-tick (the wake handler in flight) can leave that
-tick torn — state advanced, its history line refused after the journal
-sealed (FINDINGS.md #16); the firing law absorbs it (no double fire, one
-lost record), and the ledger still carries the fire.
+A stop that lands mid-tick (the wake handler in flight) lands the WHOLE
+tick: since pin `9e61e47` the kernel drains the in-flight handler under
+the guest deadline before sealing the journal (FINDINGS.md #16 closed), so
+the state write, the run record and the history line all land and the
+suspension retains them — `cron/state.json`'s `last` and the newest
+history record agree exactly after every planned stop. (At `4eb4a93` such
+a stop tore the tick: state advanced, history line refused; the firing law
+absorbed it as one lost record.)
 
 **History of this section:** at pin `41cb2f47` a clean stop WITHDREW the
 fibers' fs contribution (FINDINGS.md #14), and the COO ruled on
@@ -288,6 +302,17 @@ rest one `skipped` record), and then performed the first CLEAN stop/start
 cycle of the soak as the proof that the ruling could be retired:
 `ops.log` carries the reboot line, the `pin bump 41cb2f47 -> 4eb4a93`
 line, the correction, and the clean cycle's before/after evidence.
+
+**Executed 2026-08-28 (fourth bump):** `4eb4a93` → `9e61e47` (jinnd
+M2-K5: drain-before-seal, one-shot own-write recognition,
+watch-before-evidence + readiness line; no contract delta), harness PR
+#7. The first fully supervised bump: a clean SIGINT stop of the
+`4eb4a93` daemon (planned, logged), Setup re-run from the bumped repo
+(the composition suite rebuilt the cached daemon at the new pin, the kit
+regenerated, the wrapper refreshed), then `printf planned-start` +
+`kickstart`. The start evidence was the readiness line, captured verbatim
+in `ops.log` beside the `pin bump 4eb4a93 -> 9e61e47` line; the post-bump
+`AlarmWake` → `DispatchTrace` → run record → append chain follows it.
 
 ## The +7d audit (closes the soak)
 
