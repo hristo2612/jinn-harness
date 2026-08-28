@@ -483,13 +483,38 @@ mod tests {
     }
 
     #[test]
-    fn absence_is_classified_from_the_provider_message() {
-        assert!(read_error_is_absence(
-            r#"fs read "cron/state.json": No such file or directory (os error 2)"#
-        ));
-        assert!(!read_error_is_absence(
-            r#"fs read "cron/state.json": Permission denied (os error 13)"#
-        ));
+    fn history_lines_round_trip_one_record_per_line() {
+        // The append lane: one JSON record per line, newline-terminated,
+        // so every fire is one O(1) append and the log decodes line by
+        // line (contract §Run history).
+        let mut log = Vec::new();
+        log.extend(history_line(&record(1)));
+        log.extend(history_line(&record(2)));
+        assert_eq!(log.iter().filter(|byte| **byte == b'\n').count(), 2);
+        let decoded = parse_history_lines(&log).expect("decodes");
+        assert_eq!(decoded, vec![record(1), record(2)]);
+        assert!(parse_history_lines(b"").expect("empty log").is_empty());
+        assert!(
+            parse_history_lines(b"\n\n").expect("blank lines are not records").is_empty()
+        );
+    }
+
+    #[test]
+    fn a_torn_history_line_is_reported_by_number_not_swallowed() {
+        let mut log = history_line(&record(1));
+        log.extend(b"{\"job\":\"j\",\"sched");
+        let refused = parse_history_lines(&log).expect_err("a torn tail is not a record");
+        assert!(refused.contains("line 2"), "{refused}");
+    }
+
+    #[test]
+    fn a_legacy_history_array_decodes_as_the_window_seed() {
+        // The pre-0.2.0 document (`cron/history.json`, one JSON array,
+        // rewritten per fire) is read once as the seed of the window and
+        // never written again.
+        let legacy = serde_json::to_vec(&vec![record(1), record(2)]).expect("encodes");
+        assert_eq!(parse_legacy_history(&legacy).expect("decodes").len(), 2);
+        assert!(parse_legacy_history(b"nope").is_err());
     }
 
     #[test]
