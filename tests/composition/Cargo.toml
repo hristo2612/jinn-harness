@@ -1,0 +1,21 @@
+# The real-composition gate (AGENTS.md standing order 3): boots the cron
+# profile through the REAL pinned jinnd daemon and proves the seam through
+# the loader — fire on schedule, reschedule on config edit, honest restart,
+# clean dispose. Self-skips LOUDLY when no jinnd checkout is reachable
+# (the pin gate's Gate-2 discipline); Gate 1 equivalents (unit tests, pin)
+# stay fail-closed everywhere.
+[package]
+name = "composition"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+harness-pin = { path = "../../tools/harness-pin" }
+jinn-cron = { path = "../../plugins/cron/jinn-cron" }
+# The ledger is the evidence surface (Law 2): tests read the daemon's
+# append-only SQLite directly. Bundled so CI needs no system sqlite.
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json = "1.0"

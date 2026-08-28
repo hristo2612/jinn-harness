@@ -1,0 +1,23 @@
+# The cron seam's provider guest: holds the schedule, listens on
+# `jinn:cron/tick`, emits typed fire events, provides `jinn:cron`, and keeps
+# run history + state through its granted `jinn:fs`. Compiles for
+# wasm32-unknown-unknown ONLY and is deliberately NOT a workspace member
+# (see the workspace manifest's note); `cron-kit` builds and encodes it.
+[package]
+name = "cron-scheduler"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-cron = { path = "../jinn-cron" }
+serde = "1.0"
+serde_json = "1.0"
+# Guest-side bindings of the pinned plugin world (kernel-pin/wit).
+wit-bindgen = "0.43.0"
+
+[workspace]

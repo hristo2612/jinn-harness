@@ -14,6 +14,18 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: privacy firewall (no tracked build state, no machine paths)
+        run: |
+          # The zero-personal-data bound, made mechanical: no target/ tree
+          # is ever tracked, and no tracked text contains a machine home
+          # path. This file excludes itself (it must name the pattern).
+          if git ls-files | grep -E '(^|/)target/'; then
+            echo "FAIL: tracked build state (target/) in the tree"; exit 1
+          fi
+          if git grep -I -n -E '/(Users|home)/[A-Za-z]' -- ':(exclude).github/workflows/ci.yml'; then
+            echo "FAIL: machine path in tracked content"; exit 1
+          fi
+          echo "privacy firewall clean"
       - name: fmt
         run: cargo fmt --check
       - name: clippy
@@ -25,18 +37,32 @@ jobs:
           # jinnd is private: with a read token configured, the pin gate's
           # kernel-checkout leg runs against a fresh clone; without one it
           # skips loudly while the vendored-surface leg stays fail-closed
-          # (see KERNEL-PIN.md).
+          # (see KERNEL-PIN.md). The real-composition crate runs in its own
+          # job below — excluded here so this lane stays fast.
           if [ -n "$JINND_READ_TOKEN" ]; then
             export JINND_CLONE_URL="https://x-access-token:${JINND_READ_TOKEN}@github.com/hristo2612/jinnd.git"
           fi
           # --nocapture so the pin gate's self-skip line is visible in the log
-          cargo test --workspace -- --nocapture
+          cargo test --workspace --exclude composition -- --nocapture
 
   composition-gate:
-    # Placeholder until the first plugin exists: this job then becomes the
-    # real-composition gate — boot a test profile through the real loader
-    # (AGENTS.md standing order 3; hand-mounted tests never count).
+    # The real-composition gate (AGENTS.md standing order 3): boots the
+    # cron profile through the REAL pinned jinnd daemon. jinnd is private:
+    # without the read token the gate self-skips loudly (KERNEL-PIN.md
+    # Gate-2 discipline); locally the sibling checkout makes it run
+    # everywhere the verify gate runs.
     runs-on: ubuntu-latest
     steps:
-      - name: pending
-        run: echo "composition gate pending — no plugins yet; becomes the real-loader profile boot when the first plugin lands"
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+      - name: real-composition (pinned jinnd daemon boots the cron profile)
+        env:
+          JINND_READ_TOKEN: ${{ secrets.JINND_READ_TOKEN }}
+        run: |
+          if [ -n "$JINND_READ_TOKEN" ]; then
+            export JINND_CLONE_URL="https://x-access-token:${JINND_READ_TOKEN}@github.com/hristo2612/jinnd.git"
+          fi
+          cargo test -p composition -- --nocapture

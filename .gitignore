@@ -1,1 +1,4 @@
-/target
+# Build state never enters history: target trees carry machine paths in
+# their metadata, and this repo's privacy bound is zero personal data. The
+# CI privacy-firewall gate enforces the same mechanically.
+target/
