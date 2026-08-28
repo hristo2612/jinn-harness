@@ -55,11 +55,14 @@ fn booted(name: &str) -> Option<Daemon> {
     Some(daemon)
 }
 
+/// The scheduler's history log: one record per line, grown by `append`.
 fn history(daemon: &Daemon) -> Vec<serde_json::Value> {
-    daemon
-        .data_json("cron/history.json")
-        .and_then(|value| value.as_array().cloned())
+    std::fs::read_to_string(daemon.data("cron/history.jsonl"))
         .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect()
 }
 
 fn fires(daemon: &Daemon) -> u64 {
@@ -169,10 +172,73 @@ fn fires_on_schedule_from_kernel_wakes_and_records_the_run() {
     for path in [
         run_record_path.as_str(),
         "cron/state.json",
-        "cron/history.json",
+        "cron/history.jsonl",
         "health/report.json",
     ] {
         assert!(kinds.contains(path), "{path} write is ledgered:\n{kinds}");
+    }
+    daemon.interrupt();
+}
+
+#[test]
+fn run_history_is_append_backed_and_the_consumer_sees_the_wider_surface() {
+    let Some(daemon) = booted("append") else {
+        return;
+    };
+    daemon.eventually("two fires", || fires(&daemon) >= 2);
+    // The history lane is append-only on the record (FINDINGS.md #3
+    // retired by the pin): every history effect is an `append` on the
+    // log, sized by the tick — never a `write` of the whole document.
+    let kinds = daemon.ledger_kinds().join("\n");
+    let appends = daemon.ledger_count("fs append cron/history.jsonl");
+    assert!(appends >= 3, "one append per recording tick: {kinds}");
+    assert_eq!(
+        daemon.ledger_count("fs write cron/history.jsonl"),
+        0,
+        "the log is never rewritten: {kinds}"
+    );
+    assert!(
+        !daemon.data("cron/history.json").exists(),
+        "no legacy array document is written"
+    );
+    // The log decodes line by line and holds every settled record —
+    // the schedule start and each fire.
+    let records = history(&daemon);
+    assert!(records.iter().any(|r| r["outcome"] == "schedule-started"));
+    assert!(fired_records(&daemon).len() >= 2, "{records:?}");
+    // The consumer's report is built from `list` and `meta`, not
+    // inferred: its own directory, the fired job's run records (one file
+    // per fire on disk), and the history log's size (Law 2: each is a
+    // ledgered contract call).
+    let report = daemon.data_json("health/report.json").expect("report");
+    let entries = report["dir"]["entries"].as_array().expect("dir listed");
+    assert!(entries.iter().any(|entry| entry == "probe.txt"), "{report}");
+    let runs_on_disk = std::fs::read_dir(daemon.data("cron/runs/health"))
+        .expect("run records dir")
+        .count() as u64;
+    let listed = report["run-records"]["count"]
+        .as_u64()
+        .expect("runs listed");
+    assert!(
+        listed >= 1 && listed <= runs_on_disk,
+        "the listed run records are the files on disk: {report}"
+    );
+    let log_size = report["history-log"]["size"].as_u64().expect("log stat");
+    assert!(log_size > 0, "{report}");
+    assert!(
+        log_size
+            <= std::fs::metadata(daemon.data("cron/history.jsonl"))
+                .expect("log")
+                .len(),
+        "meta reports the log as it was at the fire: {report}"
+    );
+    for operation in ["list", "meta"] {
+        assert!(
+            kinds.contains(&format!(
+                r#""contract":"jinn:fs","operation":"{operation}""#
+            )),
+            "{operation} is a ledgered contract call: {kinds}"
+        );
     }
     daemon.interrupt();
 }
@@ -182,10 +248,12 @@ fn corrupt_persisted_state_is_quarantined_and_recorded() {
     let Some(daemon) = booted("quarantine") else {
         return;
     };
-    // Build real state, then stop the daemon.
+    // Build real state, then stop the daemon — by the crash path: a clean
+    // shutdown would withdraw the persisted state this test corrupts
+    // (FINDINGS.md #14).
     daemon.eventually("the first fire", || fires(&daemon) >= 1);
     let root = daemon.root.clone();
-    daemon.interrupt();
+    daemon.kill();
     let fires_before = fires_at(&root);
 
     // Corrupt the persisted state on disk.
@@ -293,7 +361,12 @@ fn restart_rerequests_the_alarm_fires_once_and_records_the_gap() {
     };
     daemon.eventually("the first fire", || fires(&daemon) >= 1);
     let root = daemon.root.clone();
-    daemon.interrupt();
+    // The process dies hard: firing law #3 (state persists across daemon
+    // restarts) is proven through the crash path, because at this pin a
+    // clean SIGINT withdraws the fibers' fs contributions — the persisted
+    // schedule with them (FINDINGS.md #14; pinned by
+    // `a_clean_shutdown_withdraws_the_fibers_persisted_contribution`).
+    daemon.kill();
     let fires_before = fires_at(&root);
     // Sleep across several boundaries: alarms do not survive a restart
     // (the contract says so), and the daemon is down anyway.
@@ -365,6 +438,54 @@ fn restart_rerequests_the_alarm_fires_once_and_records_the_gap() {
         "alarm re-requested on activate"
     );
     daemon.interrupt();
+}
+
+#[test]
+fn a_clean_shutdown_withdraws_the_fibers_persisted_contribution() {
+    // FINDINGS.md #14, pinned as a reproducible transcript: at this pin
+    // every `jinn:fs` mutation joins its fiber's journal, and the daemon's
+    // graceful shutdown disposes every fiber — so a clean SIGINT withdraws
+    // the scheduler's persisted schedule state and history append, and the
+    // consumer's report, LIFO, on the record. The seam has no durable-state
+    // lane. When the kernel retires the finding this test goes red, and
+    // the restart tests above return to the clean path deliberately.
+    let Some(daemon) = booted("clean-stop") else {
+        return;
+    };
+    daemon.eventually("the first fire", || fires(&daemon) >= 1);
+    daemon.interrupt();
+    let kinds = daemon_kinds_at(&daemon_root("clean-stop")).join("\n");
+    for label in [
+        "fs write cron/state.json",
+        "fs append cron/history.jsonl",
+        "fs write health/report.json",
+    ] {
+        assert!(
+            kinds.contains(&format!(r#"EffectWithdrawn":{{"label":"{label}"#)),
+            "{label} is withdrawn by the clean shutdown: {kinds}"
+        );
+    }
+}
+
+/// The run root of a booted-then-stopped daemon named by `booted`.
+fn daemon_root(name: &str) -> PathBuf {
+    composition::daemon::workspace_root()
+        .join("target/composition/runs")
+        .join(format!("{name}-{}", std::process::id()))
+}
+
+/// Every ledger `kind` of a stopped daemon's root.
+fn daemon_kinds_at(root: &std::path::Path) -> Vec<String> {
+    let connection = rusqlite::Connection::open(root.join("ledger.sqlite")).expect("ledger");
+    let mut select = connection
+        .prepare("SELECT kind FROM events ORDER BY seq")
+        .expect("schema");
+    let kinds = select
+        .query_map([], |row| row.get::<_, String>(0))
+        .expect("reads")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("rows");
+    kinds
 }
 
 #[test]
@@ -447,7 +568,7 @@ fn the_cron_grant_gates_the_consumer_peek() {
     };
     // Positive control: re-activate the consumer alone (nonce bump) — the
     // peek deterministically sees the job table.
-    daemon.edit_profile(|document| {
+    daemon.edit_profile_until_restart("health-snapshot", |document| {
         entry_config(document, "health-snapshot")["data"]["nonce"] = serde_json::json!(1);
     });
     daemon.eventually("the granted peek to see the job table", || {
@@ -458,7 +579,7 @@ fn the_cron_grant_gates_the_consumer_peek() {
     // Withdraw the jinn:cron grant (the profile side's authority decision):
     // the peek is refused, the refusal is ledgered, and the consumer stays
     // honest about it.
-    daemon.edit_profile(|document| {
+    daemon.edit_profile_until_restart("health-snapshot", |document| {
         let config = entry_config(document, "health-snapshot");
         config["grants"] = serde_json::json!(["cron:health", "jinn:fs"]);
         config["data"]["nonce"] = serde_json::json!(2);

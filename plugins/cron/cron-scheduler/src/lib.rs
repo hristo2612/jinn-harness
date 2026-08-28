@@ -2,11 +2,12 @@
 //! pure firing law; this guest only wires them to the kernel surfaces:
 //! time arrives through the granted `jinn:clock` (a `now` read at
 //! activation, then the wakes of one periodic alarm), fires leave as
-//! events, state and history persist through the granted `jinn:fs`. Every
-//! contract crossing, every wake, and every fire emit (`DispatchTrace`) is
-//! a ledger event; the per-fire run-record write, whose label names the
-//! job and boundary, is the fire's outcome document (contract §Run
-//! history).
+//! events, state and history persist through the granted `jinn:fs`
+//! (0.2.0: typed `not-found`, keyed writes, and `append` for the history
+//! log — one O(1) append per tick, never a rewrite). Every contract
+//! crossing, every wake, and every fire emit (`DispatchTrace`) is a ledger
+//! event; the per-fire run-record write, whose label names the job and
+//! boundary, is the fire's outcome document (contract §Run history).
 //!
 //! Alarms do not survive a kernel restart (the clock contract's honest
 //! bound): the activate-time plan is this guest's re-entry — a catch-up
@@ -15,9 +16,10 @@
 use std::sync::Mutex;
 
 use jinn_cron::{
-    bounded_history, parse_config, plan_tick, read_error_is_absence, run_record_path, FirePayload,
-    JobSpec, ParsedConfig, RunOutcome, RunRecord, SchedulerState, TickPayload, CRON_CONTRACT,
-    HISTORY_CAP, HISTORY_PATH, QUARANTINE_DIR, STATE_PATH, WAKE_TOPIC,
+    bounded_history, history_line, parse_config, parse_history_lines, parse_legacy_history,
+    plan_tick, run_record_path, FirePayload, JobSpec, ParsedConfig, RunOutcome, RunRecord,
+    SchedulerState, TickPayload, CRON_CONTRACT, HISTORY_CAP, HISTORY_PATH, LEGACY_HISTORY_PATH,
+    QUARANTINE_DIR, STATE_PATH, WAKE_TOPIC,
 };
 
 wit_bindgen::generate!({
@@ -33,14 +35,23 @@ const EFFECT_TOKEN: u64 = 1;
 /// The token the alarm is requested under; a wake carrying any other
 /// token is not ours.
 const ALARM_TOKEN: u64 = 2;
+/// No idempotency claim: each state write and history append is a new
+/// effect by construction (a tick never repeats within a fiber).
+const NO_KEY: &str = "";
 
 static JOBS: Mutex<Vec<JobSpec>> = Mutex::new(Vec::new());
 static STATE: Mutex<Option<SchedulerState>> = Mutex::new(None);
+/// The bounded window the `history` operation serves; the log on disk is
+/// the append-only lane it is seeded from.
 static HISTORY: Mutex<Vec<RunRecord>> = Mutex::new(Vec::new());
 /// Wake editions since activation (`tick-seq`); the activate plan is 0.
 static WAKES: Mutex<u64> = Mutex::new(0);
 
 fn fault(context: &str, error: jinn::plugin::types::KernelError) -> GuestFault {
+    GuestFault::Failed(format!("{context}: {error:?}"))
+}
+
+fn fs_fault(context: &str, error: fs::FsError) -> GuestFault {
     GuestFault::Failed(format!("{context}: {error:?}"))
 }
 
@@ -57,27 +68,18 @@ enum Loaded<T> {
     Corrupt { bytes: Vec<u8>, detail: String },
 }
 
-/// Reads one persisted JSON document. Absence is the only silent case; a
-/// read refusal that is NOT absence (permissions, provider failure) fails
-/// the activation loudly — defaulting there could re-fire boundaries the
-/// lost state already processed.
-fn load_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<Loaded<T>, GuestFault> {
+/// Reads one persisted document. Absence is the bundle's TYPED answer
+/// (`not-found`) and the only silent case; any other refusal (denied,
+/// provider failure) fails the activation loudly — defaulting there could
+/// re-fire boundaries the lost state already processed.
+fn load<T>(path: &str, decode: impl FnOnce(&[u8]) -> Result<T, String>) -> Result<Loaded<T>, GuestFault> {
     match fs::read(path) {
-        Ok(bytes) => match serde_json::from_slice(&bytes) {
-            Ok(value) => Ok(Loaded::Value(value)),
-            Err(refused) => Ok(Loaded::Corrupt {
-                bytes,
-                detail: refused.to_string(),
-            }),
-        },
-        Err(refused) => {
-            let message = format!("{refused:?}");
-            if read_error_is_absence(&message) {
-                Ok(Loaded::Absent)
-            } else {
-                Err(GuestFault::Failed(format!("read {path}: {message}")))
-            }
-        }
+        Ok(bytes) => Ok(match decode(&bytes) {
+            Ok(value) => Loaded::Value(value),
+            Err(detail) => Loaded::Corrupt { bytes, detail },
+        }),
+        Err(fs::FsError::NotFound) => Ok(Loaded::Absent),
+        Err(refused) => Err(fs_fault(&format!("read {path}"), refused)),
     }
 }
 
@@ -87,7 +89,7 @@ fn load_json<T: serde::de::DeserializeOwned>(path: &str) -> Result<Loaded<T>, Gu
 fn quarantine(path: &str, bytes: &[u8], detail: &str) -> Result<RunRecord, GuestFault> {
     let name = path.rsplit('/').next().unwrap_or(path);
     let preserved = format!("{QUARANTINE_DIR}/{name}");
-    fs::write(&preserved, bytes).map_err(|error| fault("quarantine write", error))?;
+    fs::write(&preserved, bytes, NO_KEY).map_err(|error| fs_fault("quarantine write", error))?;
     Ok(RunRecord {
         job: String::new(),
         scheduled_ms: 0,
@@ -99,6 +101,24 @@ fn quarantine(path: &str, bytes: &[u8], detail: &str) -> Result<RunRecord, Guest
             extra: jinn_cron::Extensions::new(),
         },
         extra: jinn_cron::Extensions::new(),
+    })
+}
+
+/// Loads one document into a value, quarantining a corrupt one into
+/// `faults` and answering `absent` for a missing one.
+fn load_or_quarantine<T>(
+    path: &str,
+    decode: impl FnOnce(&[u8]) -> Result<T, String>,
+    absent: T,
+    faults: &mut Vec<RunRecord>,
+) -> Result<T, GuestFault> {
+    Ok(match load(path, decode)? {
+        Loaded::Value(held) => held,
+        Loaded::Absent => absent,
+        Loaded::Corrupt { bytes, detail } => {
+            faults.push(quarantine(path, &bytes, &detail)?);
+            absent
+        }
     })
 }
 
@@ -138,17 +158,19 @@ fn emit_fire(fire: &FirePayload) -> RunRecord {
 
 fn persist_state(next: &SchedulerState) -> Result<(), GuestFault> {
     let bytes = serde_json::to_vec(next).expect("state encodes");
-    fs::write(STATE_PATH, &bytes).map_err(|error| fault("state write", error))
+    fs::write(STATE_PATH, &bytes, NO_KEY).map_err(|error| fs_fault("state write", error))
 }
 
+/// Extends the window and appends the new records to the log — ONE
+/// `append` effect per tick, sized by the tick's records, never by the
+/// history (the O(n)-per-fire rewrite is retired; FINDINGS.md #3).
 fn persist_history(records: Vec<RunRecord>) -> Result<(), GuestFault> {
-    let history = {
+    let lines: Vec<u8> = records.iter().flat_map(history_line).collect();
+    {
         let mut held = HISTORY.lock().unwrap();
         *held = bounded_history(std::mem::take(&mut *held), records, HISTORY_CAP);
-        held.clone()
-    };
-    let bytes = serde_json::to_vec(&history).expect("history encodes");
-    fs::write(HISTORY_PATH, &bytes).map_err(|error| fault("history write", error))
+    }
+    fs::append(HISTORY_PATH, &lines, NO_KEY).map_err(|error| fs_fault("history append", error))
 }
 
 /// One consultation of the firing law at `tick`: persist state, emit the
@@ -166,10 +188,11 @@ fn run_tick(tick: &TickPayload) -> Result<u64, GuestFault> {
         // The per-fire record write: one identifiable granted-write effect
         // per fire — its ledger label names the job and the boundary; the
         // kernel's DispatchTrace on the emit is the audit line, this is
-        // the outcome document (contract §Run history).
+        // the outcome document (contract §Run history). The boundary IS
+        // the fire's identity, so it is the write's idempotency key.
         let path = run_record_path(&fire.job, fire.scheduled_ms);
         let bytes = serde_json::to_vec_pretty(&record).expect("run record encodes");
-        fs::write(&path, &bytes).map_err(|error| fault("run-record write", error))?;
+        fs::write(&path, &bytes, &path).map_err(|error| fs_fault("run-record write", error))?;
         records.push(record);
     }
     if !records.is_empty() {
@@ -209,22 +232,28 @@ impl Guest for Scheduler {
         // Absence is the only silent default; a corrupt document is
         // preserved under quarantine and recorded (contract §Persistence
         // honesty).
-        *STATE.lock().unwrap() = match load_json::<SchedulerState>(STATE_PATH)? {
-            Loaded::Value(held) => Some(held),
-            Loaded::Absent => None,
-            Loaded::Corrupt { bytes, detail } => {
-                fault_records.push(quarantine(STATE_PATH, &bytes, &detail)?);
-                None
-            }
-        };
-        *HISTORY.lock().unwrap() = match load_json::<Vec<RunRecord>>(HISTORY_PATH)? {
-            Loaded::Value(held) => held,
-            Loaded::Absent => Vec::new(),
-            Loaded::Corrupt { bytes, detail } => {
-                fault_records.push(quarantine(HISTORY_PATH, &bytes, &detail)?);
-                Vec::new()
-            }
-        };
+        *STATE.lock().unwrap() = load_or_quarantine(
+            STATE_PATH,
+            |bytes| serde_json::from_slice(bytes).map_err(|error| error.to_string()),
+            None,
+            &mut fault_records,
+        )?;
+        // The window: the legacy array (read once, never written again)
+        // seeds it, then the append log — in that order, so a pre-0.2.0
+        // root carries its records forward without duplicating them.
+        let legacy = load_or_quarantine(
+            LEGACY_HISTORY_PATH,
+            |bytes| parse_legacy_history(bytes),
+            Vec::new(),
+            &mut fault_records,
+        )?;
+        let log = load_or_quarantine(
+            HISTORY_PATH,
+            |bytes| parse_history_lines(bytes),
+            Vec::new(),
+            &mut fault_records,
+        )?;
+        *HISTORY.lock().unwrap() = bounded_history(legacy, log, HISTORY_CAP);
         effects::register("cron-scheduler on duty", EFFECT_TOKEN)
             .map_err(|error| fault("effect", error))?;
         services::provide(CRON_CONTRACT).map_err(|error| fault("provide", error))?;

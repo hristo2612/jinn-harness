@@ -29,8 +29,15 @@ pub const OP_JOBS: &str = "jobs";
 pub const OP_HISTORY: &str = "history";
 /// The scheduler's persisted state, under its `jinn:fs` scope.
 pub const STATE_PATH: &str = "cron/state.json";
-/// The bounded run history, under its `jinn:fs` scope.
-pub const HISTORY_PATH: &str = "cron/history.json";
+/// The run-history log, under its `jinn:fs` scope: one JSON record per
+/// line, grown ONLY by `jinn:fs` `append` (O(1) per record — the
+/// rewrite-per-fire pattern of FINDINGS.md #3 is retired). The log is the
+/// append-only lane; the `history` operation serves the bounded window.
+pub const HISTORY_PATH: &str = "cron/history.jsonl";
+/// The pre-0.2.0 history document (one JSON array, rewritten per fire).
+/// Read once at activation as the seed of the window when the log does not
+/// exist yet; never written again.
+pub const LEGACY_HISTORY_PATH: &str = "cron/history.json";
 /// Where a corrupt persisted document is preserved before the scheduler
 /// starts fresh (contract §Persistence honesty).
 pub const QUARANTINE_DIR: &str = "cron/quarantine";
@@ -281,13 +288,42 @@ pub fn run_record_path(job: &str, scheduled_ms: u64) -> String {
     format!("cron/runs/{job}/{scheduled_ms}.json")
 }
 
-/// Whether a `jinn:fs` read refusal reports genuine absence (the world's
-/// fs interface has no typed not-found — FINDINGS.md #3 — so absence is
-/// classified from the provider's message; anything else is NOT absence
-/// and must not silently default).
+/// One history record as one appendable line: its JSON, newline-terminated.
 #[must_use]
-pub fn read_error_is_absence(message: &str) -> bool {
-    message.contains("os error 2") || message.contains("No such file")
+pub fn history_line(record: &RunRecord) -> Vec<u8> {
+    let mut line = serde_json::to_vec(record).expect("run record encodes");
+    line.push(b'\n');
+    line
+}
+
+/// Decodes the history log ([`HISTORY_PATH`]): one record per non-blank
+/// line, in order. A line that does not decode — a torn tail after a crash
+/// mid-append, or foreign bytes — is an `Err` naming its 1-based line: the
+/// caller quarantines the document (contract §Persistence honesty) rather
+/// than silently keeping a prefix.
+///
+/// # Errors
+///
+/// A non-blank line is not a run record.
+pub fn parse_history_lines(bytes: &[u8]) -> Result<Vec<RunRecord>, String> {
+    bytes
+        .split(|byte| *byte == b'\n')
+        .enumerate()
+        .filter(|(_, line)| !line.iter().all(u8::is_ascii_whitespace))
+        .map(|(index, line)| {
+            serde_json::from_slice(line).map_err(|error| format!("line {}: {error}", index + 1))
+        })
+        .collect()
+}
+
+/// Decodes the legacy history document ([`LEGACY_HISTORY_PATH`]): one JSON
+/// array of records.
+///
+/// # Errors
+///
+/// The document is not a JSON array of run records.
+pub fn parse_legacy_history(bytes: &[u8]) -> Result<Vec<RunRecord>, String> {
+    serde_json::from_slice(bytes).map_err(|error| error.to_string())
 }
 
 /// Appends `new` to `history`, keeping the newest `cap` records.
@@ -494,9 +530,9 @@ mod tests {
         let decoded = parse_history_lines(&log).expect("decodes");
         assert_eq!(decoded, vec![record(1), record(2)]);
         assert!(parse_history_lines(b"").expect("empty log").is_empty());
-        assert!(
-            parse_history_lines(b"\n\n").expect("blank lines are not records").is_empty()
-        );
+        assert!(parse_history_lines(b"\n\n")
+            .expect("blank lines are not records")
+            .is_empty());
     }
 
     #[test]
