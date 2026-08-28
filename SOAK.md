@@ -104,6 +104,16 @@ logs either way**: `stopped (clean; fs contribution withdrawn per FINDINGS
 was not stopped after the `41cb2f47` start; the choice is the COO's when
 the next planned stop comes.
 
+**COO ruling (2026-08-28, standing until the kernel retires FINDINGS #14):
+planned stops use the HARD path** — `kill -9`, logged `stopped (hard,
+planned; files kept per FINDINGS #14 + COO ruling)`. Rationale: the soak's
+duty-continuity records (state, history log, run records) are the +7d
+audit's evidence and must not be reverted; the clean path's withdrawal
+behavior is already pinned as a composition transcript test, so re-driving
+it on the live soak adds no evidence. SQLite WAL makes the skipped flush
+barrier crash-safe; count each hard stop as a planned stop, not a crash,
+in the audit's restart tally.
+
 ```sh
 SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
 kill -INT "$(cat "$SOAK/run/jinnd.pid")"
