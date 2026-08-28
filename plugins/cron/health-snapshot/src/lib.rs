@@ -10,7 +10,9 @@
 //! The cron-plane peek (`jinn:cron` resolve + `jobs` call) happens in
 //! `activate` and ONLY there: calling back into the scheduler while
 //! handling a fire deadlocks the seam until the kernel's guest deadline
-//! kills the call (FINDINGS.md #4).
+//! kills the call (FINDINGS.md #4). World `jinn:plugin@0.3.0`: the report
+//! is the entry's continuing record — a daemon stop suspends this fiber
+//! and retains it; only removal from the profile withdraws it.
 
 use std::sync::Mutex;
 

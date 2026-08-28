@@ -8,9 +8,9 @@ periodic alarm at a 15-minute cadence (`tick-ms`), so the daemon is the only
 process on duty.
 
 **Soak started:** 2026-08-28T04:28:59Z · kernel pin `a17df864` (the pin at
-soak start; bumped mid-soak to `01133c45` and then to `41cb2f47`, both on
-2026-08-28 — see §Pin bump mid-soak, and `KERNEL-PIN.md` owns the current
-pin) · harness `5c828c6` · job `health` every 900 000 ms, wake cadence
+soak start; bumped mid-soak to `01133c45`, `41cb2f47`, and `4eb4a93`, all
+on 2026-08-28 — see §Pin bump mid-soak, and `KERNEL-PIN.md` owns the
+current pin) · harness `5c828c6` · job `health` every 900 000 ms, wake cadence
 900 000 ms.
 
 ## Layout
@@ -86,50 +86,53 @@ read-only handle cannot join the live WAL.)
 
 ## Stop
 
-SIGINT to the daemon — it disposes all fibers (cancelling the scheduler's
-alarm with the rest of its contribution), reaches quiescence, and flushes
-the ledger before exiting.
-
-**Since pin `41cb2f47` a clean stop also WITHDRAWS every `jinn:fs`
-mutation the fibers made in that process** — the scheduler's state and
-history-log appends, the consumer's report — restoring their content at
-each fiber's activation (FINDINGS.md #14). The ledger keeps every fire; the
-files do not, and the next start re-starts the schedule fresh (no catch-up,
-no `skipped` record) — a duty gap the +7d audit must count. A hard kill
-(SIGKILL) leaves the files intact but skips the ledger flush barrier and
-is a crash-recovery observation by this document's own rule. **Until the
-kernel retires the finding, a planned stop is a decision the operator
-logs either way**: `stopped (clean; fs contribution withdrawn per FINDINGS
-#14)` or `stopped (hard, planned; files kept per FINDINGS #14)`. The soak
-was not stopped after the `41cb2f47` start; the choice is the COO's when
-the next planned stop comes.
-
-**COO ruling (2026-08-28, standing until the kernel retires FINDINGS #14):
-planned stops use the HARD path** — `kill -9`, logged `stopped (hard,
-planned; files kept per FINDINGS #14 + COO ruling)`. Rationale: the soak's
-duty-continuity records (state, history log, run records) are the +7d
-audit's evidence and must not be reverted; the clean path's withdrawal
-behavior is already pinned as a composition transcript test, so re-driving
-it on the live soak adds no evidence. SQLite WAL makes the skipped flush
-barrier crash-safe; count each hard stop as a planned stop, not a crash,
-in the audit's restart tally.
+SIGINT to the daemon — the planned-stop path. Since pin `4eb4a93` (jinnd
+M2-K4: suspend ≠ dispose) a clean stop SUSPENDS every fiber: kernel
+registrations release (the scheduler's alarm, its `jinn:cron` provision,
+the consumer's listener — their inverses run, on the record), every
+`jinn:fs` mutation the fibers made is RETAINED for its profile entry (the
+schedule state, the history log, the run records, the consumer's report
+stay exactly as the fibers left them; their durable inverses stay under
+`data.inverses/`), one typed `FiberSuspended { retained }` event lands per
+fiber, and the daemon reaches quiescence and flushes the ledger before
+exiting. A clean stop is therefore a duty-continuity event, not a state
+event: the next start resumes the schedule from the persisted `last`.
 
 ```sh
 SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
 kill -INT "$(cat "$SOAK/run/jinnd.pid")"
-echo "$(date -u +%FT%TZ) stopped" >> "$SOAK/logs/ops.log"
+echo "$(date -u +%FT%TZ) stopped (clean; fibers suspended, state retained)" >> "$SOAK/logs/ops.log"
 ```
 
 Wait for the jinnd process to exit before restarting; `quiescent; ledger
-flushed; bye` in `jinnd.log` is the clean-shutdown evidence. Never
-`kill -9` the daemon while the soak is healthy — a hard kill is itself a
-crash-recovery observation and must be logged as one.
+flushed; bye` in `jinnd.log` and the two `FiberSuspended` rows at the
+ledger's tail are the clean-shutdown evidence. Never `kill -9` the daemon
+while the soak is healthy — a hard kill is itself a crash-recovery
+observation and must be logged as one (the files survive it too: crash and
+clean stop agree on the disk outcome, only the clean path flushes).
+
+A stop that lands mid-tick (the wake handler in flight) can leave that
+tick torn — state advanced, its history line refused after the journal
+sealed (FINDINGS.md #16); the firing law absorbs it (no double fire, one
+lost record), and the ledger still carries the fire.
+
+**History of this section:** at pin `41cb2f47` a clean stop WITHDREW the
+fibers' fs contribution (FINDINGS.md #14), and the COO ruled on
+2026-08-28 that planned stops use the hard path (`kill -9`, logged
+`stopped (hard, planned; files kept per FINDINGS #14 + COO ruling)`)
+until the kernel retired the finding. **That ruling is retired as of pin
+`4eb4a93` (same day):** the finding is closed kernel-side, the clean path
+preserves the audit evidence, and SIGINT is the planned-stop path again.
+The soak's one `41cb2f47`-era stop ended up being neither: the host
+rebooted (see §Pin bump mid-soak, third bump).
 
 ## Restart
 
 Stop, then Start, over the SAME root — `ledger.sqlite` and `data/` are
-never reset during the soak. Alarms do not survive a kernel restart, so the
-scheduler re-requests its alarm and runs one plan immediately at `activate`:
+never reset during the soak. The schedule RESUMES from the persisted
+`cron/state.json` (no second `schedule-started`). Alarms do not survive a
+kernel restart, so the scheduler re-requests its alarm and runs one plan
+immediately at `activate`:
 the catch-up fire lands at boot rather than one period later. The firing law
 absorbs the gap honestly: at most one catch-up fire, missed boundaries land
 as one `skipped` record, no backfill. Restarts are part of what the soak
@@ -166,6 +169,22 @@ scheduler read the legacy `cron/history.json` once as its window seed and
 opened `cron/history.jsonl` as the append lane; `ops.log` carries the
 `pin bump 01133c45 -> 41cb2f47` line and the before/after evidence.
 
+**Executed 2026-08-28 (third bump):** `41cb2f47` → `4eb4a93` (jinnd
+M2-K4: suspend ≠ dispose, `jinn:plugin@0.3.0`), harness PR #5. The
+planned stop never happened: the host rebooted at 13:36:01Z and the
+`41cb2f47` daemon died with it — logged in `ops.log` as an UNPLANNED
+crash-recovery observation (the disk outcome is a hard kill's: files
+intact, the WAL's last rows committed), which pre-empted the standing
+hard-stop ruling's last use. The first `4eb4a93` start was launched
+with relative paths and exited after its boot reconcile (the watcher
+refused — FINDINGS.md #18; an operator slip, corrected in `ops.log`); the
+start per §Start over the same root resumed the schedule from the
+persisted `last` (one catch-up fire for the newest missed boundary, the
+rest one `skipped` record), and then performed the first CLEAN stop/start
+cycle of the soak as the proof that the ruling could be retired:
+`ops.log` carries the reboot line, the `pin bump 41cb2f47 -> 4eb4a93`
+line, the correction, and the clean cycle's before/after evidence.
+
 ## The +7d audit (closes the soak)
 
 At soak start + 7 days, against `ops.log`, the ledger, and `data/`:
@@ -173,7 +192,9 @@ fire count vs expected (4/hour × wall time, minus recorded gaps),
 missed/skipped record audit, ledger growth rate (rows and bytes — the byte curve watched HostFs
 undo retention in RAM until pin `41cb2f47`, and from there the durable
 retention store `$SOAK/data.inverses/` plus the append-only history log,
-FINDINGS.md #8 closed), memory/disk footprint, restart/crash log, zero
+FINDINGS.md #8 closed), memory/disk footprint, restart/crash log (the 2026-08-28 host reboot
+counts as a crash, the clean stop/start cycle after the third bump as a
+planned restart), zero
 old-gateway interaction (the daemon touches nothing outside `$SOAK`), and
 post-bump fire evidence: `AlarmWake` + `DispatchTrace` lines in the ledger
 after the bump timestamp, with the per-tick ledger row cost compared before

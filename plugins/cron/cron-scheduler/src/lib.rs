@@ -12,6 +12,11 @@
 //! Alarms do not survive a kernel restart (the clock contract's honest
 //! bound): the activate-time plan is this guest's re-entry — a catch-up
 //! lands at once, never one period later (FINDINGS.md #13).
+//!
+//! World `jinn:plugin@0.3.0` (suspend ≠ dispose): a daemon stop or a
+//! config-edit restart SUSPENDS this fiber — the persisted state and
+//! history stay on disk for the entry, `undo` never runs on suspension —
+//! and only the entry's removal from the profile withdraws them.
 
 use std::sync::Mutex;
 

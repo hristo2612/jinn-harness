@@ -175,13 +175,16 @@ identity — so a repeated delivery within one fiber answers the recorded
 effect instead of writing twice; state writes and history appends claim
 no key (each is a new effect by construction — a tick never repeats).
 
-**Persistence across a clean daemon stop does not hold at kernel pin
-`41cb2f47`** (FINDINGS.md #14): every granted fs mutation is withdrawn
-with its fiber, and a graceful shutdown disposes every fiber, so the
-persisted state and history are reverted to their content at that
-fiber's activation. A process death leaves them intact. Firing law #3 is
-stated as the contract's intent and proven through the crash path until
-the kernel provides a durable-state lane.
+**Persistence across a clean daemon stop holds since kernel pin
+`4eb4a93`** (`jinn:plugin@0.3.0`; FINDINGS.md #14 closed): a stop or a
+config-edit restart SUSPENDS the scheduler — its persisted state and
+history are retained for its profile entry and the next incarnation
+resumes the schedule — and only the entry's removal from the profile
+withdraws them. (At pin `41cb2f47` a clean stop withdrew them with the
+fiber; firing law #3 was then proven through the crash path.) A stop that
+lands mid-tick can leave that tick torn — state advanced, its history line
+refused after the journal sealed (FINDINGS.md #16) — which §Run history
+absorbs: one lost record, never a doubled fire.
 
 ## Persistence honesty
 

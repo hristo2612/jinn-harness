@@ -94,29 +94,10 @@ impl Daemon {
     }
 
     /// The daemon's stderr so far (its operator-facing log), ANSI styling
-    /// stripped: the daemon colors unconditionally, and the escape codes
-    /// sit between a field's name, `=`, and value — a raw substring match
-    /// across them can never hold.
+    /// stripped (see [`strip_ansi`]).
     #[must_use]
     pub fn log(&self) -> String {
-        let raw = std::fs::read_to_string(&self.stderr).unwrap_or_default();
-        let mut text = String::with_capacity(raw.len());
-        let mut chars = raw.chars();
-        while let Some(next) = chars.next() {
-            if next != '\u{1b}' {
-                text.push(next);
-                continue;
-            }
-            if chars.next() == Some('[') {
-                // A CSI sequence: parameters, then one final byte in @..=~.
-                for terminator in chars.by_ref() {
-                    if ('@'..='~').contains(&terminator) {
-                        break;
-                    }
-                }
-            }
-        }
-        text
+        strip_ansi(&std::fs::read_to_string(&self.stderr).unwrap_or_default())
     }
 
     /// Polls until `check` holds; panics with `what` (and the daemon log)
@@ -151,37 +132,66 @@ impl Daemon {
     /// by atomic replace — stage + rename, the duty driver's own write
     /// shape, so the suite also proves the watcher follows renames.
     pub fn edit_profile(&self, edit: impl FnOnce(&mut serde_json::Value)) {
+        self.edit_profile_bytes(edit, false);
+    }
+
+    /// One atomic edit; `trailing_newline` varies the rendering so two
+    /// attempts never carry the same bytes (see [`Self::edit_profile_until`]).
+    fn edit_profile_bytes(
+        &self,
+        edit: impl FnOnce(&mut serde_json::Value),
+        trailing_newline: bool,
+    ) {
         let path = self.root.join("profile.json");
         let mut document: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).expect("profile readable"))
                 .expect("profile parses");
         edit(&mut document);
+        let mut bytes = serde_json::to_vec_pretty(&document).expect("profile encodes");
+        if trailing_newline {
+            bytes.push(b'\n');
+        }
         let staging = self.root.join("profile.json.edit-tmp");
-        std::fs::write(
-            &staging,
-            serde_json::to_vec_pretty(&document).expect("profile encodes"),
-        )
-        .expect("profile stages");
+        std::fs::write(&staging, bytes).expect("profile stages");
         std::fs::rename(&staging, &path).expect("profile replaces");
     }
 
-    /// Edits the profile until the daemon reports `id` restarted — the
-    /// FINDINGS.md #12 mitigation: an edit landing in the window between
-    /// the boot reconcile and the watcher arming is silently unseen, so
-    /// the operator lane rewrites (atomically, the same bytes) until the
-    /// expected restart shows in the log.
-    pub fn edit_profile_until_restart(&self, id: &str, edit: impl Fn(&mut serde_json::Value)) {
-        let restarts_before = self.restart_count(id);
+    /// Edits the profile until `observed` holds — the operator-lane
+    /// mitigation for two daemon-side windows: an edit landing between the
+    /// boot reconcile and the watcher arming is unseen (FINDINGS.md #12),
+    /// and an edit landing while a reconcile is still applying is
+    /// remembered as the daemon's OWN write-back and every later delivery
+    /// of the same bytes is skipped as its echo (FINDINGS.md #17). So each
+    /// attempt is rewritten atomically with DIFFERENT bytes (a trailing
+    /// newline toggled) — the document is the same, the echo check is not
+    /// fooled.
+    pub fn edit_profile_until(
+        &self,
+        what: &str,
+        edit: impl Fn(&mut serde_json::Value),
+        mut observed: impl FnMut() -> bool,
+    ) {
         let deadline = Instant::now() + DEADLINE;
-        while self.restart_count(id) == restarts_before {
+        let mut attempt = 0_u32;
+        while !observed() {
             assert!(
                 Instant::now() < deadline,
-                "timed out waiting for {id} to restart on its config edit\n--- daemon log ---\n{}",
+                "timed out waiting for {what}\n--- daemon log ---\n{}",
                 self.log()
             );
-            self.edit_profile(&edit);
+            self.edit_profile_bytes(&edit, attempt % 2 == 1);
+            attempt += 1;
             std::thread::sleep(Duration::from_millis(500));
         }
+    }
+
+    /// Edits the profile until the daemon reports `id` restarted (see
+    /// [`Self::edit_profile_until`]).
+    pub fn edit_profile_until_restart(&self, id: &str, edit: impl Fn(&mut serde_json::Value)) {
+        let restarts_before = self.restart_count(id);
+        self.edit_profile_until(&format!("{id} to restart on its config edit"), edit, || {
+            self.restart_count(id) > restarts_before
+        });
     }
 
     /// How many reconcile reports restarted `id`.
@@ -221,7 +231,8 @@ impl Daemon {
     }
 
     /// Interrupts the daemon (the operator's Ctrl-C) and waits for a clean
-    /// exit.
+    /// exit — the planned-stop path: every fiber suspends, the kernel
+    /// reaches quiescence and flushes the ledger.
     pub fn interrupt(mut self) {
         let status = Command::new("kill")
             .args(["-INT", &self.child.id().to_string()])
@@ -248,11 +259,10 @@ impl Daemon {
 }
 
 impl Daemon {
-    /// Kills the daemon outright (SIGKILL) and waits: the crash path. At
-    /// this pin a clean SIGINT disposes every fiber and dispose withdraws
-    /// the fiber's `jinn:fs` contribution LIFO — persisted state included
-    /// (FINDINGS.md #14) — so persistence ACROSS a process death is proven
-    /// through the path that leaves files as they were.
+    /// Kills the daemon outright (SIGKILL) and waits: the crash path.
+    /// Since pin `4eb4a93` a clean stop SUSPENDS (FINDINGS.md #14 closed)
+    /// and the two paths agree on the disk outcome; the crash path stays
+    /// in the suite as that equivalence's other half.
     pub fn kill(mut self) {
         self.child.kill().expect("SIGKILL delivered");
         self.child.wait().expect("daemon reaped");
@@ -264,6 +274,30 @@ impl Drop for Daemon {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// Strips ANSI styling from the daemon's log: the daemon colors
+/// unconditionally, and the escape codes sit between a field's name, `=`,
+/// and value — a raw substring match across them can never hold.
+#[must_use]
+pub fn strip_ansi(raw: &str) -> String {
+    let mut text = String::with_capacity(raw.len());
+    let mut chars = raw.chars();
+    while let Some(next) = chars.next() {
+        if next != '\u{1b}' {
+            text.push(next);
+            continue;
+        }
+        if chars.next() == Some('[') {
+            // A CSI sequence: parameters, then one final byte in @..=~.
+            for terminator in chars.by_ref() {
+                if ('@'..='~').contains(&terminator) {
+                    break;
+                }
+            }
+        }
+    }
+    text
 }
 
 /// The `config` object of the named profile entry.

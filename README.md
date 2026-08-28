@@ -13,10 +13,14 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
-Phase 1.6 — kernel pin `41cb2f47` (M2-K3): the guests on the `jinn:fs@0.2.0`
-bundle (append-backed run history, `list`/`meta` health surface, typed
-not-found), after phase 1.5's move to `jinn:clock` alarms; the phase-1.4
-soak continues across both bumps (`SOAK.md`). The capability itself is cron as a seam triple
+Phase 1.7 — kernel pin `4eb4a93` (M2-K4): the guests on the
+`jinn:plugin@0.3.0` world, where a daemon stop SUSPENDS a plugin (its
+persisted state retained for its profile entry) and only removal from the
+profile withdraws its contribution — a clean restart resumes the schedule.
+Phase 1.6 put the guests on the `jinn:fs@0.2.0` bundle (append-backed run
+history, `list`/`meta` health surface, typed not-found), phase 1.5 on
+`jinn:clock` alarms; the phase-1.4 soak continues across all three bumps
+(`SOAK.md`). The capability itself is cron as a seam triple
 (`plugins/cron/`), proven by real-composition tests that boot the pinned
 `jinnd` daemon (`tests/composition`). Kernel frictions found on the way are
 logged in `FINDINGS.md` (the two-way iteration channel — kernel changes are

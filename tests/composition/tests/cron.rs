@@ -100,7 +100,15 @@ fn boots_with_a_started_schedule_and_a_live_alarm() {
     );
     // The boot is ledger-visible: two artifact admissions, the cron
     // provision, the clock read, the alarm request as an EFFECT (R5), and
-    // the consumer's boot-report write (Law 2).
+    // the consumer's boot-report write (Law 2). The alarm is requested
+    // AFTER the activate plan that wrote the first record, so it is
+    // awaited, not assumed.
+    daemon.eventually("the alarm request to be ledgered", || {
+        daemon.ledger_count(&format!(
+            r#"EffectRegistered":{{"label":"{}""#,
+            alarm_label()
+        )) >= 1
+    });
     let kinds = daemon.ledger_kinds().join("\n");
     assert_eq!(kinds.matches("ArtifactLoaded").count(), 2, "{kinds}");
     assert!(kinds.contains("jinn:cron"), "provision recorded: {kinds}");
@@ -185,7 +193,9 @@ fn run_history_is_append_backed_and_the_consumer_sees_the_wider_surface() {
     let Some(daemon) = booted("append") else {
         return;
     };
-    daemon.eventually("two fires", || fires(&daemon) >= 2);
+    // Two fires SETTLED — their history records appended (the tick's last
+    // effect; the consumer's report lands earlier in the tick).
+    daemon.eventually("two settled fires", || fired_records(&daemon).len() >= 2);
     // The history lane is append-only on the record (FINDINGS.md #3
     // retired by the pin): every history effect is an `append` on the
     // log, sized by the tick — never a `write` of the whole document.
@@ -248,9 +258,9 @@ fn corrupt_persisted_state_is_quarantined_and_recorded() {
     let Some(daemon) = booted("quarantine") else {
         return;
     };
-    // Build real state, then stop the daemon — by the crash path: a clean
-    // shutdown would withdraw the persisted state this test corrupts
-    // (FINDINGS.md #14).
+    // Build real state, then stop the daemon by the crash path — the
+    // SIGKILL half of the suspend equivalence (a clean stop leaves the
+    // same files; `a_clean_shutdown_suspends_and_a_restart_resumes_the_schedule`).
     daemon.eventually("the first fire", || fires(&daemon) >= 1);
     let root = daemon.root.clone();
     daemon.kill();
@@ -308,17 +318,14 @@ fn reschedules_on_config_edit_through_reconcile() {
     };
     daemon.eventually("the schedule to start", || !history(&daemon).is_empty());
     // Operator lane: halve the period in the profile document. Only the
-    // scheduler entry restarts (reconcile-by-id); its alarm is withdrawn
-    // with the old fiber and re-requested by the new one.
+    // scheduler entry restarts (reconcile-by-id): the first incarnation
+    // SUSPENDS — its alarm released, its persisted documents retained for
+    // the entry — and the successor resumes the schedule on the new grid
+    // and re-requests the alarm.
     let halved = JOB_PERIOD_MS / 2;
-    daemon.edit_profile(|document| {
+    daemon.edit_profile_until_restart("cron-scheduler", |document| {
         entry_config(document, "cron-scheduler")["data"]["jobs"][0]["every-ms"] =
             serde_json::json!(halved);
-    });
-    daemon.eventually("the scheduler to restart on its config edit", || {
-        daemon
-            .log()
-            .contains(r#"restarted=[EntryId("cron-scheduler")]"#)
     });
     assert!(
         !daemon
@@ -351,6 +358,21 @@ fn reschedules_on_config_edit_through_reconcile() {
         2,
         "the restarted scheduler re-requested its alarm: {kinds}"
     );
+    // Incarnation replacement is continuity (M2-K4 ruling 3): the first
+    // incarnation was suspended, not withdrawn, and the successor picked
+    // the schedule up — one `schedule-started` in the whole history.
+    assert!(
+        kinds.contains("FiberSuspended"),
+        "the reconcile restart suspended the first incarnation: {kinds}"
+    );
+    assert_eq!(
+        history(&daemon)
+            .iter()
+            .filter(|record| record["outcome"] == "schedule-started")
+            .count(),
+        1,
+        "the successor resumed the entry's schedule"
+    );
     daemon.interrupt();
 }
 
@@ -361,12 +383,11 @@ fn restart_rerequests_the_alarm_fires_once_and_records_the_gap() {
     };
     daemon.eventually("the first fire", || fires(&daemon) >= 1);
     let root = daemon.root.clone();
-    // The process dies hard: firing law #3 (state persists across daemon
-    // restarts) is proven through the crash path, because at this pin a
-    // clean SIGINT withdraws the fibers' fs contributions — the persisted
-    // schedule with them (FINDINGS.md #14; pinned by
-    // `a_clean_shutdown_withdraws_the_fibers_persisted_contribution`).
-    daemon.kill();
+    // A planned stop: firing law #3 (state persists across daemon
+    // restarts) is proven through the clean path again — since pin
+    // `4eb4a93` a SIGINT suspends the fibers and retains their persisted
+    // schedule (FINDINGS.md #14 closed).
+    daemon.interrupt();
     let fires_before = fires_at(&root);
     // Sleep across several boundaries: alarms do not survive a restart
     // (the contract says so), and the daemon is down anyway.
@@ -441,37 +462,155 @@ fn restart_rerequests_the_alarm_fires_once_and_records_the_gap() {
 }
 
 #[test]
-fn a_clean_shutdown_withdraws_the_fibers_persisted_contribution() {
-    // FINDINGS.md #14, pinned as a reproducible transcript: at this pin
-    // every `jinn:fs` mutation joins its fiber's journal, and the daemon's
-    // graceful shutdown disposes every fiber — so a clean SIGINT withdraws
-    // the scheduler's persisted schedule state and history append, and the
-    // consumer's report, LIFO, on the record. The seam has no durable-state
-    // lane. When the kernel retires the finding this test goes red, and
-    // the restart tests above return to the clean path deliberately.
+fn a_clean_shutdown_suspends_and_a_restart_resumes_the_schedule() {
+    // FINDINGS.md #14 retired by pin 4eb4a93 (jinnd M2-K4): a clean SIGINT
+    // SUSPENDS every fiber. Kernel registrations release (the alarm, the
+    // provision, the listener — their inverses run, on the record), the
+    // entry-scoped `jinn:fs` contribution is RETAINED (no `fs` withdrawal,
+    // the files stay as the fibers left them), and a typed `FiberSuspended`
+    // event lands per fiber. The next boot over the same root then RESUMES
+    // the schedule (firing law #3) — never a fresh `schedule-started`.
+    // Until this pin the same stop reverted state and history to their
+    // activation-time content (the retired transcript
+    // `a_clean_shutdown_withdraws_the_fibers_persisted_contribution`).
     let Some(daemon) = booted("clean-stop") else {
         return;
     };
-    daemon.eventually("the first fire", || fires(&daemon) >= 1);
+    // A fire is settled once its history record is appended — the last
+    // effect of the tick; the consumer's report lands earlier in it.
+    daemon.eventually("the first fire to settle in the history log", || {
+        !fired_records(&daemon).is_empty()
+    });
+    let root = daemon.root.clone();
+    let history_before = std::fs::read(daemon.data("cron/history.jsonl")).expect("history log");
+    let fires_before = fires(&daemon);
     daemon.interrupt();
-    let kinds = daemon_kinds_at(&daemon_root("clean-stop")).join("\n");
-    for label in [
-        "fs write cron/state.json",
-        "fs append cron/history.jsonl",
-        "fs write health/report.json",
-    ] {
-        assert!(
-            kinds.contains(&format!(r#"EffectWithdrawn":{{"label":"{label}"#)),
-            "{label} is withdrawn by the clean shutdown: {kinds}"
-        );
-    }
+
+    // Disk: nothing reverted. The schedule state is present and on the
+    // grid, the history log only ever grew (the pre-stop bytes are its
+    // prefix), the newest fired record's run document exists, and the
+    // consumer's report kept its count.
+    let state = json_at(&root, "cron/state.json").expect("state persisted across the clean stop");
+    let last = state["last"]["health"]
+        .as_u64()
+        .expect("the newest processed boundary");
+    assert_eq!(last % JOB_PERIOD_MS, 0, "on the grid: {state}");
+    let history_after = std::fs::read(root.join("data/cron/history.jsonl")).expect("history log");
+    assert!(
+        history_after.starts_with(&history_before) && !history_before.is_empty(),
+        "the history log is never truncated by a clean stop"
+    );
+    let newest_fired = fired_records_at(&root)
+        .iter()
+        .filter_map(|record| record["scheduled-ms"].as_u64())
+        .max()
+        .expect("a fired record survived");
+    // `last` may be ONE boundary past the newest history record: a wake
+    // in flight at the SIGINT is sealed mid-tick (FINDINGS.md #16) — state
+    // before history, so the torn tick loses a record, never doubles a
+    // fire (contract §Run history).
+    assert!(
+        last == newest_fired || last == newest_fired + JOB_PERIOD_MS,
+        "state agrees with history up to one torn tick: {state} vs {newest_fired}"
+    );
+    assert!(
+        root.join(format!("data/cron/runs/health/{newest_fired}.json"))
+            .is_file(),
+        "the per-fire record survived"
+    );
+    assert!(fires_at(&root) >= fires_before, "the report kept its count");
+
+    // Ledger: the stop is a SUSPENSION, typed and attributed per fiber
+    // (Law 2), with the kernel registrations released and not one `fs`
+    // effect withdrawn.
+    let kinds = daemon_kinds_at(&root).join("\n");
+    assert_eq!(
+        kinds.matches("FiberSuspended").count(),
+        2,
+        "one typed suspension per fiber: {kinds}"
+    );
+    assert!(
+        kinds.contains(r#""to":"Disposed","cause":"Suspend""#),
+        "the transitions carry the Suspend cause: {kinds}"
+    );
+    assert!(
+        kinds.contains(&format!(
+            r#"EffectWithdrawn":{{"label":"{}""#,
+            alarm_label()
+        )),
+        "the alarm (a kernel registration) is released on the record: {kinds}"
+    );
+    assert!(
+        !kinds.contains(r#"EffectWithdrawn":{"label":"fs "#),
+        "no world mutation is withdrawn by a suspend: {kinds}"
+    );
+    assert!(
+        log_at(&root).contains("quiescent; ledger flushed; bye"),
+        "quiescence and the ledger flush are reached"
+    );
+
+    // Restart over the same root: the schedule resumes — the persisted
+    // `last` is read back, no second `schedule-started`, every boundary
+    // fires at most once and in order, and the alarm is re-requested (it
+    // died with the process, released, never a world mutation).
+    let binary = gate().expect("gate already passed");
+    let daemon = Daemon::boot(binary, &root);
+    daemon.eventually("a fire on the resumed schedule", || {
+        fires(&daemon) > fires_before
+    });
+    let records = history(&daemon);
+    assert_eq!(
+        records
+            .iter()
+            .filter(|record| record["outcome"] == "schedule-started")
+            .count(),
+        1,
+        "resumed, not restarted: {records:?}"
+    );
+    let boundaries: Vec<u64> = fired_records(&daemon)
+        .iter()
+        .filter_map(|record| record["scheduled-ms"].as_u64())
+        .collect();
+    assert!(
+        boundaries.windows(2).all(|pair| pair[0] < pair[1]),
+        "each boundary fires once, in order, across the stop: {boundaries:?}"
+    );
+    assert!(
+        boundaries.iter().any(|boundary| *boundary > last),
+        "the resumed schedule fired past the persisted state: {boundaries:?}"
+    );
+    assert_eq!(
+        daemon.ledger_count(&format!(
+            r#"EffectRegistered":{{"label":"{}""#,
+            alarm_label()
+        )),
+        2,
+        "alarm re-requested on activate"
+    );
+    daemon.interrupt();
 }
 
-/// The run root of a booted-then-stopped daemon named by `booted`.
-fn daemon_root(name: &str) -> PathBuf {
-    composition::daemon::workspace_root()
-        .join("target/composition/runs")
-        .join(format!("{name}-{}", std::process::id()))
+/// A JSON document under a stopped daemon's data root.
+fn json_at(root: &std::path::Path, path: &str) -> Option<serde_json::Value> {
+    let bytes = std::fs::read(root.join("data").join(path)).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+/// The fired history records of a stopped daemon's root.
+fn fired_records_at(root: &std::path::Path) -> Vec<serde_json::Value> {
+    std::fs::read_to_string(root.join("data/cron/history.jsonl"))
+        .unwrap_or_default()
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|record| record["outcome"]["fired"].is_object())
+        .collect()
+}
+
+/// A stopped daemon's operator log, ANSI styling stripped.
+fn log_at(root: &std::path::Path) -> String {
+    composition::kit::strip_ansi(
+        &std::fs::read_to_string(root.join("daemon.stderr")).unwrap_or_default(),
+    )
 }
 
 /// Every ledger `kind` of a stopped daemon's root.
@@ -539,12 +678,12 @@ fn the_clock_grant_gates_the_scheduler() {
     // decision): its activation is refused at the alarm request, the
     // refusal is ledgered, and the fiber fails loudly — contained (R11),
     // never a silently timeless scheduler.
-    daemon.edit_profile(|document| {
-        entry_config(document, "cron-scheduler")["grants"] =
-            serde_json::json!([jinn_cron::CRON_CONTRACT, "jinn:fs"]);
-    });
-    daemon.eventually(
+    daemon.edit_profile_until(
         "the ungranted clock call to be refused on the ledger",
+        |document| {
+            entry_config(document, "cron-scheduler")["grants"] =
+                serde_json::json!([jinn_cron::CRON_CONTRACT, "jinn:fs"]);
+        },
         || {
             daemon
                 .ledger_kinds()
