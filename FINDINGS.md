@@ -7,8 +7,11 @@ Each entry: what happened, the evidence, and the capability shape that
 would retire the workaround. Numbers are stable — code comments cite them.
 
 Phase 1.3 (cron seam) baseline: every entry below was hit while building
-the first real capability. What HELD is at the bottom — the kernel earned
-that section too.
+the first real capability. Evidence grades were audited by the independent
+round-1 verification and are stated per entry: entries 1, 2, 3, 6, and 8
+are packet-card-ready (reproducible, shaped); the rest are honest
+observations whose cards need more evidence, marked as such. What HELD is
+at the bottom — the kernel earned that section too.
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -45,6 +48,12 @@ currently holds via the scheduler's history-write effect, not via the bus.
 (topic, mode, listener count, contained-failure count). For cron that line
 IS the audit statement "job X fired at T".
 
+**Harness-side mitigation shipped (round 2):** every fire now writes one
+per-fire run record through granted `jinn:fs`
+(`cron/runs/<job>/<scheduled-ms>.json`), whose ledgered effect label names
+the job and boundary — fires are ledger-identifiable today. The bus tap
+remains the first-class answer; the mitigation does not replace it.
+
 ## 3. `jinn:fs` world surface is read/write only — thinner than its bundle
 
 The contract bundle (`kernel-pin/contracts/jinn-fs`) declares `list`,
@@ -73,6 +82,12 @@ README §Fire events: introspection belongs in `activate`), but the
 failure mode is silent-slow and will bite every seam that composes
 providers with consumers.
 
+*Evidence grade:* structural (one supervisor task exclusively owns each
+instance's store and serves calls from its channel — `jinnd-wasm`
+`instance.rs`), not yet a runnable transcript; the round-1 verification
+did not independently reproduce it. The packet card should start with a
+two-plugin repro fixture.
+
 **Packet-card shape:** kernel-side reentrancy detection at the broker /
 event port — an immediate `invalid("reentrant call to a busy instance")`
 refusal (ledgered) beats a 5s hang; a queued-delivery lane is the bigger
@@ -90,6 +105,10 @@ can honestly reach instead.
 declared bundles (process first — it unlocks real host probes), each with
 the same grant + ledger discipline HostFs has.
 
+*Evidence grade:* source-confirmed (the daemon assembly registers exactly
+one provider, `hostfs.register` in `jinnd-daemon` `daemon.rs`); no run
+transcript of a refused `jinn:process` call yet.
+
 ## 6. No transactional pairing of related effects
 
 The scheduler must persist state + history per tick as two separate
@@ -102,13 +121,15 @@ inverse, N operations) — also the shape hot-swap state handoff wants.
 
 ## 7. No guest-to-guest readiness gating on the dynamic string lane
 
-Sibling activation order is arbitrary (evidence: boot ledger shows the
-consumer Active before the scheduler). A consumer resolving a sibling's
-contract at activate may hit `missing-dependency`; a tick emitted before
-the scheduler listens is silently unheard. Known post-M1 kernel surface
-(the M1 demo greeter carries the same comment); now it has a production
-consumer. Patterns forced on every plugin: opportunistic peeks, replay
-absorption (the firing law shrugs off the boot's replayed tick).
+Sibling activation order is UNSPECIFIED — that is the finding, not any
+particular order: one boot ledger showed the consumer Active before the
+scheduler; the round-1 verification observed the opposite order on its
+boots. Nothing guarantees a consumer's provider is Active when the
+consumer activates: a resolve may hit `missing-dependency`; a tick emitted
+before the scheduler listens is silently unheard. Known post-M1 kernel
+surface (the M1 demo greeter carries the same comment); now it has a
+production consumer. Patterns forced on every plugin: opportunistic peeks,
+replay absorption (the firing law shrugs off the boot's replayed tick).
 
 **Packet-card shape:** per-entry dependency declaration for wasm entries
 (activate only after named contracts are provided), i.e. the typed lane's
@@ -132,27 +153,49 @@ The tick driver (and any operator tooling) edits `profile.json` while the
 daemon holds a bidirectional write-back lane over the same file. Not
 observed clobbering in this phase (no write-back fired in the cron runs),
 but the race is structural: a runtime write-back can overwrite a
-just-written external edit. The driver re-reads every interval so its
-worst case is one delayed tick.
+just-written external edit. Round-1 verification rightly noted the duty
+driver was itself part of the problem — a non-atomic read/modify/write
+editor; round 2 made both the driver and the test harness atomic
+(stage + rename), which the composition suite now exercises against the
+real watcher. The cross-process last-writer-wins race with the daemon's
+write-back remains, and is the kernel-side part of this finding.
 
 **Packet-card shape:** an operator edit surface on the daemon (patch one
 entry's config over the API plugin when it lands), or a documented
 last-writer-wins + rewrite-on-loss protocol for external editors.
 
-## 10. The operator log is unconditionally ANSI-styled
+## 10. The operator log can arrive ANSI-styled on a non-tty
 
-The daemon colors stderr even when it is a file/pipe; field name, `=`, and
-value are separated by escape codes, so naive log matching fails (the
-composition harness ships an ANSI stripper). Honor `NO_COLOR` / detect
-non-tty in the daemon shell.
+In this harness's runs, the daemon's stderr redirected to a file carried
+CSI escape sequences between a log field's name, `=`, and value — naive
+substring matching fails, and the composition harness ships an ANSI
+stripper because of it. The round-1 verification could NOT reproduce this
+(their redirected stderr contained zero CSI sequences), so the behavior is
+environment-sensitive; the ask stands regardless: the daemon shell should
+pin the answer by honoring `NO_COLOR` / detecting non-tty explicitly.
+Low severity.
 
 ## 11. WIT ergonomics, small but constant
 
 Hand-bookkept u64 undo/listen tokens per guest; per-contract hand-rolled
 byte-wire conventions; `handle-call` operations as bare strings. All
 workable; the pinned surface's own v0.2 note (typed per-contract import
-worlds) would remove most of it. Logged so the v0.2 refinement has a
-consumer's voice.
+worlds) would remove most of it. Ergonomic feedback for the v0.2
+refinement, not a packet card — logged so that refinement has a consumer's
+voice.
+
+## 12. No machine-readable "booted, watcher armed" signal
+
+(Contributed by the round-1 verification.) The daemon offers no signal
+that its boot reconcile is done AND its file watcher is armed; an edit
+landing in the window between them is silently unseen. The composition
+harness compensates by rewriting the profile until the expected restart
+appears in the log; the duty driver relies on its next interval. Distinct
+from finding 7 (that is guest-to-guest; this is operator-to-daemon).
+
+**Packet-card shape:** a readiness line on stderr is the minimum; the
+honest fix is a machine-readable status surface (the future API plugin's
+first duty, alongside finding 9's edit lane).
 
 ---
 

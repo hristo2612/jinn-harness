@@ -23,13 +23,21 @@ pub const OP_HISTORY: &str = "history";
 pub const STATE_PATH: &str = "cron/state.json";
 /// The bounded run history, under its `jinn:fs` scope.
 pub const HISTORY_PATH: &str = "cron/history.json";
+/// Where a corrupt persisted document is preserved before the scheduler
+/// starts fresh (contract §Persistence honesty).
+pub const QUARANTINE_DIR: &str = "cron/quarantine";
 /// History keeps the newest this-many records (an operational window; the
 /// ledger is the archive).
 pub const HISTORY_CAP: usize = 500;
 
-/// One job entry of the scheduler's settings namespace.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+/// Unknown sibling fields, preserved across a decode → encode round trip
+/// (R12 additivity: this reader carries what a newer writer said, it never
+/// strips it).
+pub type Extensions = serde_json::Map<String, serde_json::Value>;
+
+/// One validated, schedulable job — what [`parse_config`] produces and the
+/// firing law consumes. Internal normal form, not the wire schema.
+#[derive(Clone, Debug, PartialEq)]
 pub struct JobSpec {
     pub id: String,
     /// Schedule spec v0.1: a fixed period anchored at the Unix epoch;
@@ -38,8 +46,27 @@ pub struct JobSpec {
     /// Where this job's fire events go.
     pub topic: String,
     /// Opaque JSON handed through to every fire event.
+    pub payload: serde_json::Value,
+}
+
+/// One job entry as written in config (the wire schema). The schedule is
+/// an OPEN position: v0.1 recognizes `every-ms`; future variants (e.g. a
+/// calendar expression) are additive sibling fields. An entry whose
+/// schedule this reader does not recognize degrades to a per-entry
+/// `config-fault` — contained, recorded, never a document rejection.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct JobConfig {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub every_ms: Option<u64>,
+    #[serde(default)]
+    pub topic: String,
     #[serde(default)]
     pub payload: serde_json::Value,
+    #[serde(flatten)]
+    pub extra: Extensions,
 }
 
 /// The scheduler's whole settings subtree.
@@ -47,11 +74,16 @@ pub struct JobSpec {
 #[serde(rename_all = "kebab-case")]
 pub struct CronConfig {
     #[serde(default)]
-    pub jobs: Vec<JobSpec>,
+    pub jobs: Vec<JobConfig>,
+    #[serde(flatten)]
+    pub extra: Extensions,
 }
 
-/// One tick on [`TICK_TOPIC`]: the seam's only time source.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+/// One tick on [`TICK_TOPIC`]: the seam's only time source. The source is
+/// TRUSTED: `seq` is an edition marker for operators, not a guard — the
+/// firing law's boundary accounting is the only replay/rewind protection
+/// (contract §Time).
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct TickPayload {
     /// The tick source's monotonic edition; `0` is the boot seed and is
@@ -59,11 +91,13 @@ pub struct TickPayload {
     pub seq: u64,
     /// Wall-clock milliseconds since the Unix epoch.
     pub now_ms: u64,
+    #[serde(flatten)]
+    pub extra: Extensions,
 }
 
 /// One fire event, emitted on the job's topic (mode `serial`, selector
 /// `all`).
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct FirePayload {
     pub job: String,
@@ -75,10 +109,14 @@ pub struct FirePayload {
     pub missed_before: u64,
     pub tick_seq: u64,
     pub payload: serde_json::Value,
+    #[serde(flatten)]
+    pub extra: Extensions,
 }
 
 /// How one run record settled. Externally tagged, kebab-case; variants are
-/// additive within 0.x.
+/// additive within 0.x: an outcome this reader does not recognize decodes
+/// as [`RunOutcome::Unrecognized`] carrying the raw value, and re-encodes
+/// identically — never rejected, never stripped.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunOutcome {
@@ -98,6 +136,13 @@ pub enum RunOutcome {
     ConfigFault { detail: String },
     /// The fire's emit crossing was refused by the kernel.
     EmitFailed { detail: String },
+    /// A persisted document was present but undecodable; the original is
+    /// preserved under the quarantine path named in `detail` (contract
+    /// §Persistence honesty).
+    StateFault { path: String, detail: String },
+    /// An outcome written by a newer contract version: carried verbatim.
+    #[serde(untagged)]
+    Unrecognized(serde_json::Value),
 }
 
 /// One run-history record.
@@ -109,6 +154,8 @@ pub struct RunRecord {
     pub now_ms: u64,
     pub tick_seq: u64,
     pub outcome: RunOutcome,
+    #[serde(flatten)]
+    pub extra: Extensions,
 }
 
 /// The scheduler's persisted state: per job, the newest boundary already
@@ -118,12 +165,15 @@ pub struct RunRecord {
 pub struct SchedulerState {
     #[serde(default)]
     pub last: BTreeMap<String, u64>,
+    #[serde(flatten)]
+    pub extra: Extensions,
 }
 
-/// Parses the scheduler's settings subtree: well-formed jobs in config
-/// order, plus one fault string per excluded entry (duplicate id, zero
-/// period, empty topic). A malformed document is an `Err` — that is an
-/// activation failure, not a config fault.
+/// Parses the scheduler's settings subtree: schedulable jobs in config
+/// order, plus one fault string per excluded entry (missing/unrecognized
+/// schedule, zero period, empty topic, empty or duplicate id). A malformed
+/// document is an `Err` — that is an activation failure, not a config
+/// fault.
 ///
 /// # Errors
 ///
@@ -134,17 +184,59 @@ pub fn parse_config(bytes: &[u8]) -> Result<(Vec<JobSpec>, Vec<String>), String>
     let mut jobs: Vec<JobSpec> = Vec::new();
     let mut faults = Vec::new();
     for job in config.jobs {
-        if job.every_ms == 0 {
+        if job.id.is_empty() {
+            faults.push("job with no id".to_owned());
+            continue;
+        }
+        // Ids name run-record paths: keep them path-safe by construction.
+        if !job
+            .id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+        {
+            faults.push(format!("job {:?}: id must be [A-Za-z0-9_-]", job.id));
+            continue;
+        }
+        let Some(every_ms) = job.every_ms else {
+            faults.push(format!(
+                "job {:?}: no schedule this reader recognizes (v0.1 knows every-ms)",
+                job.id
+            ));
+            continue;
+        };
+        if every_ms == 0 {
             faults.push(format!("job {:?}: every-ms 0 is not a schedule", job.id));
         } else if job.topic.is_empty() {
             faults.push(format!("job {:?}: empty topic", job.id));
         } else if jobs.iter().any(|kept| kept.id == job.id) {
             faults.push(format!("job {:?}: duplicate id", job.id));
         } else {
-            jobs.push(job);
+            jobs.push(JobSpec {
+                id: job.id,
+                every_ms,
+                topic: job.topic,
+                payload: job.payload,
+            });
         }
     }
     Ok((jobs, faults))
+}
+
+/// The per-fire run-record path: one identifiable granted-write per fire,
+/// labeled by job and boundary — the fire's ledger identification lane
+/// (contract §Run history) until the kernel's bus tap lands.
+#[must_use]
+pub fn run_record_path(job: &str, scheduled_ms: u64) -> String {
+    format!("cron/runs/{job}/{scheduled_ms}.json")
+}
+
+/// Whether a `jinn:fs` read refusal reports genuine absence (the world's
+/// fs interface has no typed not-found — FINDINGS.md #3 — so absence is
+/// classified from the provider's message; anything else is NOT absence
+/// and must not silently default).
+#[must_use]
+pub fn read_error_is_absence(message: &str) -> bool {
+    message.contains("os error 2") || message.contains("No such file")
 }
 
 /// Appends `new` to `history`, keeping the newest `cap` records.
@@ -171,6 +263,7 @@ mod tests {
             now_ms: 0,
             tick_seq,
             outcome: RunOutcome::ScheduleStarted,
+            extra: Extensions::new(),
         }
     }
 
@@ -232,6 +325,7 @@ mod tests {
             missed_before: 2,
             tick_seq: 9,
             payload: serde_json::Value::Null,
+            extra: Extensions::new(),
         };
         let text = serde_json::to_string(&fire).expect("encodes");
         assert!(text.contains("scheduled-ms"), "{text}");
@@ -240,6 +334,59 @@ mod tests {
         assert_eq!(back, fire);
         let outcome = serde_json::to_string(&RunOutcome::Fired { answers: 1 }).expect("encodes");
         assert!(outcome.contains("fired"), "{outcome}");
+    }
+
+    #[test]
+    fn an_extended_payload_round_trips_with_unknown_fields_preserved() {
+        // A newer writer added sibling fields; this reader carries them
+        // (R12 additivity), it never strips or rejects them.
+        let text = r#"{ "seq": 4, "now-ms": 9000, "zone": "UTC", "grid": { "v": 2 } }"#;
+        let tick: TickPayload = serde_json::from_str(text).expect("decodes");
+        assert_eq!(tick.extra["zone"], "UTC");
+        let back = serde_json::to_value(&tick).expect("encodes");
+        assert_eq!(back["zone"], "UTC");
+        assert_eq!(back["grid"]["v"], 2);
+    }
+
+    #[test]
+    fn an_unrecognized_outcome_round_trips_verbatim() {
+        let text = r#"{ "job": "j", "scheduled-ms": 1, "now-ms": 2, "tick-seq": 3,
+                       "outcome": { "paused": { "until-ms": 5 } } }"#;
+        let record: RunRecord = serde_json::from_str(text).expect("a newer outcome decodes");
+        let RunOutcome::Unrecognized(raw) = &record.outcome else {
+            panic!("carried as unrecognized: {:?}", record.outcome);
+        };
+        assert_eq!(raw["paused"]["until-ms"], 5);
+        let back = serde_json::to_value(&record).expect("encodes");
+        assert_eq!(back["outcome"]["paused"]["until-ms"], 5);
+    }
+
+    #[test]
+    fn a_schedule_this_reader_does_not_know_degrades_to_a_fault() {
+        // A newer writer's calendar job beside a v0.1 job: the known job
+        // schedules, the unknown one is one contained config fault.
+        let bytes = br#"{ "jobs": [
+            { "id": "cal", "cron": "0 * * * *", "topic": "t" },
+            { "id": "ok", "every-ms": 5, "topic": "t" }
+        ]}"#;
+        let (jobs, faults) = parse_config(bytes).expect("document accepted");
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].id, "ok");
+        assert_eq!(faults.len(), 1);
+        assert!(
+            faults[0].contains("cal") && faults[0].contains("schedule"),
+            "{faults:?}"
+        );
+    }
+
+    #[test]
+    fn absence_is_classified_from_the_provider_message() {
+        assert!(read_error_is_absence(
+            r#"fs read "cron/state.json": No such file or directory (os error 2)"#
+        ));
+        assert!(!read_error_is_absence(
+            r#"fs read "cron/state.json": Permission denied (os error 13)"#
+        ));
     }
 
     #[test]

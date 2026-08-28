@@ -102,12 +102,78 @@ fn fires_on_schedule_and_records_the_run() {
         .expect("a fired run record");
     assert_eq!(fired["outcome"]["fired"]["answers"], 1, "{fired}");
     assert_eq!(fired["scheduled-ms"], 120_000, "{fired}");
-    // Every crossing is in the ledger: the fs writes for state, history,
-    // probe, and report are registered revertible effects (Law 2/3).
+    // The fire is ledger-identifiable TODAY: its per-fire run record is
+    // one granted-write effect whose label names the job and boundary
+    // (contract §Run history), beside the state/history/report writes.
     let kinds = daemon.ledger_kinds().join("\n");
-    for path in ["cron/state.json", "cron/history.json", "health/report.json"] {
-        assert!(kinds.contains(path), "{path} write is ledgered");
+    for path in [
+        "cron/runs/health/120000.json",
+        "cron/state.json",
+        "cron/history.json",
+        "health/report.json",
+    ] {
+        assert!(kinds.contains(path), "{path} write is ledgered:\n{kinds}");
     }
+    let run_record = daemon
+        .data_json("cron/runs/health/120000.json")
+        .expect("the per-fire record exists");
+    assert_eq!(run_record["outcome"]["fired"]["answers"], 1, "{run_record}");
+    daemon.interrupt();
+}
+
+#[test]
+fn corrupt_persisted_state_is_quarantined_and_recorded() {
+    let Some(daemon) = booted("quarantine") else {
+        return;
+    };
+    // Build real state, then stop the daemon.
+    daemon.tick(1, 60_000);
+    daemon.eventually("the schedule to start", || !history(&daemon).is_empty());
+    daemon.tick(2, 121_000);
+    daemon.eventually("the first fire", || fires(&daemon) == 1);
+    let root = daemon.root.clone();
+    daemon.interrupt();
+
+    // Corrupt the persisted state on disk and reset the tick entry to the
+    // boot seed (so the reboot replays no tick and the proof is
+    // deterministic).
+    let garbage = b"not json {{{".to_vec();
+    std::fs::write(root.join("data/cron/state.json"), &garbage).expect("corrupt state");
+    let profile = root.join("profile.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&profile).expect("profile")).expect("parses");
+    entry_config(&mut document, "cron-tick")["data"] = serde_json::json!({ "seq": 0, "now-ms": 0 });
+    std::fs::write(
+        &profile,
+        serde_json::to_vec_pretty(&document).expect("encodes"),
+    )
+    .expect("profile reset");
+
+    // Reboot: the corrupt document is preserved under quarantine, the loss
+    // is a recorded state-fault run record, and the schedule starts fresh
+    // — never a silent default (contract §Persistence honesty).
+    let binary = gate().expect("gate already passed");
+    let daemon = Daemon::boot(binary, &root);
+    daemon.eventually("the quarantined original to be preserved", || {
+        std::fs::read(daemon.data("cron/quarantine/state.json"))
+            .is_ok_and(|preserved| preserved == garbage)
+    });
+    daemon.eventually("the state fault to be recorded", || {
+        history(&daemon)
+            .iter()
+            .any(|record| record["outcome"]["state-fault"]["path"] == "cron/state.json")
+    });
+    // The fresh schedule follows law #4: the first tick starts it (no
+    // fire), the next boundary fires — exactly one fire across both.
+    daemon.tick(1, 181_000);
+    daemon.eventually("the fresh schedule to start", || {
+        history(&daemon).iter().any(|record| {
+            record["outcome"] == "schedule-started" && record["scheduled-ms"] == 180_000
+        })
+    });
+    assert_eq!(fires(&daemon), 1, "no fire from corrupt state");
+    daemon.tick(2, 241_000);
+    daemon.eventually("one fire on the restarted schedule", || fires(&daemon) == 2);
     daemon.interrupt();
 }
 

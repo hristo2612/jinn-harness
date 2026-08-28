@@ -50,6 +50,13 @@ The scheduler trusts the tick's clock; it never has another one. Ticks whose
 `now-ms` does not advance are no-ops by construction (no new boundary can be
 due).
 
+**The tick source is trusted.** `seq` is an operator-facing edition marker,
+not a guard: the scheduler does not validate its monotonicity, and a
+repeated `seq` carrying a later clock still fires normally. The firing
+law's boundary accounting is the only replay/rewind protection — a
+duplicate payload and a rewound clock are both no-ops because no new
+boundary is due.
+
 ## The firing law (missed fires, restarts — no silent backfill)
 
 For each job, the scheduler keeps `last`: the newest boundary already
@@ -67,6 +74,11 @@ processed. On a tick at time `T`, the due boundaries are those in
    honestly marked by its `missed-before`), the rest are recorded skipped.
    There is no backfill, and no fire is ever silently dropped — every
    boundary ends as exactly one of: fired, skipped-on-record.
+   A persisted `last` may predate a config edit that changed `every-ms`:
+   all boundary accounting therefore happens on the CURRENT grid, with
+   `last` re-floored to it — a period change mid-window never corrupts the
+   count (and the arithmetic saturates, so hostile state can at worst
+   under-count, never wrap).
 4. **Lost state is a recorded event, not a guess.** A job with no state
    (new, or state lost) starts its schedule at the current tick: no fire, a
    `schedule-started` run record, `last = floor(T / every-ms) * every-ms`.
@@ -90,11 +102,22 @@ deadline kills it (FINDINGS.md #4). Introspection calls belong in `activate`.
 
 ## Run history
 
-`cron/history.json` (under the scheduler's `jinn:fs` scope): a JSON array of
-run records, newest last, bounded to the newest 500 — an operational window,
-not an archive. The permanent record is the kernel ledger (Law 2): every
-fire's emit crossing and every history/state write is a ledger event by
-construction. Record shapes (`outcome` is externally tagged, additive):
+Two lanes, both under the scheduler's `jinn:fs` scope:
+
+- **Per-fire records** — `cron/runs/<job>/<scheduled-ms>.json`, one file
+  per fire, written after the emit settles and carrying the full run
+  record. This write is one granted-contract effect whose ledger label
+  names the job and the boundary: **it is the fire's ledger
+  identification** today. (The emit crossing itself is not yet a ledger
+  event — the kernel's bus tap is queued work, FINDINGS.md #2; when it
+  lands, `DispatchTrace` becomes the first-class record and this lane
+  remains the outcome document.) Job ids are path-safe by construction
+  (`[A-Za-z0-9_-]`, enforced at config parse).
+- **The bounded window** — `cron/history.json`: a JSON array of ALL run
+  records (fires, skips, starts, faults), newest last, bounded to the
+  newest 500 — an operational window, not an archive.
+
+Record shape (`outcome` is externally tagged, additive):
 
 ```json
 { "job": "health", "scheduled-ms": 1756350000000, "now-ms": 1756350004120,
@@ -103,12 +126,40 @@ construction. Record shapes (`outcome` is externally tagged, additive):
 
 Outcomes: `fired { answers }` (0 answers = no live listener answered — a
 visible duty gap, not an error), `skipped { boundaries, first-ms, last-ms }`,
-`schedule-started`, `config-fault { detail }`, `emit-failed { detail }`.
+`schedule-started`, `config-fault { detail }`, `emit-failed { detail }`,
+`state-fault { path, detail }`. A reader encountering an outcome tag it
+does not know carries it verbatim (see §Additivity).
 
 State (`cron/state.json`) is written before history on each tick: if the
 writes are torn apart by a crash, the failure mode is a missing record, never
 a double fire (the write pair is not transactional under `jinn:fs` v0.1 —
 FINDINGS.md #6).
+
+## Persistence honesty
+
+On activation the scheduler classifies each persisted document
+(`cron/state.json`, `cron/history.json`) honestly:
+
+- **Genuinely absent** → a fresh default, silently (a first boot is not an
+  error).
+- **Present but undecodable** → the original bytes are preserved verbatim
+  under `cron/quarantine/<name>`, the loss is recorded as a `state-fault`
+  run record naming both paths, and the schedule starts fresh under firing
+  law #4. Never a silent default.
+- **Unreadable for any other reason** (permissions, provider failure) →
+  the activation fails loudly (contained per the kernel's R11). Defaulting
+  there could re-fire boundaries the unreadable state already processed.
+
+## Additivity (the R12 promise, mechanically)
+
+- Every wire schema tolerates and **preserves** unknown sibling fields
+  across a decode → encode round trip.
+- The schedule position in a job entry is open: this reader knows
+  `every-ms`; an entry with a schedule it does not recognize degrades to a
+  per-entry `config-fault` — contained and recorded, never a document
+  rejection.
+- An unrecognized `outcome` tag decodes as an opaque carrier and re-encodes
+  identically.
 
 ## Provider operations
 

@@ -19,6 +19,7 @@ name = "cron-scheduler"
 version = "0.1.0"
 dependencies = [
  "jinn-cron",
+ "serde",
  "serde_json",
  "wit-bindgen",
 ]

@@ -34,7 +34,11 @@ fn advance(profile: &Path) -> Result<u64, String> {
     let seq = entry["config"]["data"]["seq"].as_u64().unwrap_or(0) + 1;
     entry["config"]["data"] = serde_json::json!({ "seq": seq, "now-ms": now_ms() });
     let rendered = serde_json::to_vec_pretty(&document).expect("profile encodes");
-    std::fs::write(profile, rendered).map_err(|error| format!("profile write: {error}"))?;
+    // Atomic replace: a reader (the daemon's watcher included) sees the old
+    // document or the new one, never a torn write.
+    let staging = profile.with_extension("json.tick-tmp");
+    std::fs::write(&staging, rendered).map_err(|error| format!("profile stage: {error}"))?;
+    std::fs::rename(&staging, profile).map_err(|error| format!("profile replace: {error}"))?;
     Ok(seq)
 }
 

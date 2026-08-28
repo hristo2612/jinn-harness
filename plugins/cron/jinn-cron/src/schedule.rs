@@ -30,6 +30,7 @@ pub fn plan_tick(jobs: &[JobSpec], state: &SchedulerState, tick: &TickPayload) -
             now_ms: tick.now_ms,
             tick_seq: tick.seq,
             outcome,
+            extra: crate::Extensions::new(),
         };
         let Some(&last) = state.last.get(&job.id) else {
             // Law #4: no state — the schedule starts here, recorded.
@@ -42,14 +43,19 @@ pub fn plan_tick(jobs: &[JobSpec], state: &SchedulerState, tick: &TickPayload) -
             continue;
         }
         // Law #1/#2: the newest due boundary fires; earlier due boundaries
-        // are one skipped record.
-        let skipped = (newest_due - last) / period - 1;
+        // are one skipped record. All counting happens in boundary-index
+        // space on the CURRENT grid — the persisted `last` may come from an
+        // edited period (contract §The firing law), so it is re-floored
+        // here rather than assumed aligned; the subtraction saturates so a
+        // hostile state can at worst under-count, never wrap.
+        let last_index = last / period;
+        let skipped = (newest_due / period).saturating_sub(last_index + 1);
         if skipped > 0 {
             plan.records.push(RunRecord {
-                scheduled_ms: last + period,
+                scheduled_ms: (last_index + 1) * period,
                 outcome: RunOutcome::Skipped {
                     boundaries: skipped,
-                    first_ms: last + period,
+                    first_ms: (last_index + 1) * period,
                     last_ms: newest_due - period,
                 },
                 ..record(RunOutcome::ScheduleStarted)
@@ -62,6 +68,7 @@ pub fn plan_tick(jobs: &[JobSpec], state: &SchedulerState, tick: &TickPayload) -
             missed_before: skipped,
             tick_seq: tick.seq,
             payload: job.payload.clone(),
+            extra: crate::Extensions::new(),
         });
         plan.state.last.insert(job.id.clone(), newest_due);
     }
@@ -82,7 +89,11 @@ mod tests {
     }
 
     fn tick(seq: u64, now_ms: u64) -> TickPayload {
-        TickPayload { seq, now_ms }
+        TickPayload {
+            seq,
+            now_ms,
+            ..TickPayload::default()
+        }
     }
 
     fn seen(state: &[(&str, u64)]) -> SchedulerState {
@@ -203,6 +214,52 @@ mod tests {
         let next = plan_tick(&[job("a", 60_000)], &plan.state, &tick(2, 61_000));
         assert_eq!(next.fires.len(), 1);
         assert_eq!(next.fires[0].scheduled_ms, 60_000);
+    }
+
+    #[test]
+    fn a_mid_window_period_change_refloors_the_persisted_boundary() {
+        // The verifier's hostile case: a 60s schedule persisted last=60000,
+        // then a valid watcher-driven edit to 40s, tick at 90000. The only
+        // due boundary in (60000, 90000] on the 40s grid is 80000 — one
+        // fire, nothing missed, no skipped record, and NEVER an underflow.
+        let plan = plan_tick(
+            &[job("a", 40_000)],
+            &seen(&[("a", 60_000)]),
+            &tick(2, 90_000),
+        );
+        assert_eq!(
+            plan.records,
+            vec![],
+            "no skipped record: {:?}",
+            plan.records
+        );
+        assert_eq!(plan.fires.len(), 1);
+        assert_eq!(plan.fires[0].scheduled_ms, 80_000);
+        assert_eq!(plan.fires[0].missed_before, 0);
+        assert_eq!(plan.state.last["a"], 80_000);
+    }
+
+    #[test]
+    fn a_period_change_with_a_real_gap_counts_on_the_new_grid() {
+        // Same re-floor, with boundaries genuinely skipped: last=60000,
+        // period now 40s, tick at 210000. New-grid due set in (60000,
+        // 210000] is {80k, 120k, 160k, 200k}: 200k fires, 3 are skipped.
+        let plan = plan_tick(
+            &[job("a", 40_000)],
+            &seen(&[("a", 60_000)]),
+            &tick(3, 210_000),
+        );
+        assert_eq!(plan.fires.len(), 1);
+        assert_eq!(plan.fires[0].scheduled_ms, 200_000);
+        assert_eq!(plan.fires[0].missed_before, 3);
+        assert_eq!(
+            plan.records[0].outcome,
+            RunOutcome::Skipped {
+                boundaries: 3,
+                first_ms: 80_000,
+                last_ms: 160_000
+            }
+        );
     }
 
     #[test]

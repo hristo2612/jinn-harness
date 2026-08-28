@@ -135,19 +135,22 @@ impl Daemon {
         serde_json::from_slice(&bytes).ok()
     }
 
-    /// Edits the profile document in place (the operator lane the watcher
-    /// serves).
+    /// Edits the profile document (the operator lane the watcher serves)
+    /// by atomic replace — stage + rename, the duty driver's own write
+    /// shape, so the suite also proves the watcher follows renames.
     pub fn edit_profile(&self, edit: impl FnOnce(&mut serde_json::Value)) {
         let path = self.root.join("profile.json");
         let mut document: serde_json::Value =
             serde_json::from_slice(&std::fs::read(&path).expect("profile readable"))
                 .expect("profile parses");
         edit(&mut document);
+        let staging = self.root.join("profile.json.edit-tmp");
         std::fs::write(
-            &path,
+            &staging,
             serde_json::to_vec_pretty(&document).expect("profile encodes"),
         )
-        .expect("profile writes");
+        .expect("profile stages");
+        std::fs::rename(&staging, &path).expect("profile replaces");
     }
 
     /// One tick: rewrites the tick entry's config (FINDINGS.md #1 — the
