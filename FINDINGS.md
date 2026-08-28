@@ -12,9 +12,10 @@ round-1 verification and are stated per entry: entries 1, 2, 3, 6, and 8
 are packet-card-ready (reproducible, shaped); the rest are honest
 observations whose cards need more evidence, marked as such. What HELD is
 at the bottom — the kernel earned that section too. Entries 1 and 2 are
-**closed** as of the `01133c45` pin bump (jinnd M2-K2): each carries a
-closure note appended in place, and the original text stands as the record
-of what the friction was.
+**closed** as of the `01133c45` pin bump (jinnd M2-K2) and entries 3 and 8
+as of the `41cb2f47` pin bump (jinnd M2-K3): each carries a closure note
+appended in place, and the original text stands as the record of what the
+friction was. Entries 14 and 15 were hit adopting `41cb2f47`.
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -96,6 +97,20 @@ with the declared effect classes), and consider an `append` operation
 (effect = revertible, inverse = truncate-to-prior-length) — the natural
 shape for guest-kept logs.
 
+**Closed 2026-08-28 — retired by pin 41cb2f47 (jinnd M2-K3).** The
+`jinn:plugin` world is 0.2.0 and its `fs` import IS the `jinn:fs@0.2.0`
+bundle verbatim: `list`, `meta` (reads, ledgered contract calls), `write`,
+`append` (inverse = truncate-to-prior-length), `remove` (now revertible),
+`fs-error` with a TYPED `not-found`, and idempotency keys on every
+mutation. The write signature changed — a breaking guest migration, taken
+deliberately (harness PR #4, no compat shims). Harness side: the
+scheduler's run history is `cron/history.jsonl`, grown by ONE `append` per
+recording tick (`fs append cron/history.jsonl` on the ledger, never a
+`write` of the log — the composition suite asserts it); absence is
+classified by case, and `read_error_is_absence` is gone with the folded
+message it parsed; the health snapshot enumerates its directory and the
+fired job's run records with `list` and stats the history log with `meta`.
+
 ## 4. Nested dispatch deadlocks until the guest deadline — by construction
 
 An emit awaits each listener delivery end-to-end; a listener that calls
@@ -172,6 +187,19 @@ daemon.
 spill inverses to disk keyed by effect id, or a declared bounded window
 whose expiry is itself a ledger event (an honest "no longer revertible").
 
+**Closed 2026-08-28 — retired by pin 41cb2f47 (jinnd M2-K3).** Every
+revertible fs effect's inverse is made durable in a retention store beside
+the data root (`<data>.inverses/`, keyed by effect id, fsynced, spilled
+BEFORE the mutation commits, refused if it cannot be) and provider memory
+holds an index of headers only; a completed revert or withdrawal consumes
+and reclaims the spill. Retention is event-driven — no compaction daemon.
+Soak side: the byte curve the +7d audit watches (SOAK.md) now measures
+bounded, durable retention — `$SOAK/data.inverses/` is inside the root the
+health check sizes — instead of unbounded provider RAM. What the spill
+does NOT bound is the count of live inverses of a long-lived fiber: the
+scheduler's state writes (one per wake) stay retained until that fiber is
+disposed, which is finding 14's territory, not this one's.
+
 ## 9. Profile write-back vs external editors — an uncoordinated shared file
 
 Operator tooling (formerly the tick driver) edits `profile.json` while the
@@ -222,6 +250,14 @@ from finding 7 (that is guest-to-guest; this is operator-to-daemon).
 honest fix is a machine-readable status surface (the future API plugin's
 first duty, alongside finding 9's edit lane).
 
+*Evidence added 2026-08-28 (pin 41cb2f47 adoption):* reproduced under
+suite load — a consumer nonce-bump edit landed with the daemon's log
+showing exactly one reconcile (`created=[…] restarted=[]`) and never a
+restart; the same test passes in isolation. The composition harness now
+carries the mitigation as a helper (`edit_profile_until_restart`: rewrite
+atomically until the expected restart appears in the log) and every
+config-edit proof uses it.
+
 ## 13. `alarm-every`'s first wake is one full period out
 
 There is no "fire now, then every P" shape: a periodic alarm's first wake
@@ -244,9 +280,88 @@ idiom together with a guarantee about their relative delivery ordering.
 states "first one period from now"; the harness-side workaround is shipped
 in `cron-scheduler`'s `activate`. Low severity.
 
+## 14. Every `jinn:fs` mutation is withdrawn with its fiber — there is no durable-state lane
+
+Since pin `41cb2f47` (M2-K3, ruled LAW-conformant on the kernel side: R5,
+I1 — dispose withdraws exactly the fiber's contribution, fs effects
+included), every `write`/`append`/`remove` a guest makes joins its fiber's
+journal and is undone LIFO when the fiber is disposed. The daemon's
+graceful shutdown disposes every fiber. Consequences, all reproduced on the
+real daemon:
+
+- A clean SIGINT reverts the scheduler's `cron/state.json` to its content
+  at that fiber's activation, truncates the history log, and restores the
+  consumer's `health/report.json` — the ledger of one composition run:
+  `EffectWithdrawn "fs write cron/state.json"` ×3, `"fs append
+  cron/history.jsonl"`, `"fs write health/report.json"`, `"fs write
+  health/boot.json"`, all `clean: true`, in the shutdown trail. Firing
+  law #3 (state persists across daemon restarts) therefore does NOT hold
+  across a clean restart at this pin: the reboot starts the schedule fresh
+  (`schedule-started`, no `skipped` record), and the boundaries the
+  previous process fired are unobservable to it.
+- A reconcile restart of one entry (config edit) does the same to that
+  entry's persisted documents; the loader does not hand a snapshot across
+  a config-edit restart, so the successor cannot carry the state in
+  memory either.
+- A process death (SIGKILL) leaves the files as they were — the inverses
+  stay spilled as orphans in the retention store, nothing replays them —
+  so persistence across a CRASH holds, and is now the path the
+  composition suite proves firing law #3 through.
+
+The class of state at stake is a *record* (the newest boundary already
+processed; a fire's outcome document; a health report): reverting it does
+not un-fire anything, it makes the next process mis-count. The seam has no
+lane for such state — every granted mutation is a revertible contribution.
+
+**Harness-side handling shipped:** the composition suite proves restart
+persistence through the crash path (`Daemon::kill`) and pins the clean-
+shutdown withdrawal as a transcript test
+(`a_clean_shutdown_withdraws_the_fibers_persisted_contribution`) that goes
+red when the kernel retires this; SOAK.md §Stop carries the operational
+consequence.
+
+**Packet-card shape (alternatives, for the COO/verifier to rule on):**
+(i) a `jinn:ledger` read import so a guest rebuilds its record-state from
+its own `DispatchTrace`/effect trail — the constitutional answer if the
+ledger is the record lane; (ii) an effect class for records — `commit` /
+"release" an effect out of the fiber journal, still ledgered, or a
+declared `record` scope on the grant whose mutations are not withdrawn on
+dispose; (iii) shutdown as *suspend* — process exit stops fibers without
+withdrawing (only an explicit dispose withdraws), which matches how a
+crash already behaves. Severity: high for any plugin that keeps state.
+
+*Evidence grade:* reproducible — pinned by a composition test against the
+real daemon; kernel-side confirmed by M2-K3's own runbook (step 5: the
+scribe's journal appends are withdrawn on dispose).
+
+## 15. Effects registered while a dispose is in flight escape the withdrawal
+
+Observed once (pin `41cb2f47`, composition run `restart-31313`): a SIGINT
+landed mid-tick, and the effects the scheduler registered after the
+journal was sealed but before the fiber stopped (the tick's state write,
+the fire's run-record write, and the history append; effect ids
+`…301`, `…304`, `…305`) appear in the ledger as registered and never
+withdrawn, while the earlier effects of the same fiber are withdrawn
+`clean: true`. The disk was left in a torn shape: part of a tick undone,
+part kept. Not yet reproduced deliberately.
+
+**Packet-card shape:** quiesce the instance (drain its in-flight call
+before sealing the journal) or refuse registrations after the seal with a
+ledgered error, so a dispose trail is exactly the fiber's contribution
+(I1) — never a prefix of it.
+
+*Evidence grade:* single ledger observation; the card should start with a
+repro that disposes during a guest's `handle-event`.
+
 ---
 
 ## What held (evidence the paradigm carries production shape)
+
+- **The 0.2.0 fs bundle does what it says:** `append` is O(1) per record
+  and its inverse truncates; `list` answers sorted names; `meta` agrees
+  with the bytes written; a missing path is a typed `not-found`; every op
+  is a ledgered contract call and every mutation a labeled effect
+  (composition: `run_history_is_append_backed_and_the_consumer_sees_the_wider_surface`).
 
 - **Reconcile-by-id is surgical:** a config edit restarts exactly the
   edited entry — the scheduler — and the consumer keeps its fiber

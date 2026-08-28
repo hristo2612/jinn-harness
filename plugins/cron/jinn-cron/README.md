@@ -138,9 +138,18 @@ Two lanes, both under the scheduler's `jinn:fs` scope:
   own `DispatchTrace` ledger event (§Fire events); the two lanes answer
   different questions. Job ids are path-safe by construction
   (`[A-Za-z0-9_-]`, enforced at config parse).
-- **The bounded window** — `cron/history.json`: a JSON array of ALL run
-  records (fires, skips, starts, faults), newest last, bounded to the
-  newest 500 — an operational window, not an archive.
+- **The history log** — `cron/history.jsonl`: ALL run records (fires,
+  skips, starts, faults), one JSON record per line, newest last, grown
+  ONLY by `jinn:fs` `append` — one append per recording tick, sized by
+  that tick's records, never a rewrite (O(1) per record; the pre-0.2.0
+  rewrite-per-fire lane is retired, FINDINGS.md #3). The log is unbounded
+  on disk by design (the ledger is the archive; a rotation policy would be
+  an additive change here); the `history` operation serves a window of the
+  newest 500 records.
+- **The legacy document** — `cron/history.json` (one JSON array, the
+  pre-0.2.0 lane): read once at activation as the seed of the window,
+  before the log's records, and never written again. A root that carries
+  one keeps its records without duplicating them.
 
 Record shape (`outcome` is externally tagged, additive):
 
@@ -157,20 +166,38 @@ does not know carries it verbatim (see §Additivity).
 
 State (`cron/state.json`) is written before history on each tick: if the
 writes are torn apart by a crash, the failure mode is a missing record, never
-a double fire (the write pair is not transactional under `jinn:fs` v0.1 —
+a double fire (the write pair is not transactional under `jinn:fs` —
 FINDINGS.md #6).
+
+Idempotency keys (`jinn:fs` 0.2.0, keyed exactly-once per fiber): the
+per-fire record's key is its own path — the boundary is the fire's
+identity — so a repeated delivery within one fiber answers the recorded
+effect instead of writing twice; state writes and history appends claim
+no key (each is a new effect by construction — a tick never repeats).
+
+**Persistence across a clean daemon stop does not hold at kernel pin
+`41cb2f47`** (FINDINGS.md #14): every granted fs mutation is withdrawn
+with its fiber, and a graceful shutdown disposes every fiber, so the
+persisted state and history are reverted to their content at that
+fiber's activation. A process death leaves them intact. Firing law #3 is
+stated as the contract's intent and proven through the crash path until
+the kernel provides a durable-state lane.
 
 ## Persistence honesty
 
 On activation the scheduler classifies each persisted document
-(`cron/state.json`, `cron/history.json`) honestly:
+(`cron/state.json`, `cron/history.jsonl`, the legacy `cron/history.json`)
+honestly:
 
-- **Genuinely absent** → a fresh default, silently (a first boot is not an
-  error).
-- **Present but undecodable** → the original bytes are preserved verbatim
-  under `cron/quarantine/<name>`, the loss is recorded as a `state-fault`
-  run record naming both paths, and the schedule starts fresh under firing
-  law #4. Never a silent default.
+- **Genuinely absent** (the bundle's typed `not-found`, classified by case,
+  never from a message) → a fresh default, silently (a first boot is not
+  an error).
+- **Present but undecodable** (for the log: any non-blank line that is not
+  a record, e.g. a torn tail after a crash mid-append, reported by line
+  number) → the original bytes are preserved verbatim under
+  `cron/quarantine/<name>`, the loss is recorded as a `state-fault` run
+  record naming both paths, and the schedule starts fresh under firing law
+  #4. Never a silent default.
 - **Unreadable for any other reason** (permissions, provider failure) →
   the activation fails loudly (contained per the kernel's R11). Defaulting
   there could re-fire boundaries the unreadable state already processed.
@@ -196,7 +223,8 @@ On activation the scheduler classifies each persisted document
 - `jobs` → `{ "jobs": [ { "id", "every-ms", "topic", "next-ms" } ] }` —
   `next-ms` is the next boundary strictly after `last` (absent until the
   schedule has started).
-- `history` → the bounded run-record array, as stored.
+- `history` → the run-record window (newest 500, oldest first), as a JSON
+  array.
 
 ## Changes
 
