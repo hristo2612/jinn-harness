@@ -8,9 +8,10 @@ periodic alarm at a 15-minute cadence (`tick-ms`), so the daemon is the only
 process on duty.
 
 **Soak started:** 2026-08-28T04:28:59Z · kernel pin `a17df864` (the pin at
-soak start; the pin was bumped mid-soak to `01133c45` on 2026-08-28 — see
-§Pin bump mid-soak, and `KERNEL-PIN.md` owns the current pin) · harness
-`5c828c6` · job `health` every 900 000 ms, wake cadence 900 000 ms.
+soak start; bumped mid-soak to `01133c45` and then to `41cb2f47`, both on
+2026-08-28 — see §Pin bump mid-soak, and `KERNEL-PIN.md` owns the current
+pin) · harness `5c828c6` · job `health` every 900 000 ms, wake cadence
+900 000 ms.
 
 ## Layout
 
@@ -25,7 +26,8 @@ SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
 | `$SOAK/bin/` | `jinnd` (built from the pinned commit by the composition harness's git-archive build), `cron-kit` (release), `detach.py` (copy of `tools/soak/detach.py`) |
 | `$SOAK/profile.json`, `$SOAK/artifacts/` | The generated kit (`cron-kit kit`) — never hand-edited |
 | `$SOAK/ledger.sqlite` | The daemon's append-only ledger (the evidence surface) |
-| `$SOAK/data/` | The daemon's data root: `cron/` (state, history, per-fire run records), `health/` (the consumer's reports) |
+| `$SOAK/data/` | The daemon's data root: `cron/` (state, the append-only history log, per-fire run records), `health/` (the consumer's reports) |
+| `$SOAK/data.inverses/` | The kernel's `jinn:fs` effect-retention store (since pin `41cb2f47`): one durable inverse per live revertible effect, keyed by effect id — the byte curve FINDINGS.md #8 asked for is measured here |
 | `$SOAK/logs/` | `jinnd.log`, `ops.log` (operator actions, one timestamped line each — restarts and the pin bump count toward the +7d audit) |
 | `$SOAK/run/` | `jinnd.pid` |
 | `$SOAK/meta.json` | Start timestamp + pins, written once at soak start |
@@ -86,7 +88,21 @@ read-only handle cannot join the live WAL.)
 
 SIGINT to the daemon — it disposes all fibers (cancelling the scheduler's
 alarm with the rest of its contribution), reaches quiescence, and flushes
-the ledger before exiting:
+the ledger before exiting.
+
+**Since pin `41cb2f47` a clean stop also WITHDRAWS every `jinn:fs`
+mutation the fibers made in that process** — the scheduler's state and
+history-log appends, the consumer's report — restoring their content at
+each fiber's activation (FINDINGS.md #14). The ledger keeps every fire; the
+files do not, and the next start re-starts the schedule fresh (no catch-up,
+no `skipped` record) — a duty gap the +7d audit must count. A hard kill
+(SIGKILL) leaves the files intact but skips the ledger flush barrier and
+is a crash-recovery observation by this document's own rule. **Until the
+kernel retires the finding, a planned stop is a decision the operator
+logs either way**: `stopped (clean; fs contribution withdrawn per FINDINGS
+#14)` or `stopped (hard, planned; files kept per FINDINGS #14)`. The soak
+was not stopped after the `41cb2f47` start; the choice is the COO's when
+the next planned stop comes.
 
 ```sh
 SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
@@ -131,13 +147,23 @@ M2-K2: `jinn:clock` + the `DispatchTrace` bus tap), harness PR #3. The bump is w
 that drove it: from here the soak runs one process, and `ops.log` carries
 the `pin bump a17df864 -> 01133c45` line.
 
+**Executed 2026-08-28 (second bump):** `01133c45` → `41cb2f47` (jinnd
+M2-K3: the `jinn:fs@0.2.0` bundle + HostFs effect retention), harness PR
+#4. The stop was a clean SIGINT of the `01133c45` daemon (whose fs
+effects were not journaled, so the files survived it — the last stop for
+which that is true, see §Stop). Over the same root the `41cb2f47`
+scheduler read the legacy `cron/history.json` once as its window seed and
+opened `cron/history.jsonl` as the append lane; `ops.log` carries the
+`pin bump 01133c45 -> 41cb2f47` line and the before/after evidence.
+
 ## The +7d audit (closes the soak)
 
 At soak start + 7 days, against `ops.log`, the ledger, and `data/`:
 fire count vs expected (4/hour × wall time, minus recorded gaps),
-missed/skipped record audit, ledger growth rate (rows and bytes — HostFs
-undo retention, FINDINGS.md #8, is what the byte curve is watching; the
-evidence feeds M2-K3), memory/disk footprint, restart/crash log, zero
+missed/skipped record audit, ledger growth rate (rows and bytes — the byte curve watched HostFs
+undo retention in RAM until pin `41cb2f47`, and from there the durable
+retention store `$SOAK/data.inverses/` plus the append-only history log,
+FINDINGS.md #8 closed), memory/disk footprint, restart/crash log, zero
 old-gateway interaction (the daemon touches nothing outside `$SOAK`), and
 post-bump fire evidence: `AlarmWake` + `DispatchTrace` lines in the ledger
 after the bump timestamp, with the per-tick ledger row cost compared before

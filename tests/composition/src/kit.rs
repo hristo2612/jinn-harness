@@ -165,6 +165,33 @@ impl Daemon {
         std::fs::rename(&staging, &path).expect("profile replaces");
     }
 
+    /// Edits the profile until the daemon reports `id` restarted — the
+    /// FINDINGS.md #12 mitigation: an edit landing in the window between
+    /// the boot reconcile and the watcher arming is silently unseen, so
+    /// the operator lane rewrites (atomically, the same bytes) until the
+    /// expected restart shows in the log.
+    pub fn edit_profile_until_restart(&self, id: &str, edit: impl Fn(&mut serde_json::Value)) {
+        let restarts_before = self.restart_count(id);
+        let deadline = Instant::now() + DEADLINE;
+        while self.restart_count(id) == restarts_before {
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {id} to restart on its config edit\n--- daemon log ---\n{}",
+                self.log()
+            );
+            self.edit_profile(&edit);
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    }
+
+    /// How many reconcile reports restarted `id`.
+    #[must_use]
+    pub fn restart_count(&self, id: &str) -> usize {
+        self.log()
+            .matches(&format!(r#"restarted=[EntryId("{id}")]"#))
+            .count()
+    }
+
     /// Every ledger event's `kind` text, in sequence order (Law 2 — the
     /// ledger is the evidence). The connection is a plain WAL reader — a
     /// read-only handle cannot join the live daemon's WAL and would see a
@@ -217,6 +244,18 @@ impl Daemon {
                 }
             }
         }
+    }
+}
+
+impl Daemon {
+    /// Kills the daemon outright (SIGKILL) and waits: the crash path. At
+    /// this pin a clean SIGINT disposes every fiber and dispose withdraws
+    /// the fiber's `jinn:fs` contribution LIFO — persisted state included
+    /// (FINDINGS.md #14) — so persistence ACROSS a process death is proven
+    /// through the path that leaves files as they were.
+    pub fn kill(mut self) {
+        self.child.kill().expect("SIGKILL delivered");
+        self.child.wait().expect("daemon reaped");
     }
 }
 

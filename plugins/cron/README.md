@@ -6,11 +6,13 @@ distribution (phase 1.3). Roles per the seam-triple naming law (AGENTS.md):
 | Role | Package | What it is |
 |---|---|---|
 | Service definition | `jinn-cron` | The `jinn:cron` contract: settings namespace, schedule spec, fire payloads, run-record shape, and the firing law. Pure types + logic; compiled into both guests and host tools. |
-| Provider | `cron-scheduler` | Wasm plugin holding the schedule: reads job entries from its config subtree, holds ONE `jinn:clock` periodic alarm at `tick-ms`, plans once at `activate` (off `now`) and again on every wake, emits typed fire events, keeps run history and state through its granted `jinn:fs`. |
-| Consumer | `health-snapshot` | A real scheduled job: on each fire it probes data-root writability (write, read back, compare) and writes a health report through its granted `jinn:fs` — every fire and every write ledger-visible. |
+| Provider | `cron-scheduler` | Wasm plugin holding the schedule: reads job entries from its config subtree, holds ONE `jinn:clock` periodic alarm at `tick-ms`, plans once at `activate` (off `now`) and again on every wake, emits typed fire events, keeps state and an append-only run-history log through its granted `jinn:fs`. |
+| Consumer | `health-snapshot` | A real scheduled job: on each fire it probes data-root writability (write, read back, compare, `meta`), enumerates its directory and the fired job's run records (`list`), stats the history log (`meta`), and writes a health report through its granted `jinn:fs` — every fire, call, and write ledger-visible. |
 
-Two guests, then: time is the kernel's now (`jinn:clock`, pinned commit
-`01133c45`), so the seam no longer carries a timer stand-in — the
+Two guests, then: time is the kernel's now (`jinn:clock`, since pinned
+commit `01133c45`), and the file surface is the full `jinn:fs@0.2.0` bundle
+(since pinned commit `41cb2f47`: `list`/`meta`/`append`/`remove`, typed
+`not-found`, idempotency keys). The seam carries no timer stand-in — the
 `cron-tick-source` plugin, its `jinn:cron/tick` topic, and the operator-lane
 driver that fed it are retired.
 
