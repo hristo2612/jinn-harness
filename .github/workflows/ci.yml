@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: fmt
+        run: cargo fmt --check
+      - name: clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: test (includes the kernel pin gate)
+        env:
+          JINND_READ_TOKEN: ${{ secrets.JINND_READ_TOKEN }}
+        run: |
+          # jinnd is private: with a read token configured, the pin gate's
+          # kernel-checkout leg runs against a fresh clone; without one it
+          # skips loudly while the vendored-surface leg stays fail-closed
+          # (see KERNEL-PIN.md).
+          if [ -n "$JINND_READ_TOKEN" ]; then
+            export JINND_CLONE_URL="https://x-access-token:${JINND_READ_TOKEN}@github.com/hristo2612/jinnd.git"
+          fi
+          cargo test --workspace
+
+  composition-gate:
+    # Placeholder until the first plugin exists: this job then becomes the
+    # real-composition gate — boot a test profile through the real loader
+    # (AGENTS.md standing order 3; hand-mounted tests never count).
+    runs-on: ubuntu-latest
+    steps:
+      - name: pending
+        run: echo "composition gate pending — no plugins yet; becomes the real-loader profile boot when the first plugin lands"

@@ -1,0 +1,12 @@
+[package]
+name = "harness-pin"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+description = "Kernel pin gate: verifies the vendored contract surface and the pinned jinnd checkout against KERNEL-PIN.md"
+
+[dependencies]
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"

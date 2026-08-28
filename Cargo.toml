@@ -1,0 +1,13 @@
+# Workspace for the Jinn distribution.
+#
+# Plugin crates land under plugins/ as wasm32 components (one seam triple at a
+# time) and are added to members as they are born. tools/ holds repo machinery
+# that runs on the host (the pin gate); it is not a plugin.
+
+[workspace]
+resolver = "2"
+members = ["tools/harness-pin"]
+
+[workspace.package]
+edition = "2021"
+repository = "https://github.com/hristo2612/jinn-harness"
