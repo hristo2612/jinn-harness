@@ -13,9 +13,11 @@ are packet-card-ready (reproducible, shaped); the rest are honest
 observations whose cards need more evidence, marked as such. What HELD is
 at the bottom — the kernel earned that section too. Entries 1 and 2 are
 **closed** as of the `01133c45` pin bump (jinnd M2-K2) and entries 3 and 8
-as of the `41cb2f47` pin bump (jinnd M2-K3): each carries a closure note
-appended in place, and the original text stands as the record of what the
-friction was. Entries 14 and 15 were hit adopting `41cb2f47`.
+as of the `41cb2f47` pin bump (jinnd M2-K3), and entries 14 and 15 (hit
+adopting `41cb2f47`) as of the `4eb4a93` pin bump (jinnd M2-K4): each
+carries a closure note appended in place, and the original text stands as
+the record of what the friction was. Entries 16 and 17 were hit adopting
+`4eb4a93`.
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -334,6 +336,26 @@ crash already behaves. Severity: high for any plugin that keeps state.
 real daemon; kernel-side confirmed by M2-K3's own runbook (step 5: the
 scribe's journal appends are withdrawn on dispose).
 
+**Closed 2026-08-28 — retired by pin 4eb4a93 (jinnd M2-K4, shape (iii)
+adjudicated in the kernel's decision log: suspend ≠ dispose).** A
+contribution belongs to the profile ENTRY, not to a fiber incarnation or a
+process. Daemon shutdown now SUSPENDS every fiber: kernel registrations
+(the alarm, the provision, the listener) release with their inverses on
+the record, world mutations (`jinn:fs` writes/appends) are RETAINED in the
+entry's durable journal, and one typed `FiberSuspended { retained }` event
+lands per fiber; the transitions carry `cause: Suspend`. A reconcile
+restart hands the successor incarnation the entry's journal (a config
+edit no longer reverts the entry's documents); only the entry's removal
+from the composition withdraws its trail, LIFO across incarnations and
+across process restarts. Crash and clean shutdown agree on the disk
+outcome; only the clean path reaches quiescence and flushes the ledger.
+Harness side: the pinned transcript went red by design and is replaced by
+`a_clean_shutdown_suspends_and_a_restart_resumes_the_schedule` (files
+retained, `FiberSuspended` ×2, no `fs` withdrawal, the next boot resumes
+the schedule with no second `schedule-started`); the restart proof is back
+on the clean path; SOAK.md's hard-stop ruling is retired. `jinn:plugin` is
+`0.3.0` (R12): no signature change, the lifecycle semantics are contract.
+
 ## 15. Effects registered while a dispose is in flight escape the withdrawal
 
 Observed once (pin `41cb2f47`, composition run `restart-31313`): a SIGINT
@@ -352,6 +374,111 @@ ledgered error, so a dispose trail is exactly the fiber's contribution
 
 *Evidence grade:* single ledger observation; the card should start with a
 repro that disposes during a guest's `handle-event`.
+
+
+**Closed 2026-08-28 — retired by pin 4eb4a93 (jinnd M2-K4 ruling 5).**
+Reproduced kernel-side first (a dispose during a guest's `handle-event`),
+then closed fail-closed: once an instance's journal seals for withdrawal
+or suspension, every further registration REFUSES with a ledgered
+`InactiveContext` error, so a dispose trail is exactly the fiber's
+contribution (I1), never a prefix of it. Observed on this harness at the
+new pin (composition run `clean-stop-6425`): a SIGINT landing mid-tick
+left `fs append refused: the seat's journal is sealed for withdrawal` on
+the ledger (`ErrorRecorded` ×2, `InactiveContext` then the guest's
+`PluginFailed`), the tick's earlier effects retained, nothing torn between
+withdrawn and kept. What remains of the shape — the OTHER half of the
+card's disjunction, draining an in-flight handler before the seal — is
+finding 16.
+
+## 16. Suspend seals the journal under an in-flight handler — a planned stop can tear a tick
+
+Pin `4eb4a93` closes finding 15 by refusal: a registration after the seal
+fails loudly. It does not drain the guest call in flight first. Observed on
+the real daemon (composition run `clean-stop-6425`, pin `4eb4a93`): a
+SIGINT landed while the scheduler's wake handler was mid-tick — the tick's
+state write had landed (`last` advanced to the boundary), the fire had
+emitted (`DispatchTrace`, the consumer's report written), the per-fire run
+record registered, and then the history append was refused
+(`InactiveContext: fs append refused: the seat's journal is sealed for
+withdrawal`), the handler failed (`PluginFailed`), and the daemon
+suspended. On disk: state says the boundary was processed, its run record
+exists, the history log has no line for it. The seam's own contract
+absorbs this honestly (§Run history: state before history, so a torn tick
+loses a record and never doubles a fire), and the composition proof
+tolerates `last` being one boundary past the newest history record. But
+this was a PLANNED stop — the operator's Ctrl-C — and the kernel had every
+opportunity to let a sub-second handler finish.
+
+**Packet-card shape:** on suspend (and on dispose), quiesce the instance
+before sealing its journal — await the in-flight guest call under the
+existing guest deadline, then seal; refusal stays as the backstop for a
+handler that outlives the deadline. Severity: low for cron (a lost history
+line, ledger still complete); medium for any guest whose handler makes
+several related effects (the transactional gap of finding 6, met at
+shutdown).
+
+*Evidence grade:* reproducible under suite load (the wake cadence is 500 ms
+and a tick takes ~50 ms, so roughly one clean stop in ten lands mid-tick);
+the ledger of the named run is the transcript.
+
+## 17. The daemon's own-write-back check swallows an external edit that lands during a reconcile
+
+`Daemon::reload` skips a delivery whose profile text equals the text it
+"committed" — its guard against reconciling the echo of its own write-back.
+But the committed text is captured by RE-READING `profile.json` from disk
+at the end of every apply (boot included), not from the bytes the daemon
+itself wrote. An external edit that lands while a reconcile is still
+applying is therefore captured as the daemon's own echo: the watcher's
+delivery of that edit reads back the same bytes, the guard fires, and the
+reconcile returns an empty report — logged as
+`reconciled created=[] restarted=[] disposed=[] unchanged=[]`, every list
+empty (the diff never ran). Any identical rewrite afterwards is skipped
+the same way, so finding 12's mitigation (rewrite the same bytes until the
+restart shows) cannot escape it: the composition log of run `grants-6778`
+shows the boot reconcile at `13:55:00.28Z`, the consumer nonce-bump edit
+landing before it finished, and then one all-empty reconcile every ~600 ms
+for 30 s. Deterministic given the interleaving; the interleaving is common
+under load, where the boot reconcile is slow and the test's edit is fast.
+In isolation the same tests pass.
+
+**Harness-side mitigation shipped:** `edit_profile_until` rewrites the
+document atomically with DIFFERENT bytes on each attempt (a trailing
+newline toggled) until the expected observation holds; every config-edit
+proof uses it.
+
+**Packet-card shape:** recognize the daemon's own write-back by the bytes
+it wrote (remember the rendered text at the save, or a write generation),
+never by re-reading a file another writer may have replaced — or drop the
+echo guard and let the loader's own diff answer `unchanged`. This is the
+kernel-side half of finding 9 made concrete: with the guard as it is, an
+operator edit can be lost with a success line in the log. Severity:
+medium — an operator lane that silently drops edits.
+
+*Evidence grade:* reproducible — the mechanism is read from the pinned
+source (`reload` + the apply tail) and the named run's log is the
+transcript; three consecutive suite runs hit it before the mitigation.
+
+## 18. A relative `--profile` path boots the daemon without its watcher
+
+Started from its runtime root with `--profile profile.json --ledger
+ledger.sqlite` (relative paths), the `4eb4a93` daemon booted, reconciled,
+and served duty — but its file watcher refused to start:
+`ERROR jinnd: file watcher unavailable refused=KernelError { code:
+EffectFailed, message: "No path was found. about [\"\"]" }` (the watched
+directory is the profile's parent, which is empty for a bare file name),
+and the daemon carried on with the operator lane silently dead. Observed
+once on the soak's third-bump start (an operator slip; SOAK.md's own
+start line uses absolute paths, and the clean stop/start cycle that
+followed corrected it). Low severity, but a daemon that can't watch its
+profile should either resolve the path against its working directory or
+refuse to boot — an unwatched profile is a lane the operator believes is
+live.
+
+**Packet-card shape:** canonicalize `DaemonPaths` at open (an absolute
+profile path is what the watcher needs), and make watcher failure a boot
+refusal rather than an error line.
+
+*Evidence grade:* reproducible from the log line; one observation.
 
 ---
 
@@ -375,7 +502,10 @@ repro that disposes during a guest's `handle-event`.
   (`disposing_the_scheduler_leaves_a_clean_ledger_trail`).
 - **State through granted contracts survives restarts:** the firing law's
   no-backfill/catch-up semantics proved through a real daemon SIGINT +
-  reboot (`restart_fires_once_and_records_the_gap_without_backfill`).
+  reboot (`restart_rerequests_the_alarm_fires_once_and_records_the_gap`),
+  and since pin `4eb4a93` the clean stop is a SUSPENSION on the record —
+  files retained, `FiberSuspended` per fiber, the next boot resuming the
+  schedule (`a_clean_shutdown_suspends_and_a_restart_resumes_the_schedule`).
 - **Guest provisions and every broker crossing recorded:** the fire-run
   ledger is a complete causal story, emits included since the
   `DispatchTrace` tap landed (finding 2).

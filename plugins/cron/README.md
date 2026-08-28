@@ -10,9 +10,13 @@ distribution (phase 1.3). Roles per the seam-triple naming law (AGENTS.md):
 | Consumer | `health-snapshot` | A real scheduled job: on each fire it probes data-root writability (write, read back, compare, `meta`), enumerates its directory and the fired job's run records (`list`), stats the history log (`meta`), and writes a health report through its granted `jinn:fs` — every fire, call, and write ledger-visible. |
 
 Two guests, then: time is the kernel's now (`jinn:clock`, since pinned
-commit `01133c45`), and the file surface is the full `jinn:fs@0.2.0` bundle
+commit `01133c45`), the file surface is the full `jinn:fs@0.2.0` bundle
 (since pinned commit `41cb2f47`: `list`/`meta`/`append`/`remove`, typed
-`not-found`, idempotency keys). The seam carries no timer stand-in — the
+`not-found`, idempotency keys), and the plugin world is `jinn:plugin@0.3.0`
+(since pinned commit `4eb4a93`): a daemon stop or a config-edit restart
+SUSPENDS a guest — its fs contribution stays on disk for its entry, its
+`undo` never runs on suspension — and only removal from the profile
+withdraws it. The seam carries no timer stand-in — the
 `cron-tick-source` plugin, its `jinn:cron/tick` topic, and the operator-lane
 driver that fed it are retired.
 
