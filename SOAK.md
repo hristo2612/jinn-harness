@@ -9,8 +9,8 @@ process on duty.
 
 **Soak started:** 2026-08-28T04:28:59Z · kernel pin `a17df864` (the pin at
 soak start; bumped mid-soak to `01133c45`, `41cb2f47`, `4eb4a93` and
-`9e61e47`, all on 2026-08-28 — see §Pin bump mid-soak, and
-`KERNEL-PIN.md` owns the current pin) · harness `5c828c6` · job `health` every 900 000 ms, wake cadence
+`9e61e47`, all on 2026-08-28, and to `1b098be` on 2026-08-29 — see §Pin
+bump mid-soak, and `KERNEL-PIN.md` owns the current pin) · harness `5c828c6` · job `health` every 900 000 ms, wake cadence
 900 000 ms.
 
 ## Layout
@@ -313,6 +313,28 @@ regenerated, the wrapper refreshed), then `printf planned-start` +
 `kickstart`. The start evidence was the readiness line, captured verbatim
 in `ops.log` beside the `pin bump 4eb4a93 -> 9e61e47` line; the post-bump
 `AlarmWake` → `DispatchTrace` → run record → append chain follows it.
+
+**Executed 2026-08-29 (fifth bump):** `9e61e47` → `1b098be` (jinnd
+M2-K6: `jinn:process` + `jinn:net` providers, world `jinn:plugin@0.4.0`
+with the bundles' typed errors on the wire; harness packet
+`packet/2.1-operator-api`). Supervised, per this procedure: a clean
+SIGINT stop of the `9e61e47` daemon (planned, logged with before/after
+evidence — state, history and report byte-identical across the stop),
+Setup re-run from the bumped repo (the composition suite rebuilt the
+cached daemon at the new pin, the release kit refreshed, the wrapper
+re-rendered, the kit regenerated — the cron artifact hashes were
+byte-identical to the previous pin's, the guests regenerate their
+bindings on the 0.4.0 world with no logic change), then
+`printf planned-start` + `kickstart`. Start evidence: the readiness line,
+verbatim in `ops.log` beside the `pin bump 9e61e47 -> 1b098be` line. The
+boot's ledger shows FOUR `ServiceProvided` rows (`jinn:fs`, `jinn:clock`,
+`jinn:process`, `jinn:net` — FINDINGS.md #5 closed for the latter two)
+and the scheduler RESUMING with one catch-up fire for the boundary that
+elapsed inside the stop window (the activate plan, FINDINGS.md #13
+shape). Duty gap ≈ 20 s. The soak's tree is unchanged — the operator-API
+seam is NOT mounted in the soak profile (the M2 acceptance run keeps the
+composition it started with; the api trio is proven in the composition
+suite and served only there).
 
 ## The +7d audit (closes the soak)
 

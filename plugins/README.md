@@ -5,4 +5,7 @@ vendored contract surface in `kernel-pin/`. Organized by capability seam per
 the seam-triple naming in `AGENTS.md` (service definition · providers ·
 consumers); each seam's group directory carries a role-table README.
 
-Empty by design at phase 1.1 — the first capability (cron) lands at phase 1.3.
+| Seam | What it is |
+|---|---|
+| `cron/` | Scheduled work (phase 1.3): `jinn-cron` · `cron-scheduler` · `health-snapshot`. |
+| `api/` | The operator API (phase 2.1): `jinn-api` · `jinn-api-http` (+ its codec `jinn-api-http-wire`) · `jinn-status`, `jinn-profile-edit`. |

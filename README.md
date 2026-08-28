@@ -13,18 +13,21 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
-Phase 1.7 — kernel pin `4eb4a93` (M2-K4): the guests on the
-`jinn:plugin@0.3.0` world, where a daemon stop SUSPENDS a plugin (its
-persisted state retained for its profile entry) and only removal from the
-profile withdraws its contribution — a clean restart resumes the schedule.
-Phase 1.6 put the guests on the `jinn:fs@0.2.0` bundle (append-backed run
-history, `list`/`meta` health surface, typed not-found), phase 1.5 on
-`jinn:clock` alarms; the phase-1.4 soak continues across all three bumps
-(`SOAK.md`). The capability itself is cron as a seam triple
-(`plugins/cron/`), proven by real-composition tests that boot the pinned
-`jinnd` daemon (`tests/composition`). Kernel frictions found on the way are
-logged in `FINDINGS.md` (the two-way iteration channel — kernel changes are
-never made here).
+Phase 2.1 — kernel pin `1b098be` (M2-K6): the guests on the
+`jinn:plugin@0.4.0` world, which provides `jinn:process` and `jinn:net`.
+The first core-port seam is the operator API (`plugins/api/`): a
+definition (`jinn-api`) with versioned additive schemas, an HTTP provider
+holding a loopback `jinn:net` listener under a port-scoped grant, and two
+consumers — status/health (honest about what the kernel cannot tell a
+guest) and the profile edit lane (patch ONE entry through a scoped
+`jinn:fs` write; the daemon's watcher reconciles it). Phase 1.7 put the
+guests on `jinn:plugin@0.3.0` (a daemon stop SUSPENDS a plugin; only
+removal from the profile withdraws it), 1.6 on the `jinn:fs@0.2.0` bundle,
+1.5 on `jinn:clock` alarms; the phase-1.4 soak continues across all five
+bumps (`SOAK.md`). Every seam is proven by real-composition tests that
+boot the pinned `jinnd` daemon (`tests/composition`). Kernel frictions
+found on the way are logged in `FINDINGS.md` (the two-way iteration
+channel — kernel changes are never made here).
 
 ## Layout
 
@@ -34,7 +37,8 @@ never made here).
 | `KERNEL-PIN.md` | The kernel pin: jinnd commit + contract hashes + bump procedure |
 | `kernel-pin/` | Vendored copy of the pinned contract surface (`wit/`, `contracts/`) — integrity-gated against `KERNEL-PIN.md` by `harness-pin` |
 | `tools/harness-pin` | The pin gate: computes/verifies contract hashes (`cargo test -p harness-pin`) |
-| `tools/cron-kit` | Builds the cron seam's components + pinned profile |
+| `tools/cron-kit` | Builds the cron seam's components + pinned profile; its library is the kit machinery every seam kit shares |
+| `tools/api-kit` | Builds the operator-API profile: the api trio beside the cron seam |
 | `plugins/` | First-party plugin crates (wasm components) — land per phase, one seam triple at a time |
 | `profiles/` | Named plugin trees — a product is a profile |
 | `tests/composition` | Real-composition gates: boot generated profiles through the REAL pinned jinnd daemon |

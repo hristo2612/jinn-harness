@@ -19,7 +19,12 @@ carries a closure note appended in place, and the original text stands as
 the record of what the friction was. Entries 16, 17 and 18 were hit
 adopting `4eb4a93` and are **closed** as of the `9e61e47` pin bump (jinnd
 M2-K5), which also delivers entry 12's stated minimum (a readiness line;
-its status surface remains open).
+its status surface remains open). Entry 5 is **closed** for `jinn:process`
+and `jinn:net` as of the `1b098be` pin bump (jinnd M2-K6). Entries 19–24
+were hit building the operator-API seam on that pin (phase 2.1): 19 and
+20 are the introspection gaps the status surface names in its answers,
+21 is the edit lane's revertibility hazard (transcript-pinned), 22–24 are
+shape frictions with source evidence.
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -152,6 +157,21 @@ the same grant + ledger discipline HostFs has.
 *Evidence grade:* source-confirmed (the daemon assembly registers exactly
 one provider, `hostfs.register` in `jinnd-daemon` `daemon.rs`); no run
 transcript of a refused `jinn:process` call yet.
+
+**Closed for `jinn:process` and `jinn:net` 2026-08-29 — retired by pin
+1b098be (jinnd M2-K6).** The daemon registers four base providers
+(`ServiceProvided` ×4 at every boot: `jinn:fs`, `jinn:clock`,
+`jinn:process`, `jinn:net` — soak ledger seq 1473–1476 after the bump),
+each behind its declared bundle with the fs grant discipline: a typed
+`process-policy` / `net-policy` scope (fail-closed admission, default
+deny), every call a ledgered crossing, spawned children and sockets as
+kernel registrations released on suspend and dispose. The world is
+`jinn:plugin@0.4.0` and carries the bundles' own `process-error` /
+`net-error` on the guest wire. Harness side: the operator-API seam is the
+first consumer of `jinn:net` (`plugins/api/jinn-api-http` listens on
+loopback under a port-scoped grant; refusals for an out-of-range port and
+a non-loopback host proven on the record). What remains of this entry:
+`jinn:keystore` is still declared and unprovided.
 
 ## 6. No transactional pairing of related effects
 
@@ -541,6 +561,158 @@ exit 1, no `reconciled`, no readiness line, no ledger, no data). SOAK.md's
 absolute-path caveat is retired; the supervisor wrapper keeps absolute
 paths as its canonical form, not as a workaround, and §Start's evidence
 is the readiness line rather than `boot.json`.
+
+
+## 19. No introspection contract — a guest cannot see the composition it is part of
+
+The daemon knows every entry's fiber id and state (`status` on stdin logs
+`entry entry="…" fiber=N state=Some(Active)` to stderr), which services
+each fiber provides, which listeners, alarms and sockets it holds, and
+whether the boot reconcile is done (the readiness line). None of that is
+reachable by a guest: the only granted surfaces are the four base
+providers and sibling contracts. An operator-facing status plugin
+therefore cannot answer `fiber-state`, `fiber-uid`, `provisions`,
+`listeners`, `alarms` or `readiness` honestly — and the brief forbids
+guessing.
+
+**Harness-side handling shipped:** `jinn-status` answers `status` from
+what a guest CAN reach — the profile document of record through its
+scoped `jinn:fs` (the entries with their authority fields) and provider
+PROBES through granted contracts (a `resolve` + one read call; for cron,
+the job table with `next-ms`) — and names each unanswerable field in
+`kernel.unavailable` with this entry's number. Two smaller observations
+belong here: the ledger's `entry` column is empty at this pin
+(attribution is fiber-only; the composition suite maps fiber → entry via
+`ServiceProvided` rows), and a refusal's reason text (`denied("… not
+loopback …")`) reaches the guest typed but appears neither on the ledger
+(`GrantRefused { contract }` only) nor on the log.
+
+**Packet-card shape:** a read-only introspection contract (e.g.
+`jinn:introspect`), granted like any other and ledgered per read:
+`entries` → `{ id, fiber, state, incarnation, provisions, registrations
+(listeners, alarms, sockets) }`, `readiness`; plus fill the ledger's
+`entry` column and put the refusal reason on the `GrantRefused` record.
+Entry 12's "honest fix" (a machine-readable status surface) is this card.
+
+*Evidence grade:* source-confirmed (`jinnd-daemon` `daemon.rs` registers
+fs/clock/process/net only; `watch.rs` `log_status` is stderr-only);
+composition `status_health_and_ledger_tail_answer_through_the_api` pins
+the shape of the honest answer.
+
+## 20. `jinn:ledger` is declared, not provided — the ledger is readable only beside the daemon
+
+The contract bundle `kernel-pin/contracts/jinn-ledger` (a `read-range`
+reader with consumption receipts, constitution 02) has no live provider:
+the daemon registers none, so a guest cannot page the ledger or learn the
+last sequence number. The operator API's `ledger-tail` and
+`last-ledger-seq` are unanswerable from inside; every reader of the
+ledger today is a process beside the daemon opening the SQLite file.
+
+**Harness-side handling shipped:** `ledger-tail` honors the paged request
+shape (`after`, `limit` clamped to 1..=500) and answers an empty page with
+a TYPED `unavailable { finding: 20 }` — never a guess, never a hang — and
+the request is still a ledgered contract call, so the operator's read
+intent is on the record.
+
+**Packet-card shape:** register the `jinn:ledger` reader behind its
+bundle (`read-range(from-id, limit)`), consumption receipts per 02 and
+receipts excluded from the reader's own feed, payloads redacted by
+sensitivity class; a `last-seq` read beside it.
+
+*Evidence grade:* source-confirmed (daemon assembly); composition
+`status_health_and_ledger_tail_answer_through_the_api` pins the typed
+answer.
+
+## 21. An operator edit made through `jinn:fs` is a revertible effect of the editing fiber — disposing the editor rolls the edit back
+
+The edit lane (entry 9's operator surface) writes the profile document
+through the editor guest's granted `jinn:fs` `write`. That write is a
+revertible effect: the kernel keeps the PRE-PATCH document as its inverse,
+retains it across the editor's incarnations (a clean stop suspends the
+editor with `FiberSuspended { retained: 1 }`), and withdraws it LIFO when
+the editor ENTRY is disposed. Reproduced on the real daemon (composition
+`disposing_the_editor_reverts_the_operators_edit_finding_21`): PATCH one
+entry's config through the API → the scheduler restarts on the new config
+→ the operator removes `jinn-profile-edit` from the profile → the daemon
+disposes it, `EffectWithdrawn "fs write profile.json"` lands, the
+pre-patch document (editor entry INCLUDED) is restored on disk, the
+watcher reconciles THAT: the editor is re-created and the scheduler
+restarts on its OLD config. Retiring a plugin silently rolled back
+configuration and resurrected the plugin. The class of state is entry 14's
+(a record, not a contribution), met at the operator lane; it also forces
+the layout coupling that the profile must sit under the data root
+(`profiles/operator-api/README.md`).
+
+**Packet-card shape (alternatives):** (i) a kernel-provided profile
+contract — `jinn:profile` `patch-entry(id, merge-patch)` applied by the
+loader itself, write-back included, ledgered as an operator action with
+NO fs inverse (the profile's history is the ledger's, not a fiber's
+journal); or (ii) a record-class grant scope on `jinn:fs` whose mutations
+are ledgered but not journaled for withdrawal. (i) also removes the
+data-root coupling and the torn-write window of entry 22. Severity: high
+for the operator lane.
+
+*Evidence grade:* reproducible — pinned by a passing composition
+transcript (it goes red when the kernel retires this) and by the
+`retained: 1` suspension record of the editor on every clean stop.
+
+## 22. `jinn:fs` `write` is in place — a concurrent reader can see a torn document
+
+`HostFs` `write` is `tokio::fs::write(file, data)` (truncate, then write;
+`hostfs/ops.rs`). The provider's own retention store writes staged +
+fsync + rename ("durable means durable", `retention.rs`) — the discipline
+exists and is not applied to the data-plane write. For an ordinary data
+file the window is the guest's own; for the profile document it is the
+daemon's watcher's and any operator's `cat`: a delivery can read a
+truncated or partial document. Not observed torn in the composition runs
+(the document is a few KiB and the write lands in one syscall), so the
+severity is low today and rises with document size.
+
+**Packet-card shape:** stage + rename for `write` (the retention store's
+helper, reused), or a declared `replace` operation with that shape.
+Entry 21's shape (i) removes the profile case entirely.
+
+*Evidence grade:* source-confirmed; no torn transcript.
+
+## 23. Sockets have no readiness wake — a server polls at the clock floor, on the record
+
+`jinn:net` v0.1 is non-blocking by design (R1): `accept` and `read` answer
+`would-block` and the bundle says "the guest polls, typically from a
+`jinn:clock` alarm". The HTTP provider does exactly that at the granted
+floor (250 ms). Two costs, measured on the composition ledgers: latency —
+a request waits up to one poll before its accept and one more per read
+round, so an idle-API request costs 250–500 ms; and ledger growth — every
+poll is 2 rows (`AlarmWake` + the `accept` `ContractCall`) whether or not
+anything is pending, ≈ 8 rows/s, ≈ 690 000 rows/day for an IDLE operator
+API (the cron seam's whole duty cycle is ≈ 100 rows/day at its 15-minute
+cadence). A production-shaped API cannot carry that.
+
+**Packet-card shape:** a readiness delivery for kernel-registered sockets
+— `lifecycle.handle-event(token, "jinn:net/readable", handle)` when a
+listener has a pending connection or a connection has bytes/EOF — so a
+server holds no alarm at all; or, smaller, a bounded blocking `accept`
+with a timeout (the `process` bundle's `wait` shape, capped at 1000 ms)
+so a poll costs one row per second instead of eight. Either keeps R1.
+
+*Evidence grade:* measured per poll on the composition ledgers (2 rows per
+wake, attributed to the provider's fiber); the daily figure is arithmetic
+at the 250 ms floor.
+
+## 24. A `jinn:fs` grant cannot be attenuated to read-only
+
+The `path-prefix` scope is a containment path (`grants.rs`
+`Declared::PathPrefix` ↔ `ScopeValue::Path`); there is no operation-class
+attenuation. `jinn-status` only ever READS the profile document, but the
+grant that lets it read is the same grant that would let it write —
+authority wider than use, by construction. Every read-only consumer of a
+document (status, health, any viewer) carries the same excess.
+
+**Packet-card shape:** an operation class in the scope — `{ path, ops:
+["read"] }` (effect classes are already declared per operation in each
+bundle's `metadata.toml`) — with the subset predicate extended to it.
+Low severity, structural.
+
+*Evidence grade:* source-confirmed; no transcript (no misuse to record).
 
 ---
 
