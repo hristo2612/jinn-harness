@@ -29,7 +29,8 @@ jobs:
           if [ -n "$JINND_READ_TOKEN" ]; then
             export JINND_CLONE_URL="https://x-access-token:${JINND_READ_TOKEN}@github.com/hristo2612/jinnd.git"
           fi
-          cargo test --workspace
+          # --nocapture so the pin gate's self-skip line is visible in the log
+          cargo test --workspace -- --nocapture
 
   composition-gate:
     # Placeholder until the first plugin exists: this job then becomes the
