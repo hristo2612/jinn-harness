@@ -15,9 +15,11 @@
 # health check and §Stop expect, and the exit status launchd sees is the
 # daemon's own (which is what `KeepAlive.SuccessfulExit=false` keys on).
 #
-# Absolute `--profile`/`--ledger` paths are mandatory, not stylistic: a
-# relative profile path makes the daemon refuse its file watcher AFTER the
-# boot reconcile has already written evidence (FINDINGS.md #18).
+# Absolute `--profile`/`--ledger` paths are the wrapper's canonical form.
+# They are no longer a workaround: since pin 9e61e47 the daemon resolves a
+# relative profile path itself and arms its watcher BEFORE writing any
+# boot evidence (FINDINGS.md #18 closed); the start evidence an operator
+# waits for is the daemon's readiness line in jinnd.log (SOAK.md §Start).
 set -eu
 
 SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}

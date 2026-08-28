@@ -16,8 +16,10 @@ at the bottom — the kernel earned that section too. Entries 1 and 2 are
 as of the `41cb2f47` pin bump (jinnd M2-K3), and entries 14 and 15 (hit
 adopting `41cb2f47`) as of the `4eb4a93` pin bump (jinnd M2-K4): each
 carries a closure note appended in place, and the original text stands as
-the record of what the friction was. Entries 16 and 17 were hit adopting
-`4eb4a93`.
+the record of what the friction was. Entries 16, 17 and 18 were hit
+adopting `4eb4a93` and are **closed** as of the `9e61e47` pin bump (jinnd
+M2-K5), which also delivers entry 12's stated minimum (a readiness line;
+its status surface remains open).
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -260,6 +262,21 @@ carries the mitigation as a helper (`edit_profile_until_restart`: rewrite
 atomically until the expected restart appears in the log) and every
 config-edit proof uses it.
 
+**Minimum delivered 2026-08-28 — pin 9e61e47 (jinnd M2-K5 #18/#12).** The
+daemon arms its watcher BEFORE the boot reconcile and, once that reconcile
+is done, emits exactly one machine-readable line on stderr:
+`{"jinnd":"ready","watcher":"armed","profile":"<canonical path>"}`. The
+window this entry named no longer exists (an edit landing during the boot
+reconcile is a watched delivery, applied after it — see entry 17's
+closure), and the line is the operator lane's one gate: the composition
+kit's `booted()` waits for it and every proof edits after it
+(`readiness_is_announced_once_after_the_boot_reconcile`,
+`an_edit_landing_before_readiness_is_applied`); SOAK.md §Start keys on it
+instead of `boot.json`. `edit_profile_until_restart` and the
+rewrite-until-restart loop are deleted. What stays OPEN of this entry is
+the honest fix it named: a machine-readable status surface (the API
+plugin's first duty, with entry 9's edit lane).
+
 ## 13. `alarm-every`'s first wake is one full period out
 
 There is no "fire now, then every P" shape: a periodic alarm's first wake
@@ -421,6 +438,22 @@ shutdown).
 and a tick takes ~50 ms, so roughly one clean stop in ten lands mid-tick);
 the ledger of the named run is the transcript.
 
+**Closed 2026-08-28 — retired by pin 9e61e47 (jinnd M2-K5 #16).** On
+suspend AND on dispose the kernel drains the in-flight guest call under
+the existing guest deadline, THEN seals the journal; the seal refusal
+stays as the backstop only for a handler that outlives the deadline.
+Observed on this harness at the new pin (composition
+`a_stop_landing_mid_tick_lands_the_whole_tick`): three planned SIGINTs
+aimed inside a firing tick (delivered ~2 ms after the consumer's probe
+write) each drained — the report write, the run record and the history
+append all logged AFTER the `SIGINT: suspending` line, then `quiescent;
+ledger flushed; bye`; `state.last` equals the newest history record after
+every stop, `FiberSuspended` per fiber, no `InactiveContext`, no
+`PluginFailed`. The clean-stop proof
+(`a_clean_shutdown_suspends_and_a_restart_resumes_the_schedule`) no longer
+tolerates `last` one boundary past the history log — it asserts exact
+agreement. SOAK.md §Stop's torn-tick paragraph is retired.
+
 ## 17. The daemon's own-write-back check swallows an external edit that lands during a reconcile
 
 `Daemon::reload` skips a delivery whose profile text equals the text it
@@ -458,6 +491,19 @@ medium — an operator lane that silently drops edits.
 source (`reload` + the apply tail) and the named run's log is the
 transcript; three consecutive suite runs hit it before the mitigation.
 
+**Closed 2026-08-28 — retired by pin 9e61e47 (jinnd M2-K5 #17).** The
+daemon recognizes its own write-back by the exact bytes the loader WROTE,
+remembered at the save and consumed ONE-SHOT by the delivery that matches
+them: an echo logs no `reconciled` line at all (the log never claims a
+reconcile that did not run), an external edit landing during a reconcile
+is applied by the next delivery, and an identical operator rewrite
+reconciles `unchanged=[…]`, never skipped. Harness side:
+`edit_profile_until` (byte-varying rewrites) is deleted; every config-edit
+proof makes ONE atomic edit and waits for its observation
+(`edit_profile_restarting`), and the `grants-6778` transcript is flipped
+(`the_cron_grant_gates_the_consumer_peek` asserts zero all-empty
+`reconciled` lines — the entry's signature — after two single edits).
+
 ## 18. A relative `--profile` path fails the watcher AFTER the boot reconcile has written evidence
 
 Started from its runtime root with `--profile profile.json --ledger
@@ -482,6 +528,19 @@ refused start writes nothing; a machine-readable readiness signal
 (finding 12) would close the operator side.
 
 *Evidence grade:* reproducible from the log line; one observation.
+
+**Closed 2026-08-28 — retired by pin 9e61e47 (jinnd M2-K5 #18).** The
+daemon canonicalizes its paths against the working directory at startup
+and arms the file watcher — or refuses, with the error — BEFORE the kernel
+assembles and the boot reconcile writes anything; the readiness line
+(entry 12) follows the boot reconcile. Proven through the real daemon:
+`a_relative_profile_path_boots_watched` (relative `--profile`/`--ledger`
+from the root: readiness, watcher armed, an edit served) and
+`a_refused_watcher_writes_no_evidence` (a profile in a missing directory:
+exit 1, no `reconciled`, no readiness line, no ledger, no data). SOAK.md's
+absolute-path caveat is retired; the supervisor wrapper keeps absolute
+paths as its canonical form, not as a workaround, and §Start's evidence
+is the readiness line rather than `boot.json`.
 
 ---
 
