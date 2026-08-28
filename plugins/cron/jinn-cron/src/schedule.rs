@@ -57,6 +57,7 @@ pub fn plan_tick(jobs: &[JobSpec], state: &SchedulerState, tick: &TickPayload) -
                     boundaries: skipped,
                     first_ms: (last_index + 1) * period,
                     last_ms: newest_due - period,
+                    extra: crate::Extensions::new(),
                 },
                 ..record(RunOutcome::ScheduleStarted)
             });
@@ -170,7 +171,8 @@ mod tests {
             RunOutcome::Skipped {
                 boundaries: 3,
                 first_ms: 120_000,
-                last_ms: 240_000
+                last_ms: 240_000,
+                extra: crate::Extensions::new(),
             }
         );
         assert_eq!(plan.state.last["a"], 300_000);
@@ -257,7 +259,8 @@ mod tests {
             RunOutcome::Skipped {
                 boundaries: 3,
                 first_ms: 80_000,
-                last_ms: 160_000
+                last_ms: 160_000,
+                extra: crate::Extensions::new(),
             }
         );
     }

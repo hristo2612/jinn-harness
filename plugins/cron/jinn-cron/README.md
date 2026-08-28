@@ -153,13 +153,18 @@ On activation the scheduler classifies each persisted document
 ## Additivity (the R12 promise, mechanically)
 
 - Every wire schema tolerates and **preserves** unknown sibling fields
-  across a decode → encode round trip.
+  across a decode → encode round trip — **at every nesting level**: the
+  payload of each known `outcome` variant carries its own flattened
+  extension map, so a field a newer writer adds inside e.g.
+  `outcome.fired` survives this reader verbatim.
 - The schedule position in a job entry is open: this reader knows
   `every-ms`; an entry with a schedule it does not recognize degrades to a
   per-entry `config-fault` — contained and recorded, never a document
   rejection.
 - An unrecognized `outcome` tag decodes as an opaque carrier and re-encodes
-  identically.
+  identically. (The unit outcome `schedule-started` has no payload to
+  extend; a newer version reshaping it into an object lands in the same
+  carrier, still verbatim.)
 
 ## Provider operations
 

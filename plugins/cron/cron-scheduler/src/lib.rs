@@ -1,8 +1,10 @@
 //! The `jinn:cron` provider. All scheduling decisions are `jinn-cron`'s
 //! pure firing law; this guest only wires them to the kernel surfaces:
 //! ticks arrive as events, fires leave as events, state and history persist
-//! through the granted `jinn:fs` — every crossing ledger-visible by
-//! construction (kernel Law 2).
+//! through the granted `jinn:fs`. Every CONTRACT crossing is a ledger
+//! event; event-bus emits are not yet traced (FINDINGS.md #2), so each
+//! fire's ledger identity is its per-fire run-record write, whose label
+//! names the job and boundary (contract §Run history).
 
 use std::sync::Mutex;
 
@@ -84,6 +86,7 @@ fn quarantine(path: &str, bytes: &[u8], detail: &str) -> Result<RunRecord, Guest
         outcome: RunOutcome::StateFault {
             path: path.to_owned(),
             detail: format!("{detail}; original preserved at {preserved}"),
+            extra: jinn_cron::Extensions::new(),
         },
         extra: jinn_cron::Extensions::new(),
     })
@@ -106,9 +109,11 @@ fn emit_fire(fire: &FirePayload) -> RunRecord {
     let outcome = match events::emit(&topic, DispatchMode::Serial, &Selector::All, &payload) {
         Ok(answers) => RunOutcome::Fired {
             answers: answers.len() as u64,
+            extra: jinn_cron::Extensions::new(),
         },
         Err(refused) => RunOutcome::EmitFailed {
             detail: format!("{refused:?}"),
+            extra: jinn_cron::Extensions::new(),
         },
     };
     RunRecord {
@@ -151,7 +156,10 @@ impl Guest for Scheduler {
                 scheduled_ms: 0,
                 now_ms: 0,
                 tick_seq: 0,
-                outcome: RunOutcome::ConfigFault { detail },
+                outcome: RunOutcome::ConfigFault {
+                    detail,
+                    extra: jinn_cron::Extensions::new(),
+                },
                 extra: jinn_cron::Extensions::new(),
             })
             .collect();

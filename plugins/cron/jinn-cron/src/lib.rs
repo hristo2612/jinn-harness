@@ -114,32 +114,54 @@ pub struct FirePayload {
 }
 
 /// How one run record settled. Externally tagged, kebab-case; variants are
-/// additive within 0.x: an outcome this reader does not recognize decodes
-/// as [`RunOutcome::Unrecognized`] carrying the raw value, and re-encodes
-/// identically — never rejected, never stripped.
+/// additive within 0.x at EVERY nesting level: an outcome tag this reader
+/// does not recognize decodes as [`RunOutcome::Unrecognized`] carrying the
+/// raw value, and unknown fields INSIDE a known variant's payload ride its
+/// flattened extensions — never rejected, never stripped. (The one unit
+/// variant, `schedule-started`, has no payload to extend; a newer version
+/// reshaping it into an object lands in the carrier, still verbatim.)
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunOutcome {
     /// The boundary fired; `answers` counts settled listener answers.
     /// Zero answers is a visible duty gap, not an error.
-    Fired { answers: u64 },
+    Fired {
+        answers: u64,
+        #[serde(flatten)]
+        extra: Extensions,
+    },
     /// Boundaries skipped under the firing law: recorded, never fired.
     #[serde(rename_all = "kebab-case")]
     Skipped {
         boundaries: u64,
         first_ms: u64,
         last_ms: u64,
+        #[serde(flatten)]
+        extra: Extensions,
     },
     /// A job with no state started its schedule at this tick (law #4).
     ScheduleStarted,
     /// A config entry was excluded; the schedule never saw it.
-    ConfigFault { detail: String },
+    ConfigFault {
+        detail: String,
+        #[serde(flatten)]
+        extra: Extensions,
+    },
     /// The fire's emit crossing was refused by the kernel.
-    EmitFailed { detail: String },
+    EmitFailed {
+        detail: String,
+        #[serde(flatten)]
+        extra: Extensions,
+    },
     /// A persisted document was present but undecodable; the original is
     /// preserved under the quarantine path named in `detail` (contract
     /// §Persistence honesty).
-    StateFault { path: String, detail: String },
+    StateFault {
+        path: String,
+        detail: String,
+        #[serde(flatten)]
+        extra: Extensions,
+    },
     /// An outcome written by a newer contract version: carried verbatim.
     #[serde(untagged)]
     Unrecognized(serde_json::Value),
@@ -332,7 +354,11 @@ mod tests {
         assert!(text.contains("missed-before"), "{text}");
         let back: FirePayload = serde_json::from_str(&text).expect("decodes");
         assert_eq!(back, fire);
-        let outcome = serde_json::to_string(&RunOutcome::Fired { answers: 1 }).expect("encodes");
+        let outcome = serde_json::to_string(&RunOutcome::Fired {
+            answers: 1,
+            extra: Extensions::new(),
+        })
+        .expect("encodes");
         assert!(outcome.contains("fired"), "{outcome}");
     }
 
@@ -346,6 +372,39 @@ mod tests {
         let back = serde_json::to_value(&tick).expect("encodes");
         assert_eq!(back["zone"], "UTC");
         assert_eq!(back["grid"]["v"], 2);
+    }
+
+    #[test]
+    fn unknown_fields_inside_a_known_outcome_variant_are_preserved() {
+        // The round-2 verifier's exact probe: a newer writer added
+        // `duration-ms` INSIDE `outcome.fired`. The variant must still
+        // decode as Fired (answers stays typed) AND the extension must
+        // survive the round trip.
+        let text = r#"{"job":"health","scheduled-ms":80000,"now-ms":90000,"tick-seq":7,
+                      "outcome":{"fired":{"answers":1,"duration-ms":12}}}"#;
+        let record: RunRecord = serde_json::from_str(text).expect("decodes");
+        let RunOutcome::Fired { answers, .. } = &record.outcome else {
+            panic!("still a recognized fired outcome: {:?}", record.outcome);
+        };
+        assert_eq!(*answers, 1);
+        let back = serde_json::to_value(&record).expect("encodes");
+        assert_eq!(back["outcome"]["fired"]["answers"], 1);
+        assert_eq!(back["outcome"]["fired"]["duration-ms"], 12, "{back}");
+    }
+
+    #[test]
+    fn deeply_nested_extensions_inside_a_variant_are_preserved() {
+        let text = r#"{"job":"j","scheduled-ms":1,"now-ms":2,"tick-seq":3,
+                      "outcome":{"skipped":{"boundaries":2,"first-ms":10,"last-ms":20,
+                                            "zone":{"tz":"UTC","deep":{"x":1}}}}}"#;
+        let record: RunRecord = serde_json::from_str(text).expect("decodes");
+        let RunOutcome::Skipped { boundaries, .. } = &record.outcome else {
+            panic!("still a recognized skipped outcome: {:?}", record.outcome);
+        };
+        assert_eq!(*boundaries, 2);
+        let back = serde_json::to_value(&record).expect("encodes");
+        assert_eq!(back["outcome"]["skipped"]["zone"]["deep"]["x"], 1, "{back}");
+        assert_eq!(back["outcome"]["skipped"]["first-ms"], 10);
     }
 
     #[test]
