@@ -78,8 +78,9 @@ UNCLEAN exit. That condition is the whole reason planned stops still work:
 the daemon exits 0 after a clean SIGINT suspend-and-flush, so §Stop stays
 stopped and the supervisor never fights the operator; a `kill -9`, a failed
 flush barrier (exit 1) and a host that dies underneath are all unclean, and
-those are the outages the agent exists to end. `ThrottleInterval` 30 s
-bounds a crash loop.
+those are the outages the agent exists to end. `ThrottleInterval` is the minimum 30 s
+between STARTS: a daemon that has been up longer relaunches immediately, a
+crash loop is throttled to one start per 30 s.
 
 **What the wrapper adds.** It derives `$SOAK` from `$HOME` (the plist cannot
 expand it), redirects the daemon's stderr into `logs/jinnd.log`, appends one
@@ -232,7 +233,7 @@ with the reason that tells a planned restart from a reboot from a
 KeepAlive restart, and the operator adds the before/after evidence line.
 
 An UNPLANNED restart needs no operator at all now: the daemon dies
-uncleanly, launchd relaunches it within `ThrottleInterval`, and the
+uncleanly, launchd relaunches it as soon as `ThrottleInterval` allows, and the
 wrapper's `reason=keepalive-restart` (or `reason=boot` after a host
 reboot) is the outage's own record. Annotate it when you next look —
 what died, and what the ledger shows on the other side.

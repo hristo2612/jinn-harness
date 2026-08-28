@@ -37,7 +37,8 @@
         <false/>
     </dict>
 
-    <!-- Bounds a crash loop; also the window the kill -9 proof waits out. -->
+    <!-- The minimum seconds between STARTS: a daemon that has been up
+         longer relaunches immediately, a crash loop is throttled to this. -->
     <key>ThrottleInterval</key>
     <integer>30</integer>
 
