@@ -15,6 +15,7 @@ members = [
     "plugins/api/jinn-api",
     "plugins/api/jinn-api-http-wire",
     "plugins/cron/jinn-cron",
+    "plugins/settings/jinn-settings",
     "tests/composition",
     "tools/api-kit",
     "tools/cron-kit",

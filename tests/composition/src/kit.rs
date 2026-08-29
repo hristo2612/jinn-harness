@@ -357,11 +357,28 @@ impl Daemon {
         kinds
     }
 
-    /// Every ledger row as `(seq, fiber, kind)` — the fiber column is the
-    /// event's attribution (the `entry` column is empty at this pin).
+    /// Every ledger row as `(seq, entry, fiber, kind)` — the event's
+    /// attribution (the `entry` column is filled since pin `57360cc`,
+    /// FINDINGS.md #19 closed).
     #[must_use]
     pub fn ledger_rows(&self) -> Vec<LedgerRow> {
         ledger_rows_at(&self.root)
+    }
+
+    /// How many times `fiber` re-activated on a config change (the
+    /// ledger's `FiberTransition … to Active, cause ConfigChanged`): the
+    /// restart evidence for both the watcher lane and the kernel's own
+    /// `jinn:profile` amendment (which logs no `reconciled` line).
+    #[must_use]
+    pub fn config_restarts(&self, fiber: u64) -> usize {
+        self.ledger_rows()
+            .iter()
+            .filter(|row| row.fiber == Some(fiber))
+            .filter(|row| {
+                row.kind
+                    .contains(r#""to":"Active","cause":"ConfigChanged""#)
+            })
+            .count()
     }
 
     /// How many ledger events carry `needle` in their `kind` text.
@@ -440,11 +457,12 @@ impl Drop for Daemon {
     }
 }
 
-/// One ledger row: sequence, attributed fiber (if any), and the `kind`
-/// JSON text.
+/// One ledger row: sequence, attributed entry and fiber (if any), and
+/// the `kind` JSON text.
 #[derive(Clone, Debug)]
 pub struct LedgerRow {
     pub seq: u64,
+    pub entry: Option<String>,
     pub fiber: Option<u64>,
     pub kind: String,
 }
@@ -455,14 +473,15 @@ pub struct LedgerRow {
 pub fn ledger_rows_at(root: &Path) -> Vec<LedgerRow> {
     let connection = rusqlite::Connection::open(root.join("ledger.sqlite")).expect("ledger opens");
     let mut select = connection
-        .prepare("SELECT seq, fiber, kind FROM events ORDER BY seq")
+        .prepare("SELECT seq, entry, fiber, kind FROM events ORDER BY seq")
         .expect("ledger schema");
     let rows = select
         .query_map([], |row| {
             Ok(LedgerRow {
                 seq: row.get(0)?,
-                fiber: row.get(1)?,
-                kind: row.get(2)?,
+                entry: row.get(1)?,
+                fiber: row.get(2)?,
+                kind: row.get(3)?,
             })
         })
         .expect("ledger reads")

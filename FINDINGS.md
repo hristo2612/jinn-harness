@@ -24,7 +24,12 @@ and `jinn:net` as of the `1b098be` pin bump (jinnd M2-K6). Entries 19–24
 were hit building the operator-API seam on that pin (phase 2.1): 19 and
 20 are the introspection gaps the status surface names in its answers,
 21 is the edit lane's revertibility hazard (transcript-pinned), 22–24 are
-shape frictions with source evidence.
+shape frictions with source evidence. Entries 19, 20, 21 and 23 are
+**closed** as of the `57360cc` pin bump (jinnd M2-K7; phase 2.2), which
+also closes 22's profile case; entry 25 was hit adopting that pin (the
+document of record is readable by a guest only under the data root) and
+entries 26–27 were hit building the settings seam on it, and entry 28
+closing its round-1 consistency blocker.
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -599,6 +604,24 @@ fs/clock/process/net only; `watch.rs` `log_status` is stderr-only);
 composition `status_health_and_ledger_tail_answer_through_the_api` pins
 the shape of the honest answer.
 
+**Closed 2026-08-29 — retired by pin 57360cc (jinnd M2-K7).** The kernel
+provides `jinn:introspect@0.1.0` (`entries` → `{ id, fiber, state,
+incarnation, provisions, registrations { listeners, alarms, sockets,
+processes } }`, `readiness` → `{ boot-reconciled, watcher-armed }`),
+granted like any contract, ledgered per read, answered from a snapshot
+under brief kernel locks (R1). The two riders landed too: the ledger's
+`entry` column is filled for every attributable event and `GrantRefused`
+carries the typed `reason` (not-granted / scope-mismatch / not-loopback
+/ unresolvable / foreign-handle) with its `detail`. Harness side:
+`jinn-status` lays the kernel's view over each document entry
+(additive `fiber`, `state`, `incarnation`, `provisions`, `registrations`
+siblings), answers `readiness`, and `kernel.unavailable` is EMPTY —
+`UNAVAILABLE_STATUS_FIELDS` is `&[]`, the list vocabulary (`finding:
+19`) stays on the wire for 0.1.0 readers. `health` now keys `ok` on the
+kernel's word (every entry `active`), not on a guess. The composition
+suite attributes every kernel read to the status ENTRY and every net
+refusal to the provider ENTRY with its reason.
+
 ## 20. `jinn:ledger` is declared, not provided — the ledger is readable only beside the daemon
 
 The contract bundle `kernel-pin/contracts/jinn-ledger` (a `read-range`
@@ -622,6 +645,19 @@ sensitivity class; a `last-seq` read beside it.
 *Evidence grade:* source-confirmed (daemon assembly); composition
 `status_health_and_ledger_tail_answer_through_the_api` pins the typed
 answer.
+
+**Closed 2026-08-29 — retired by pin 57360cc (jinnd M2-K7).** The daemon
+registers the `jinn:ledger@0.1.0` reader behind its bundle:
+`read-range(from-id, limit)` (clamped 1..=500) answers a JSON page of
+typed events (`id`, `wall-ms`, `entry`, `fiber`, `kind`, `payload` as
+JSON text, `sensitivity`) with `next-from`; `last-seq` answers the
+high-water mark; every read appends a `LedgerConsumed { first, last,
+count }` receipt under the reader's attribution, and the reader's own
+receipts are excluded from its feed. Harness side: `ledger-tail` serves
+a REAL page (`after`/`limit` → `read-range(after + 1, limit)`,
+`next-after` when a further page may exist), `status` carries
+`last-ledger-seq`; the composition suite reads a 3-event page at
+`after=7` and finds the receipt under `jinn-status`.
 
 ## 21. An operator edit made through `jinn:fs` is a revertible effect of the editing fiber — disposing the editor rolls the edit back
 
@@ -656,6 +692,27 @@ for the operator lane.
 transcript (it goes red when the kernel retires this) and by the
 `retained: 1` suspension record of the editor on every clean stop.
 
+**Closed 2026-08-29 — retired by pin 57360cc (jinnd M2-K7, shape (i)).**
+`jinn:profile@0.1.0` `patch-entry(id, merge-patch)` is applied BY THE
+LOADER: validated against the profile schema (an object whose grants
+would admit at activation), written back atomically (stage + fsync +
+rename — the profile case of entry 22 closes with it), the patched fiber
+restarted exactly (same fiber, new incarnation, `cause: ConfigChanged`),
+and recorded as `ProfilePatched { entry, by }` with NO fs inverse and NO
+fiber journal entry; refusals answer `refused(reason)` on the wire and
+land as `AmendmentRefused` (or `GrantRefused { ScopeMismatch }` for an
+entry outside the `entry-ids` scope); an entry cannot patch itself (the
+nested-dispatch class). Harness side: `jinn-profile-edit` applies the
+entry-patch law locally (unknown id / no-op answered without a call) and
+hands the kernel `{ data?, grants? }` as one merge patch; its `jinn:fs`
+grant now only READS the document. The pinned transcript went red on
+adoption and is replaced by
+`disposing_the_editor_leaves_the_operators_edit_in_place_finding_21_closed`:
+the editor is removed, its own trail is withdrawn, the document keeps
+the patch, the scheduler never restarts on an old config, and the editor
+is never resurrected. The `idempotency-key` request field stays on the
+wire, accepted and unused.
+
 ## 22. `jinn:fs` `write` is in place — a concurrent reader can see a torn document
 
 `HostFs` `write` is `tokio::fs::write(file, data)` (truncate, then write;
@@ -673,6 +730,10 @@ helper, reused), or a declared `replace` operation with that shape.
 Entry 21's shape (i) removes the profile case entirely.
 
 *Evidence grade:* source-confirmed; no torn transcript.
+
+**Profile case closed 2026-08-29 by pin 57360cc** (entry 21 shape (i):
+the loader's write-back is stage + fsync + rename). The general case
+(`jinn:fs` `write` for data files) stays open.
 
 ## 23. Sockets have no readiness wake — a server polls at the clock floor, on the record
 
@@ -698,6 +759,24 @@ so a poll costs one row per second instead of eight. Either keeps R1.
 wake, attributed to the provider's fiber); the daily figure is arithmetic
 at the 250 ms floor.
 
+**Closed 2026-08-29 — retired by pin 57360cc (jinnd M2-K7, the first
+shape).** The kernel delivers `lifecycle.handle-event(handle,
+"jinn:net/readable", <8-byte LE handle>)` when a listener has a pending
+connection or a connection has bytes or EOF — one wake per readiness
+transition the guest has not acted on (level-triggered, coalesced; EOF
+wakes once; `accept`/`read` consume then re-arm), each a `NetReadable`
+ledger event; the bundle stays non-blocking and additive (world
+`0.4.0` unchanged). Harness side: `jinn-api-http` holds NO alarm and no
+`jinn:clock` grant — the listener's wake accepts (and serves each fresh
+connection once, its bytes may already be pending), a connection's wake
+reads, answers, closes; the idle-poll close is replaced by a bound on
+open connections. The composition suite asserts zero `AlarmWake` rows on
+the provider's fiber and one `NetReadable` per readiness transition.
+The soak measurement (SOAK.md §Pin bump mid-soak, sixth bump) is the
+idle-growth evidence: the API mounted in the soak, a 971 s idle window
+added ZERO rows attributed to the api entries (the +22 rows in it were
+the cron duty's one wake).
+
 ## 24. A `jinn:fs` grant cannot be attenuated to read-only
 
 The `path-prefix` scope is a containment path (`grants.rs`
@@ -713,6 +792,203 @@ bundle's `metadata.toml`) — with the subset predicate extended to it.
 Low severity, structural.
 
 *Evidence grade:* source-confirmed; no transcript (no misuse to record).
+
+## 25. The document of record is reachable by a guest only under the data root — `jinn:introspect` carries no authority fields, `jinn:profile` has no read
+
+Hit adopting `57360cc`. Entry 21's closure moved the WRITE side of the
+operator lane onto `jinn:profile`, so nothing about a patch needs the
+document inside the `jinn:fs` surface any more — but the READ side
+still does: `status` shows each entry's authority fields (`package`,
+`hash`, `grants`) and `get` answers the document verbatim, and the only
+surface a guest can read a file through is its scoped `jinn:fs`, which
+resolves under the daemon's data root. `jinn:introspect` `entries`
+carries the kernel's runtime view (fiber, state, incarnation,
+provisions, registrations) and none of the document's authority fields;
+`jinn:profile` has `patch-entry` and no `get`/`entry` read. So the
+operator layout's coupling (`profiles/operator-api/README.md`: the
+profile must sit under the data root) survives the closure of 21 for
+reads alone, and a composition whose profile sits beside the data root
+— the cron soak's layout since day one — cannot show its authority
+fields through the API. A guest holding a `jinn:fs` scope on the
+document also still holds write authority it never uses (entry 24).
+
+**Harness-side handling shipped:** the read is typed. `jinn-status`
+answers `document: { readable: false, unavailable: { finding: 25 } }`
+when the document is out of reach and still lists every entry from the
+kernel's view (authority fields empty, stated — never guessed);
+`jinn-profile-edit`'s `get` answers the same typed `unavailable`. The
+soak mounts the api trio with its profile relocated INTO the data root
+(`$SOAK/data/profile.json`, `--artifacts`/`--data` passed explicitly;
+the watcher is non-recursive so the fibers' subdirectories never wake
+it) so the soak's status is complete; the composition suite proves both
+answers.
+
+**Packet-card shape:** `jinn:introspect` `entries` gains the document's
+authority fields (`package`, `hash`, `grants`), or `jinn:profile` gains
+a read (`document()` / `entry(id)`), granted read-only — either retires
+the data-root coupling entirely and, with it, the excess write authority
+of entry 24 for every viewer.
+
+*Evidence grade:* source-confirmed (`contracts/jinn-introspect`,
+`contracts/jinn-profile` at the pin); composition
+`the_operator_api_serves_a_profile_beside_the_data_root_finding_25`
+pins the typed answer.
+
+## 26. `patch-entry` awaits the patched fiber's restart — an owner that resolves its settings in `activate` cannot be patched by its settings provider
+
+Hit building the settings seam on `57360cc`. The kernel's `jinn:profile`
+`patch-entry` answers only after the loader has restarted the patched
+fiber (`profile_cap.rs`: `loader.update_entry(..).await`, then
+`ProfilePatched`). The kernel guards the direct case (an entry patching
+itself is refused: "would await its own restart from inside its own host
+call"), but the two-hop case is the seam's normal shape: the settings
+provider, inside its `patch` handler, patches the OWNER entry; the owner
+restarts; if the owner's `activate` calls `jinn:settings` (`declare`,
+`get`) that call lands on a provider instance that is mid-`patch`,
+waiting for the restart that is waiting for the call — the
+nested-dispatch class of entry 4, held until the guest deadline, and the
+owner's activation fails. There is no readiness or injection surface a
+guest can declare to order activation (entry 7), and no deferred
+amendment shape (the paper's Algorithm 5 stages the desired state and
+answers at once — recorded as a post-M1 candidate in the kernel's
+decision log 2026-08-25 ruling 1).
+
+**Harness-side handling shipped:** the owner never calls the provider
+from `activate`. `cron-scheduler` plans its activation on its entry
+layer alone, resolves the settings from a one-shot `alarm-at(now)` one
+clock floor later and re-declares on every wake (the `declare` answer
+IS the job table; a provider restart or swap heals within one wake), and
+absorbs `jinn:settings/changed` from the payload without calling back.
+The provider patches the overlay STORE entry synchronously (its fiber
+calls nothing in `activate`) and the owner entry synchronously too — the
+owner's activation makes no call. The bound this leaves is stated in
+entry 27.
+
+**Packet-card shape:** either (a) a non-blocking amendment answer
+(`patch-entry` returns `accepted` once the document is committed and the
+restart is scheduled — the Algorithm-5 shape the decision log already
+names), so a patched owner may resolve anything in `activate`; or (b) a
+guest-declarable injection in the profile entry (`requires:
+["jinn:settings"]`) so the kernel gates the owner's activation on the
+provider's availability (entry 7's card) — (a) removes this deadlock
+class, (b) removes the boot-ordering retry. Both keep R1.
+
+*Evidence grade:* source-confirmed (`profile_cap.rs`, the self-patch
+refusal names the class); the harness shape is pinned by the settings
+composition suite (`declare_resolve_and_patch_on_both_paths_with_the_c5_c6_transcript`:
+the restart path lands with the owner making no call from `activate`).
+
+## 27. C5/C6 decision evidence — what a settings patch costs on the restart path and on the hot path, measured on the real daemon
+
+Recorded for SOURCE-OF-TRUTH's open decisions C5 (hot-config acceptance)
+and C6 (per-entry config layering / intercept plumbing), from the
+settings composition suite
+(`declare_resolve_and_patch_on_both_paths_with_the_c5_c6_transcript`,
+run root `settings-paths-74740`, pin `57360cc`, suite kit: 2 s job
+period, 500 ms tick). Ledger rows are quoted by sequence from that run.
+
+**The kernel's answer to C5 today:** a `jinn:profile` `patch-entry`
+ALWAYS restarts the patched fiber (reconcile-by-id; `cause:
+ConfigChanged`). There is no kernel path by which a plugin absorbs a
+change to its own entry's config in place. Hot-config is therefore
+possible only by keeping the changed layer OUTSIDE the owner's entry —
+and the only home that keeps the profile the single source of truth is
+another entry. The harness built exactly that (the `jinn-settings-store`
+entry + the `jinn:settings-store` read; `plugins/settings/README.md`),
+which is a guest-side emulation of what C6's intercept chain would give
+the kernel natively: a per-entry config LAYER the loader resolves.
+
+**Restart path** (`tick-ms` patch → the owner entry; rows 188–208, 21
+rows, answered to the HTTP caller in 28 ms): the provider's
+`patch-entry` call (188) → the owner's kernel registrations released and
+its fiber suspended with its contribution retained (`listen`, `alarm`,
+`ServiceWithdrawn`, `FiberSuspended { retained: 5 }`, 189–192) → the
+successor incarnation activates (three `fs` reads of state/history, the
+provision, `now`, the activation plan's state write, the on-duty effect,
+the new `alarm every 250ms`, the listener and the one-shot settings
+alarm, 193–203) → four transitions to `Active` (204–207) →
+`ProfilePatched { entry: cron-scheduler, by: jinn-settings-profile }`
+(208). Duty gap: the whole suspend → Active lies inside the 28 ms
+answer; the schedule RESUMED from the persisted `last` (no
+`schedule-started`). State continuity: exact (the retained journal). One
+bound: the successor's activation plan runs on the ENTRY layer alone
+(the overlay arrives one clock floor later on its settings alarm), so a
+job the overlay had removed can fire once on restart and a job the
+overlay added waits one floor.
+
+**Hot path** (`jobs` patch → the store entry; rows 116–148, 33 rows,
+answered in 56 ms): the HTTP crossing (116) → the provider reads the
+overlay (117–118) and patches the STORE through `jinn:profile` (119–120)
+→ the store's trivial fiber cycles (`ServiceWithdrawn`, `FiberSuspended
+{ retained: 0 }`, re-provision, four transitions, 121–128) →
+`ProfilePatched { entry: jinn-settings-store }` (129) → the `changed`
+event delivered serially to the scheduler, which re-plans IN PLACE on
+the new table: `now`, state write, and — because the halved schedule was
+already due — one fire with the consumer's full report chain and the run
+record + history append (130–147) → `DispatchTrace { topic:
+jinn:settings/changed, listeners: 1, failures: 0 }` (148). The owner's
+fiber never transitioned; its alarm, listener, provision and state were
+untouched; the store's cycle is the price of keeping the profile the
+truth (8 rows). Without the coincident fire the hot path is 15 rows.
+
+**Reading for the decision.** Per patch the two paths cost the same
+order of ledger rows and the same order of latency (tens of
+milliseconds on this box) — the restart path is not expensive because
+suspend ≠ dispose made a restart a state-preserving event (entry 14's
+closure). What separates them is CONTINUITY, not cost: the restart path
+drops every kernel registration for the duration and re-plans from the
+entry layer (the bound above); the hot path keeps them all and applies
+exactly the resolved layer. The harness could build hot-config on top of
+the kernel with one extra entry and one extra contract, at the price of
+(a) two homes for the owner's effective config in the document (its
+entry and the store's overlay — a reader of the profile must resolve
+them; `jinn:introspect` shows neither), (b) a provider that must never
+be called from an owner's `activate` (entry 26), and (c) every owner
+re-declaring on every wake because the layer is guest knowledge.
+**Recommendation for C6:** a kernel-resolved per-entry layer (the
+intercept chain the paper already names) would make the store entry
+unnecessary, give the loader one resolved config to hand `activate`,
+and let `jinn:introspect` report effective config. **Recommendation for
+C5:** accept hot-config as a DECLARED per-key property of a namespace
+(the `hot-keys` shape here), never a default — a kernel registration
+(an alarm period, a listener topic, a bind port) cannot be changed in
+place and must restart.
+
+*Evidence grade:* measured — every row above is on the pinned run's
+ledger, the suite re-prints the transcript on every run; the soak
+carries the same seam on the 15-minute cadence (SOAK.md, sixth bump).
+
+## 28. `jinn:profile` patches one entry per call — two layers of one namespace cannot be written atomically
+
+Hit closing PLA-314's round-1 blocker. A settings namespace has two
+homes in the document (the owner entry's `config.data`, the store
+entry's `config.data.overlays[ns]`, `plugins/settings/README.md`). A
+mixed hot+cold patch under an existing overlay must either land in both
+(the cold keys in the entry, the hot keys in the overlay) or be refused
+whole, or its report lies (the round-1 probe: answered `jobs:
+[requested]`, resolved `jobs: [overlay]`). `patch-entry` takes ONE entry
+id and ONE merge patch and awaits that entry's reconcile before
+answering (`kernel-pin/contracts/`, entry 26): landing in both is two
+calls with an observable state between them, and a refusal of the second
+after the first applied — and restarted the owner — is a partial apply.
+
+**Shape shipped:** refusal. The definition computes a plan's reported
+settings from the post-state layers and refuses `invalid` +
+`shadowed { key, layer, recovery }` when they differ from the request;
+the recovery is the explicit-layer call that clears the shadowing layer,
+then a retry — two honest calls, one per entry, which is this finding's
+floor (`plugins/settings/jinn-settings/README.md` §The recovery).
+
+**Packet-card shape (only if C6 is ever revisited):** a multi-entry
+`patch-entries` — one call, N `(entry, merge)` pairs, applied under one
+reconcile or none, one `ProfilePatched` per entry on the ledger. With
+C6 decided against kernel-side layering (PLA-314 round-1 steering), the
+harness has no present need; logged so the choice of refusal over
+apply-both is traceable to the contract and not to taste.
+
+*Evidence grade:* source-confirmed (the `patch-entry` shape in the pinned
+contracts); the refusal is pinned by the settings composition suite
+(`a_patch_reports_exactly_what_the_next_get_resolves_in_both_orders`).
 
 ---
 

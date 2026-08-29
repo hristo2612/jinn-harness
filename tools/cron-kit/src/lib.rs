@@ -126,9 +126,15 @@ pub fn cron_entries(
     tick_ms: u64,
 ) -> Vec<serde_json::Value> {
     vec![
+        // `jinn:settings` and the changed-topic listen: the scheduler
+        // consumes its job table through the settings seam where one is
+        // mounted (the operator profile); in the cron-only profile the
+        // resolve answers missing-dependency and the entry layer is the
+        // whole truth. `entry-id` names this entry to the seam.
         serde_json::json!({ "id": "cron-scheduler", "package": "cron/cron-scheduler", "hash": scheduler,
-          "config": { "grants": [jinn_cron::CRON_CONTRACT, "jinn:fs", jinn_cron::CLOCK_CONTRACT],
-                      "data": { "tick-ms": tick_ms, "jobs": [
+          "config": { "grants": [jinn_cron::CRON_CONTRACT, "jinn:fs", jinn_cron::CLOCK_CONTRACT,
+                                 jinn_settings::SETTINGS_CONTRACT, jinn_settings::CHANGED_TOPIC],
+                      "data": { "entry-id": "cron-scheduler", "tick-ms": tick_ms, "jobs": [
                           { "id": "health", "every-ms": every_ms, "topic": "cron:health" }
                       ] } } }),
         serde_json::json!({ "id": "health-snapshot", "package": "cron/health-snapshot", "hash": snapshot,

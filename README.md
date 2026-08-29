@@ -13,14 +13,19 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
-Phase 2.1 — kernel pin `1b098be` (M2-K6): the guests on the
-`jinn:plugin@0.4.0` world, which provides `jinn:process` and `jinn:net`.
-The first core-port seam is the operator API (`plugins/api/`): a
-definition (`jinn-api`) with versioned additive schemas, an HTTP provider
-holding a loopback `jinn:net` listener under a port-scoped grant, and two
-consumers — status/health (honest about what the kernel cannot tell a
-guest) and the profile edit lane (patch ONE entry through a scoped
-`jinn:fs` write; the daemon's watcher reconciles it). Phase 1.7 put the
+Phase 2.2 — kernel pin `57360cc` (M2-K7): the operator contracts.
+The operator API (`plugins/api/`, phase 2.1) now answers from the
+kernel's own knowledge — the composition through `jinn:introspect`, the
+ledger through `jinn:ledger`, edits through `jinn:profile` (operator
+intent the loader applies; disposing the editor leaves the document
+alone), the HTTP listener served from `jinn:net` readiness wakes with no
+alarm — and is mounted in the soak. The settings seam (`plugins/settings/`)
+is the second core-port seam: a definition (`jinn-settings`) with
+declared namespaces, schemas, defaults, layered resolution and typed
+secret references, a profile-backed provider writing through
+`jinn:profile`, the cron scheduler consuming its job table through it,
+and the API exposing it. Phase 2.1 built the api trio on `1b098be`
+(M2-K6: `jinn:process` and `jinn:net`). Phase 1.7 put the
 guests on `jinn:plugin@0.3.0` (a daemon stop SUSPENDS a plugin; only
 removal from the profile withdraws it), 1.6 on the `jinn:fs@0.2.0` bundle,
 1.5 on `jinn:clock` alarms; the phase-1.4 soak continues across all five

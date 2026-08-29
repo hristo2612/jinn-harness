@@ -1,23 +1,26 @@
 //! The `jinn:api-profile` consumer: the operator edit lane (FINDINGS.md
-//! #9). `get` answers the profile document of record; `patch-entry`
-//! applies the definition's entry-patch law to ONE entry and writes the
-//! whole document back through the granted `jinn:fs` scope in one `write`
-//! — a ledgered, revertible effect of this fiber (the kernel keeps its
-//! inverse: FINDINGS.md #21 names what that means for the operator's
-//! edits when this entry is disposed; #22 names the write's shape). The
-//! daemon's file watcher then reconciles the edit exactly as it would an
-//! operator's: reconcile-by-id restarts the patched entry and nothing
-//! else. The profile is never bypassed as the source of truth.
+//! #9). `get` answers the profile document of record (through the
+//! granted `jinn:fs` scope; #25 names where that read cannot reach);
+//! `patch-entry` applies the definition's entry-patch law to ONE entry
+//! through the kernel's own `jinn:profile` `patch-entry` since pin
+//! `57360cc` (jinnd M2-K7): the LOADER validates, writes the document
+//! back atomically, restarts exactly the patched fiber, and records
+//! `ProfilePatched` — operator intent with NO fs inverse and NO fiber
+//! journal entry, so disposing this entry never touches the document
+//! (#21 closed; the torn-write window of #22 closed for the profile). The
+//! profile is never bypassed as the source of truth.
 //!
-//! The idempotency key a request carries is passed to the write verbatim
-//! (keyed exactly-once per fiber, kernel constitution 03); an identical
-//! patch that changes nothing is answered without a write.
+//! A patch that changes nothing is answered without a kernel call; a
+//! kernel refusal (scope, validation, the loader's retryable conflict,
+//! an entry patching itself) is a typed `refused` answer, on the record.
 
 use std::sync::Mutex;
 
 use jinn_api::{
-    patch_entry, render_profile, Answer, ApiError, ErrorCode, PatchEntryRequest, ProfileDocument,
-    API_VERSION, OP_PATCH_ENTRY, OP_PROFILE_GET, PROFILE_CONTRACT,
+    decode_profile_answer, kernel_merge_patch, patch_entry, profile_patch_payload,
+    refusal_is_retryable, Answer, ApiError, ErrorCode, PatchEntryRequest, ProfileDocument,
+    API_VERSION, FINDING_NO_DOCUMENT_READ, KERNEL_PROFILE_CONTRACT, OP_KERNEL_PATCH_ENTRY,
+    OP_PATCH_ENTRY, OP_PROFILE_GET, PROFILE_CONTRACT,
 };
 use serde::Deserialize;
 
@@ -54,9 +57,9 @@ fn read_profile(path: &str) -> Result<serde_json::Value, ApiError> {
     match fs::read(path) {
         Ok(bytes) => serde_json::from_slice(&bytes)
             .map_err(|error| ApiError::new(ErrorCode::Invalid, format!("profile: {error}"))),
-        Err(fs::FsError::NotFound) => Err(ApiError::new(
-            ErrorCode::NotFound,
-            format!("profile document {path:?} is absent"),
+        Err(fs::FsError::NotFound) => Err(ApiError::unavailable(
+            FINDING_NO_DOCUMENT_READ,
+            format!("profile document {path:?} is not under the granted jinn:fs scope"),
         )),
         Err(refused) => Err(ApiError::new(
             ErrorCode::Refused,
@@ -73,19 +76,36 @@ fn get(path: &str) -> Result<ProfileDocument, ApiError> {
     })
 }
 
+/// The kernel applies the patch: one granted `jinn:profile` call.
+fn kernel_patch(id: &str, merge: &serde_json::Value) -> Result<(), ApiError> {
+    let handle = services::resolve(KERNEL_PROFILE_CONTRACT).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Refused,
+            format!("{KERNEL_PROFILE_CONTRACT}: {error:?}"),
+        )
+    })?;
+    let bytes = services::call(handle, OP_KERNEL_PATCH_ENTRY, &profile_patch_payload(id, merge))
+        .map_err(|error| ApiError::new(ErrorCode::Refused, format!("patch-entry: {error:?}")))?;
+    decode_profile_answer(&bytes).map_err(|reason| {
+        let mut error = ApiError::new(ErrorCode::Refused, format!("patch-entry refused: {reason}"));
+        error
+            .extra
+            .insert("retryable".into(), serde_json::Value::Bool(refusal_is_retryable(&reason)));
+        error
+    })
+}
+
 fn patch(path: &str, payload: &[u8]) -> Result<jinn_api::PatchEntryAnswer, ApiError> {
     let request: PatchEntryRequest = serde_json::from_slice(payload)
         .map_err(|error| ApiError::new(ErrorCode::Invalid, format!("patch-entry: {error}")))?;
+    // The law, applied locally first: unknown ids and no-op patches are
+    // answered without a kernel call.
     let mut document = read_profile(path)?;
     let answer = patch_entry(&mut document, &request)?;
-    if answer.changed {
-        fs::write(path, &render_profile(&document), &request.idempotency_key).map_err(|error| {
-            ApiError::new(
-                ErrorCode::Refused,
-                format!("profile write refused: {error:?}"),
-            )
-        })?;
+    if !answer.changed {
+        return Ok(answer);
     }
+    kernel_patch(&request.id, &kernel_merge_patch(&request.config))?;
     Ok(answer)
 }
 

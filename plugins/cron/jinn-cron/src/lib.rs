@@ -222,6 +222,51 @@ pub struct ParsedConfig {
     pub tick_ms: u64,
 }
 
+/// The scheduler's settings namespace on the `jinn:settings` seam.
+pub const SETTINGS_NAMESPACE: &str = "cron";
+/// The topic the settings provider emits applied patches on.
+pub const SETTINGS_CHANGED_TOPIC: &str = jinn_settings::CHANGED_TOPIC;
+/// The settings key reserved for the notify edition (an outbound
+/// `jinn:net` `request` on fire): a typed SECRET REFERENCE naming a
+/// keystore key, never a token. The scheduler carries it, the keystore
+/// seam resolves it; this reader ignores it.
+pub const NOTIFY_TOKEN_KEY: &str = "notify-token";
+/// The settings key naming the scheduler's own profile entry (the kit
+/// writes it; the seam's restart path patches that entry).
+pub const ENTRY_ID_KEY: &str = "entry-id";
+
+/// The cron namespace as the scheduler declares it: `jobs` (required
+/// array) and `tick-ms` (integer) are the settings subtree this crate
+/// parses; `notify-token` is a secret reference. `jobs` and
+/// `notify-token` are HOT (absorbed in place from a `changed` event);
+/// `tick-ms` is the alarm period and needs a restart (an alarm cannot be
+/// re-requested in place — the kernel cancels it only with the fiber).
+#[must_use]
+pub fn settings_declaration(entry: &str) -> jinn_settings::Declaration {
+    use jinn_settings::{Field, Kind, Schema};
+    jinn_settings::Declaration {
+        namespace: SETTINGS_NAMESPACE.to_owned(),
+        entry: entry.to_owned(),
+        schema: Schema {
+            properties: [
+                ("jobs".to_owned(), Field::required(Kind::Array)),
+                ("tick-ms".to_owned(), Field::new(Kind::Integer)),
+                (NOTIFY_TOKEN_KEY.to_owned(), Field::new(Kind::SecretRef)),
+                // The entry's own name on the seam (written by the kit):
+                // part of the entry layer, hence declared; cold.
+                (ENTRY_ID_KEY.to_owned(), Field::new(Kind::String)),
+            ]
+            .into_iter()
+            .collect(),
+            additional: false,
+            extra: jinn_settings::Extensions::new(),
+        },
+        defaults: serde_json::json!({ "jobs": [], "tick-ms": DEFAULT_TICK_MS }),
+        hot_keys: vec!["jobs".to_owned(), NOTIFY_TOKEN_KEY.to_owned()],
+        extra: jinn_settings::Extensions::new(),
+    }
+}
+
 /// Parses the scheduler's settings subtree: schedulable jobs in config
 /// order, plus one fault string per excluded entry (missing/unrecognized
 /// schedule, zero period, empty topic, empty or duplicate id), plus the
@@ -562,5 +607,40 @@ mod tests {
         assert_eq!(back, state);
         let empty: SchedulerState = serde_json::from_slice(b"{}").expect("empty");
         assert!(empty.last.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod settings_tests {
+    use super::*;
+
+    #[test]
+    fn the_declared_namespace_admits_the_kit_config_and_refuses_a_bare_secret() {
+        let declaration = settings_declaration("cron-scheduler");
+        assert_eq!(declaration.namespace, SETTINGS_NAMESPACE);
+        assert_eq!(declaration.hot_keys, vec!["jobs", NOTIFY_TOKEN_KEY]);
+        let kit = serde_json::json!({ "entry-id": "cron-scheduler", "tick-ms": 500, "jobs": [
+            { "id": "health", "every-ms": 2000, "topic": "cron:health" } ] });
+        assert!(jinn_settings::validate(&declaration.schema, &kit).is_ok());
+        assert!(jinn_settings::validate(
+            &declaration.schema,
+            &serde_json::json!({ "jobs": [], "notify-token": "hunter2" })
+        )
+        .is_err());
+        assert!(jinn_settings::validate(
+            &declaration.schema,
+            &serde_json::json!({ "jobs": [], "notify-token": { "$secret": "cron/notify" } })
+        )
+        .is_ok());
+        let layers = jinn_settings::Layers {
+            defaults: declaration.defaults.clone(),
+            entry: kit,
+            ..jinn_settings::Layers::default()
+        };
+        let resolved = jinn_settings::resolve(&layers);
+        let parsed =
+            parse_config(&serde_json::to_vec(&resolved).expect("encodes")).expect("parses");
+        assert_eq!(parsed.tick_ms, 500, "the entry layer wins over the default");
+        assert_eq!(parsed.jobs[0].id, "health");
     }
 }

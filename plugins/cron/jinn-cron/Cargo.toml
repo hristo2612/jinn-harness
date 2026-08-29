@@ -12,5 +12,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
+# The cron namespace is declared in the settings seam's vocabulary.
+jinn-settings = { path = "../../settings/jinn-settings" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

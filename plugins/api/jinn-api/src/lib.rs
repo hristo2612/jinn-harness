@@ -11,9 +11,22 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod kernel;
+
+pub use kernel::{
+    decode_last_seq, decode_profile_answer, ledger_read_range_payload, profile_patch_payload,
+    refusal_is_retryable, IntrospectEntry, LedgerEvent, LedgerPage, Readiness, Registrations,
+    INTROSPECT_CONTRACT, KERNEL_PROFILE_CONTRACT, KERNEL_PROFILE_SCOPE_ALL, LEDGER_CONTRACT,
+    OP_INTROSPECT_ENTRIES, OP_INTROSPECT_READINESS, OP_KERNEL_PATCH_ENTRY, OP_LEDGER_LAST_SEQ,
+    OP_LEDGER_READ_RANGE,
+};
+
 /// The schema version every answer carries (`api-version`). Within 0.x
-/// every change is strictly additive (kernel R12 discipline).
-pub const API_VERSION: &str = "0.1.0";
+/// every change is strictly additive (kernel R12 discipline). 0.2.0 (pin
+/// `57360cc`): introspection fields on every entry, `readiness`,
+/// `last-ledger-seq` and `document` on the status report, real ledger
+/// pages, the patch applied by the kernel's own `jinn:profile`.
+pub const API_VERSION: &str = "0.2.0";
 
 /// The status/health/ledger contract, provided by `jinn-status`.
 pub const STATUS_CONTRACT: &str = "jinn:api-status";
@@ -34,28 +47,38 @@ pub const OP_PATCH_ENTRY: &str = "patch-entry";
 /// The largest ledger page a caller may ask for.
 pub const LEDGER_TAIL_MAX_LIMIT: u32 = 500;
 
-/// FINDINGS.md entry numbers the seam cites in its typed answers: the
-/// kernel exposes no introspection contract (fiber state/uid, provisions,
-/// listeners, alarms, readiness) and no live `jinn:ledger` provider.
+/// FINDINGS.md entry numbers the seam cites in its typed answers. #19 (no
+/// introspection contract) and #20 (no live `jinn:ledger` reader) are
+/// CLOSED at pin `57360cc`; the numbers stay as the vocabulary of
+/// `kernel.unavailable`, which is now empty.
 pub const FINDING_NO_INTROSPECTION: u32 = 19;
 /// See [`FINDING_NO_INTROSPECTION`].
 pub const FINDING_NO_LEDGER_READER: u32 = 20;
+/// FINDINGS.md #25: the document of record is reachable by a guest only
+/// through a `jinn:fs` scope, i.e. only when it sits under the data root;
+/// `jinn:introspect` carries no authority fields (package, hash, grants)
+/// and `jinn:profile` has no read. Where the document is out of reach the
+/// status report says so by this number, never guesses.
+pub const FINDING_NO_DOCUMENT_READ: u32 = 25;
 
-/// The status fields the kernel cannot honestly answer at this pin
-/// (FINDINGS.md #19/#20): reported by name, never guessed.
-pub const UNAVAILABLE_STATUS_FIELDS: &[&str] = &[
-    "fiber-state",
-    "fiber-uid",
-    "provisions",
-    "listeners",
-    "alarms",
-    "last-ledger-seq",
-    "readiness",
-];
+/// The status fields the kernel cannot honestly answer at this pin —
+/// EMPTY since `57360cc` (FINDINGS.md #19/#20 closed): every field the
+/// 0.1.0 list named now lands as an additive sibling on the report.
+pub const UNAVAILABLE_STATUS_FIELDS: &[&str] = &[];
 
 /// Unknown sibling fields, preserved across a decode → encode round trip
 /// (R12 additivity: this reader carries what a newer writer said).
 pub type Extensions = serde_json::Map<String, serde_json::Value>;
+
+/// The settings seam's contract, exposed by the same transport (its
+/// answers cross in this seam's envelope shape).
+pub const SETTINGS_CONTRACT: &str = "jinn:settings";
+/// `jinn:settings` operations exposed as routes.
+pub const OP_SETTINGS_NAMESPACES: &str = "namespaces";
+/// See [`OP_SETTINGS_NAMESPACES`].
+pub const OP_SETTINGS_GET: &str = "get";
+/// See [`OP_SETTINGS_NAMESPACES`].
+pub const OP_SETTINGS_PATCH: &str = "patch";
 
 /// One route of the operator surface: how a transport names an operation.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -65,6 +88,10 @@ pub struct Route {
     pub path: &'static str,
     pub contract: &'static str,
     pub operation: &'static str,
+    /// The request field the path parameter lands in (`id`, `namespace`).
+    pub param: &'static str,
+    /// Whether the request payload is the JSON body (else the query).
+    pub body: bool,
 }
 
 /// The route table (v1). Additive: a new operation is a new row.
@@ -74,30 +101,64 @@ pub const ROUTES: &[Route] = &[
         path: "/v1/status",
         contract: STATUS_CONTRACT,
         operation: OP_STATUS,
+        param: "id",
+        body: false,
     },
     Route {
         method: "GET",
         path: "/v1/health",
         contract: STATUS_CONTRACT,
         operation: OP_HEALTH,
+        param: "id",
+        body: false,
     },
     Route {
         method: "GET",
         path: "/v1/ledger/tail",
         contract: STATUS_CONTRACT,
         operation: OP_LEDGER_TAIL,
+        param: "id",
+        body: false,
     },
     Route {
         method: "GET",
         path: "/v1/profile",
         contract: PROFILE_CONTRACT,
         operation: OP_PROFILE_GET,
+        param: "id",
+        body: false,
     },
     Route {
         method: "PATCH",
         path: "/v1/profile/entries/{id}",
         contract: PROFILE_CONTRACT,
         operation: OP_PATCH_ENTRY,
+        param: "id",
+        body: true,
+    },
+    Route {
+        method: "GET",
+        path: "/v1/settings",
+        contract: SETTINGS_CONTRACT,
+        operation: OP_SETTINGS_NAMESPACES,
+        param: "namespace",
+        body: false,
+    },
+    Route {
+        method: "GET",
+        path: "/v1/settings/{id}",
+        contract: SETTINGS_CONTRACT,
+        operation: OP_SETTINGS_GET,
+        param: "namespace",
+        body: false,
+    },
+    Route {
+        method: "PATCH",
+        path: "/v1/settings/{id}",
+        contract: SETTINGS_CONTRACT,
+        operation: OP_SETTINGS_PATCH,
+        param: "namespace",
+        body: true,
     },
 ];
 
@@ -238,7 +299,11 @@ impl Answer {
 }
 
 /// One profile entry as the status report shows it: the document's
-/// authority fields, verbatim (kernel Law 5: pinned by content hash).
+/// authority fields, verbatim (kernel Law 5: pinned by content hash), and
+/// — since 0.2.0 — the kernel's own view of the entry through
+/// `jinn:introspect` (`fiber`, `state`, `incarnation`, `provisions`,
+/// `registrations`), absent when the entry has no live fiber or the
+/// introspection read was refused.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct EntryStatus {
@@ -249,6 +314,30 @@ pub struct EntryStatus {
     pub hash: String,
     #[serde(default)]
     pub grants: Vec<serde_json::Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fiber: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub state: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incarnation: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provisions: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registrations: Option<Registrations>,
+    #[serde(flatten)]
+    pub extra: Extensions,
+}
+
+/// Whether the document of record was readable for this report, and the
+/// typed reason when not (FINDINGS.md #25). When unreadable, `entries`
+/// are the kernel's list (introspection fields only) and the authority
+/// fields are empty — stated here, never guessed.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct DocumentStatus {
+    pub readable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unavailable: Option<ApiError>,
     #[serde(flatten)]
     pub extra: Extensions,
 }
@@ -285,6 +374,9 @@ pub struct ProbeReport {
 }
 
 /// What the kernel cannot tell a guest at this pin — named, not guessed.
+/// `finding` is the FINDINGS.md entry whose vocabulary the list uses
+/// (#19); the list is EMPTY since pin `57360cc`. Both fields stay on the
+/// wire for 0.1.0 readers (additivity: never removed, never renamed).
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct KernelIntrospection {
@@ -295,7 +387,7 @@ pub struct KernelIntrospection {
 }
 
 impl KernelIntrospection {
-    /// The honest answer at the pinned kernel (FINDINGS.md #19).
+    /// The honest answer at the pinned kernel: nothing unavailable.
     #[must_use]
     pub fn at_this_pin() -> Self {
         Self {
@@ -309,7 +401,8 @@ impl KernelIntrospection {
     }
 }
 
-/// The `status` answer.
+/// The `status` answer. 0.2.0 adds `readiness` and `last-ledger-seq`
+/// (absent when the kernel read was refused) and `document`.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct StatusReport {
@@ -317,6 +410,12 @@ pub struct StatusReport {
     pub entries: Vec<EntryStatus>,
     pub probes: Vec<ProbeReport>,
     pub kernel: KernelIntrospection,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub readiness: Option<Readiness>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_ledger_seq: Option<u64>,
+    #[serde(default)]
+    pub document: DocumentStatus,
     #[serde(flatten)]
     pub extra: Extensions,
 }
@@ -354,15 +453,17 @@ fn default_limit() -> u32 {
     100
 }
 
-/// The `ledger-tail` answer: a page, or the named reason none can be
-/// served honestly.
+/// The `ledger-tail` answer: one page of the kernel's ledger (events with
+/// `id` strictly greater than `after`, at most `limit`), `next-after` set
+/// when a further page may exist — or the named reason none can be
+/// served (`unavailable`, e.g. the `jinn:ledger` read refused).
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct LedgerTail {
     pub api_version: String,
     pub after: u64,
     pub limit: u32,
-    pub events: Vec<serde_json::Value>,
+    pub events: Vec<LedgerEvent>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub next_after: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -403,8 +504,10 @@ pub struct PatchEntryRequest {
     pub id: String,
     #[serde(default)]
     pub config: ConfigPatch,
-    /// Passed through to the granted `jinn:fs` write (keyed exactly-once
-    /// per fiber); empty claims no idempotency.
+    /// Accepted for 0.1.0 writers and UNUSED since 0.2.0: the patch is
+    /// applied by the kernel's `jinn:profile` as operator intent (no fs
+    /// write to key). An identical patch is still answered without a
+    /// call (`changed: false`).
     #[serde(default)]
     pub idempotency_key: String,
     #[serde(flatten)]
@@ -494,6 +597,47 @@ pub fn patch_entry(
         entry: entry.clone(),
         extra: Extensions::new(),
     })
+}
+
+/// The kernel-side merge patch (`jinn:profile` `patch-entry`, RFC 7396
+/// on the entry's `config` subtree) that applies one [`ConfigPatch`]
+/// under the entry-patch law: `data` merges, `grants` replaces whole
+/// (an array is replaced whole by RFC 7396 — the law and the kernel
+/// agree by construction).
+#[must_use]
+pub fn kernel_merge_patch(patch: &ConfigPatch) -> serde_json::Value {
+    let mut merge = serde_json::Map::new();
+    if let Some(data) = &patch.data {
+        merge.insert("data".into(), data.clone());
+    }
+    if let Some(grants) = &patch.grants {
+        merge.insert("grants".into(), serde_json::Value::Array(grants.clone()));
+    }
+    serde_json::Value::Object(merge)
+}
+
+/// Lays the kernel's view of the composition over the document's entries
+/// (matched by id); an entry the kernel lists but the document does not
+/// (or the whole list, when the document was unreadable) is appended
+/// with empty authority fields.
+pub fn merge_introspection(entries: &mut Vec<EntryStatus>, kernel: &[IntrospectEntry]) {
+    for seen in kernel {
+        let status = match entries.iter_mut().find(|entry| entry.id == seen.id) {
+            Some(status) => status,
+            None => {
+                entries.push(EntryStatus {
+                    id: seen.id.clone(),
+                    ..EntryStatus::default()
+                });
+                entries.last_mut().expect("just pushed")
+            }
+        };
+        status.fiber = seen.fiber;
+        status.state = seen.state.clone();
+        status.incarnation = seen.incarnation;
+        status.provisions = Some(seen.provisions.clone());
+        status.registrations = Some(seen.registrations);
+    }
 }
 
 /// The entries of a profile document as the status report shows them.
@@ -658,6 +802,56 @@ mod tests {
     }
 
     #[test]
+    fn kernel_merge_patch_carries_data_and_replaces_grants() {
+        let patch = ConfigPatch {
+            data: Some(json!({ "tick-ms": 250, "gone": null })),
+            grants: Some(vec![json!("jinn:clock")]),
+            ..ConfigPatch::default()
+        };
+        assert_eq!(
+            kernel_merge_patch(&patch),
+            json!({ "data": { "tick-ms": 250, "gone": null }, "grants": ["jinn:clock"] })
+        );
+        assert_eq!(kernel_merge_patch(&ConfigPatch::default()), json!({}));
+    }
+
+    #[test]
+    fn merge_introspection_lays_the_kernel_view_over_the_document() {
+        let mut entries = entries_status(&profile()).expect("entries");
+        let kernel = vec![
+            IntrospectEntry {
+                id: "a".into(),
+                fiber: Some(4),
+                state: Some("active".into()),
+                incarnation: Some(1),
+                provisions: vec!["jinn:cron".into()],
+                registrations: Registrations {
+                    alarms: 1,
+                    ..Registrations::default()
+                },
+                extra: Extensions::new(),
+            },
+            IntrospectEntry {
+                id: "only-kernel".into(),
+                ..IntrospectEntry::default()
+            },
+        ];
+        merge_introspection(&mut entries, &kernel);
+        assert_eq!(entries[0].fiber, Some(4));
+        assert_eq!(
+            entries[0].provisions.as_deref(),
+            Some(&["jinn:cron".to_owned()][..])
+        );
+        assert_eq!(entries[0].hash, "h", "authority fields kept");
+        assert_eq!(entries[1].fiber, None, "no kernel view for b");
+        assert_eq!(entries[2].id, "only-kernel");
+        assert!(
+            entries[2].package.is_empty(),
+            "no authority for a kernel-only entry"
+        );
+    }
+
+    #[test]
     fn schemas_preserve_unknown_fields_round_trip() {
         let wire = json!({ "id": "a", "config": { "data": { "x": 1 }, "novel": true },
                            "idempotency-key": "k", "future": [1] });
@@ -665,7 +859,8 @@ mod tests {
         assert_eq!(request.config.extra["novel"], true);
         assert_eq!(serde_json::to_value(&request).expect("encodes"), wire);
         let report = json!({ "api-version": "0.1.0", "entries": [], "probes": [],
-                             "kernel": { "unavailable": [], "finding": 19, "more": 1 }, "extra-top": "y" });
+                             "kernel": { "unavailable": [], "finding": 19, "more": 1 },
+                             "document": { "readable": true }, "extra-top": "y" });
         let decoded: StatusReport = serde_json::from_value(report.clone()).expect("decodes");
         assert_eq!(serde_json::to_value(&decoded).expect("encodes"), report);
     }
@@ -776,6 +971,16 @@ mod tests {
         let (patch, id) = route("PATCH", "/v1/profile/entries/cron-scheduler").expect("patch");
         assert_eq!(patch.operation, OP_PATCH_ENTRY);
         assert_eq!(id.as_deref(), Some("cron-scheduler"));
+        assert!(patch.body);
+        let (settings, ns) = route("PATCH", "/v1/settings/cron").expect("settings patch");
+        assert_eq!(
+            (settings.contract, settings.param),
+            (SETTINGS_CONTRACT, "namespace")
+        );
+        assert_eq!(ns.as_deref(), Some("cron"));
+        let (list, none) = route("GET", "/v1/settings").expect("namespaces");
+        assert_eq!(list.operation, OP_SETTINGS_NAMESPACES);
+        assert!(none.is_none() && !list.body);
         assert!(
             route("GET", "/v1/profile/entries/x").is_none(),
             "method matters"

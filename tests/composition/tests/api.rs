@@ -24,12 +24,16 @@ use composition::kit::{
 const PROVIDER: &str = "jinn-api-http";
 const STATUS: &str = "jinn-status";
 const EDITOR: &str = "jinn-profile-edit";
-const ALL: [&str; 5] = [
+/// Every entry of the operator profile: the cron seam, the api trio and
+/// the settings pair (`profiles/operator-api/README.md`).
+const ALL: [&str; 7] = [
     "cron-scheduler",
     "health-snapshot",
     PROVIDER,
     STATUS,
     EDITOR,
+    "jinn-settings-profile",
+    "jinn-settings-store",
 ];
 
 /// The pinned daemon binary, or a LOUD skip.
@@ -52,7 +56,7 @@ fn gate() -> Option<&'static PathBuf> {
 }
 
 /// Boots a fresh operator root and waits for readiness AND the API's
-/// first answer (the listener is polled at the kit's 250 ms cadence).
+/// first answer (served from the listener's readiness wake).
 fn booted(name: &str) -> Option<(Daemon, u16)> {
     let binary = gate()?;
     let (root, port) = fresh_api_root(name);
@@ -94,24 +98,23 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
         return;
     };
     // `status`: the entries of record (all five, with their authority
-    // fields), the cron probe LIVE through a granted `jinn:cron` call
-    // (the job table with `next-ms` — the schedule as the scheduler
-    // holds it), and the kernel introspection the guest cannot honestly
-    // give, named field by field with its FINDINGS.md number.
+    // fields from the document AND the kernel's own view of each through
+    // `jinn:introspect` — fiber, state, incarnation, provisions,
+    // registrations; FINDINGS.md #19 closed), the cron probe LIVE
+    // through a granted `jinn:cron` call, the daemon's readiness, and
+    // the ledger's high-water mark through `jinn:ledger` (#20 closed).
+    // Nothing is left in `kernel.unavailable`.
     let status = get(port, "/v1/status");
     assert_eq!(status.status, 200, "{}", status.raw);
     let report = &status.body;
     assert_eq!(report["api-version"], jinn_api::API_VERSION);
-    let ids: BTreeSet<&str> = report["entries"]
-        .as_array()
-        .expect("entries")
+    let entries = report["entries"].as_array().expect("entries");
+    let ids: BTreeSet<&str> = entries
         .iter()
         .filter_map(|entry| entry["id"].as_str())
         .collect();
     assert_eq!(ids, ALL.iter().copied().collect(), "{report}");
-    let scheduler = report["entries"]
-        .as_array()
-        .expect("entries")
+    let scheduler = entries
         .iter()
         .find(|entry| entry["id"] == "cron-scheduler")
         .expect("the scheduler entry");
@@ -128,6 +131,42 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
             .is_some_and(|grants| grants.contains(&serde_json::json!("jinn:clock"))),
         "{scheduler}"
     );
+    assert_eq!(scheduler["state"], "active", "{scheduler}");
+    assert!(scheduler["fiber"].is_u64(), "{scheduler}");
+    assert!(scheduler["incarnation"].is_u64(), "{scheduler}");
+    assert_eq!(
+        scheduler["provisions"],
+        serde_json::json!(["jinn:cron"]),
+        "{scheduler}"
+    );
+    // The periodic alarm, plus the one-shot settings alarm while the
+    // kernel still counts it (a fired `alarm-at` stays a registration of
+    // the seat until the fiber releases it).
+    assert!(
+        scheduler["registrations"]["alarms"]
+            .as_u64()
+            .is_some_and(|alarms| (1..=2).contains(&alarms)),
+        "{scheduler}"
+    );
+    let http = entries
+        .iter()
+        .find(|entry| entry["id"] == PROVIDER)
+        .expect("the provider entry");
+    assert_eq!(http["state"], "active", "{http}");
+    assert_eq!(
+        http["registrations"]["alarms"], 0,
+        "the HTTP provider holds NO alarm (FINDINGS.md #23 closed): {http}"
+    );
+    assert!(
+        http["registrations"]["sockets"]
+            .as_u64()
+            .is_some_and(|n| n >= 1),
+        "the listener is a kernel registration: {http}"
+    );
+    assert!(
+        entries.iter().all(|entry| entry["state"] == "active"),
+        "every entry active: {report}"
+    );
     let probe = &report["probes"][0];
     assert_eq!(probe["contract"], "jinn:cron", "{report}");
     assert_eq!(probe["live"], true, "{report}");
@@ -139,43 +178,51 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
         "the schedule as held: {report}"
     );
     assert_eq!(
-        report["kernel"]["finding"],
-        jinn_api::FINDING_NO_INTROSPECTION,
+        report["kernel"]["unavailable"],
+        serde_json::json!([]),
+        "nothing is unavailable at this pin: {report}"
+    );
+    assert_eq!(
+        report["readiness"],
+        serde_json::json!({ "boot-reconciled": true, "watcher-armed": true }),
         "{report}"
     );
-    let unavailable: Vec<&str> = report["kernel"]["unavailable"]
-        .as_array()
-        .expect("unavailable")
-        .iter()
-        .filter_map(serde_json::Value::as_str)
-        .collect();
-    assert_eq!(unavailable, jinn_api::UNAVAILABLE_STATUS_FIELDS, "{report}");
+    assert!(
+        report["last-ledger-seq"]
+            .as_u64()
+            .is_some_and(|seq| seq > 0),
+        "{report}"
+    );
+    assert_eq!(report["document"]["readable"], true, "{report}");
 
-    // `health`: the profile of record is readable and the probe is live.
+    // `health`: every entry Active by the kernel's word, the probe live.
     let health = get(port, "/v1/health");
     assert_eq!(health.body["ok"], true, "{}", health.raw);
-    assert_eq!(health.body["entries"], 5, "{}", health.raw);
+    assert_eq!(health.body["entries"], ALL.len(), "{}", health.raw);
     assert_eq!(health.body["probes-live"], 1, "{}", health.raw);
 
-    // `ledger-tail`: paged request shape honored, and the honest answer
-    // at this pin is TYPED unavailable with its finding — never a guess,
-    // never a hang. The read intent is still on the record.
+    // `ledger-tail`: a REAL page through the granted reader — events
+    // with id > after, at most limit, typed records with a sensitivity
+    // tag, `next-after` set for a further page; the read is receipted
+    // on the ledger under the status entry (`LedgerConsumed`).
     let tail = get(port, "/v1/ledger/tail?after=7&limit=3");
     assert_eq!(tail.status, 200, "{}", tail.raw);
     assert_eq!(tail.body["after"], 7, "{}", tail.raw);
     assert_eq!(tail.body["limit"], 3, "{}", tail.raw);
-    assert_eq!(tail.body["events"], serde_json::json!([]), "{}", tail.raw);
-    assert_eq!(
-        tail.body["unavailable"]["code"], "unavailable",
+    let events = tail.body["events"].as_array().expect("events");
+    assert_eq!(events.len(), 3, "{}", tail.raw);
+    assert_eq!(events[0]["id"], 8, "{}", tail.raw);
+    assert!(events[0]["kind"].is_string(), "{}", tail.raw);
+    assert!(
+        matches!(
+            events[0]["sensitivity"].as_str(),
+            Some("public" | "personal")
+        ),
         "{}",
         tail.raw
     );
-    assert_eq!(
-        tail.body["unavailable"]["finding"],
-        jinn_api::FINDING_NO_LEDGER_READER,
-        "{}",
-        tail.raw
-    );
+    assert_eq!(tail.body["next-after"], 10, "{}", tail.raw);
+    assert!(tail.body["unavailable"].is_null(), "{}", tail.raw);
     let clamped = get(port, "/v1/ledger/tail?limit=99999");
     assert_eq!(
         clamped.body["limit"],
@@ -183,6 +230,15 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
         "{}",
         clamped.raw
     );
+    let last = report["last-ledger-seq"].as_u64().expect("seq");
+    let beyond = get(port, &format!("/v1/ledger/tail?after={}", last + 1000));
+    assert_eq!(
+        beyond.body["events"],
+        serde_json::json!([]),
+        "{}",
+        beyond.raw
+    );
+    assert!(beyond.body["next-after"].is_null(), "{}", beyond.raw);
 
     // The transport's own refusals are typed too.
     let missing = get(port, "/nope");
@@ -201,8 +257,15 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
     let wrong_method = get(port, "/v1/profile/entries/cron-scheduler");
     assert_eq!(wrong_method.status, 405, "{}", wrong_method.raw);
 
-    // Law 2: the listen, every accept, and every request's contract
-    // crossing are ledger events attributed to the provider's fiber.
+    // Law 2: the listen, every accept, every readiness wake, and every
+    // request's contract crossing are ledger events attributed to the
+    // provider's ENTRY and fiber; the kernel reads are the status
+    // entry's crossings with their receipts; and the provider's fiber
+    // never woke on an alarm. (Eight requests so far; the ledger writer
+    // is asynchronous, so wait for the last close to land.)
+    daemon.eventually("the last request's close to land on the ledger", || {
+        daemon.ledger_count("NetClosed") >= 8
+    });
     let rows = daemon.ledger_rows();
     let kinds: Vec<&str> = rows.iter().map(|row| row.kind.as_str()).collect();
     let joined = kinds.join("\n");
@@ -211,8 +274,12 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
         "{joined}"
     );
     assert!(
-        joined.matches("NetAccepted").count() >= 6,
+        joined.matches("NetAccepted").count() >= 8,
         "one accept per request: {joined}"
+    );
+    assert!(
+        joined.matches("NetReadable").count() >= 8,
+        "one wake per readiness transition: {joined}"
     );
     for operation in ["status", "health", "ledger-tail"] {
         assert!(
@@ -222,20 +289,48 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
             "{operation} is a ledgered contract call: {joined}"
         );
     }
+    for (contract, operation) in [
+        ("jinn:cron", "jobs"),
+        ("jinn:introspect", "entries"),
+        ("jinn:introspect", "readiness"),
+        ("jinn:ledger", "last-seq"),
+        ("jinn:ledger", "read-range"),
+    ] {
+        // (The cron probe is also the health consumer's boot peek: the
+        // status entry's own crossing is the one attributed to it.)
+        assert!(
+            rows.iter().any(|row| {
+                row.entry.as_deref() == Some(STATUS)
+                    && row.kind
+                        == format!(
+                            r#"{{"ContractCall":{{"contract":"{contract}","operation":"{operation}"}}}}"#
+                        )
+            }),
+            "{contract}/{operation} is a granted call attributed to the status ENTRY: {joined}"
+        );
+    }
     assert!(
-        joined.contains(r#"ContractCall":{"contract":"jinn:cron","operation":"jobs"}"#),
-        "the probe is a granted call: {joined}"
+        rows.iter()
+            .any(|row| row.entry.as_deref() == Some(STATUS) && row.kind.contains("LedgerConsumed")),
+        "the ledger read is receipted under the reader: {joined}"
     );
-    let listener_fiber = rows
+    let listener = rows
         .iter()
         .find(|row| row.kind.contains("NetListening"))
-        .and_then(|row| row.fiber)
         .expect("the listen is attributed");
+    assert_eq!(listener.entry.as_deref(), Some(PROVIDER), "{listener:?}");
+    let listener_fiber = listener.fiber.expect("attributed");
     assert!(
         rows.iter()
             .filter(|row| row.kind.contains(r#""contract":"jinn:api-status""#))
             .all(|row| row.fiber == Some(listener_fiber)),
         "every api call is the HTTP provider's crossing: {joined}"
+    );
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.fiber == Some(listener_fiber) && row.kind.contains("AlarmWake")),
+        "the provider polls nothing: {joined}"
     );
     daemon.interrupt();
 }
@@ -247,14 +342,15 @@ fn patching_one_entry_through_the_api_restarts_exactly_that_fiber() {
     };
     let before = daemon.ledger_rows();
     let fibers_before = active_fibers(&before);
-    assert_eq!(fibers_before.len(), 5, "five fibers active at boot");
+    assert_eq!(fibers_before.len(), ALL.len(), "every entry active at boot");
     let editor = provider_fiber(&before, "jinn:api-profile");
     let last_seq = before.last().map_or(0, |row| row.seq);
 
     // The operator patch: halve the health job's period on ONE entry.
     // The request is one granted `jinn:api-profile` call; the editor
-    // rewrites the document of record through its scoped `jinn:fs`
-    // write; the daemon's own watcher reconciles it by id.
+    // hands the patch to the kernel's `jinn:profile`, whose LOADER
+    // validates it, writes the document back and restarts exactly the
+    // patched fiber (pin `57360cc`).
     let halved = JOB_PERIOD_MS / 2;
     let answer = patch(
         port,
@@ -276,11 +372,16 @@ fn patching_one_entry_through_the_api_restarts_exactly_that_fiber() {
         answer.raw
     );
 
+    let scheduler = provider_fiber(&before, "jinn:cron");
     daemon.eventually("the scheduler to restart on the patched config", || {
-        daemon.restart_count("cron-scheduler") == 1
+        daemon.config_restarts(scheduler) == 1
     });
-    for other in ALL.iter().filter(|id| **id != "cron-scheduler") {
-        assert_eq!(daemon.restart_count(other), 0, "{other} kept its fiber");
+    for other in fibers_before.iter().filter(|fiber| **fiber != scheduler) {
+        assert_eq!(
+            daemon.config_restarts(*other),
+            0,
+            "fiber {other} kept its incarnation"
+        );
     }
     // The document of record carries the patch (the API never bypassed it).
     let document: serde_json::Value =
@@ -306,28 +407,37 @@ fn patching_one_entry_through_the_api_restarts_exactly_that_fiber() {
             })
     });
 
-    // Uid evidence on the ledger: the patch is the editor fiber's granted
-    // write of the profile (attributed), and after it exactly ONE new
-    // fiber id became Active — the scheduler's successor incarnation —
-    // while the four other fibers appear in no transition since.
+    // Uid evidence on the ledger: the patch is the editor's granted
+    // `jinn:profile` call, recorded as `ProfilePatched` under the editor
+    // with NO fs effect (operator intent, not a fiber's contribution —
+    // FINDINGS.md #21 closed), and after it exactly ONE fiber cycled —
+    // the scheduler's successor incarnation — while every other fiber
+    // appears in no transition since.
     let rows = daemon.ledger_rows();
     let after: Vec<&LedgerRow> = rows.iter().filter(|row| row.seq > last_seq).collect();
-    let write = after
+    let patched = after
         .iter()
         .find(|row| {
             row.kind
-                .contains(r#"EffectRegistered":{"label":"fs write profile.json"#)
+                .contains(r#"ProfilePatched":{"entry":"cron-scheduler","by":"jinn-profile-edit""#)
         })
-        .expect("the profile write is a registered effect");
+        .expect("the patch is operator intent on the record");
     assert_eq!(
-        write.fiber,
-        Some(editor),
-        "attributed to the editor: {write:?}"
+        (patched.entry.as_deref(), patched.fiber),
+        (Some(EDITOR), Some(editor)),
+        "attributed to the editor: {patched:?}"
     );
     assert!(
         after.iter().any(|row| row.fiber == Some(editor)
-            && row.kind == r#"{"ContractCall":{"contract":"jinn:fs","operation":"write"}}"#),
-        "the write is a granted contract call"
+            && row.kind
+                == r#"{"ContractCall":{"contract":"jinn:profile","operation":"patch-entry"}}"#),
+        "the kernel patch is a granted contract call"
+    );
+    assert!(
+        !after.iter().any(|row| row
+            .kind
+            .contains(r#"EffectRegistered":{"label":"fs write profile"#)),
+        "no fs effect carries the edit: {after:?}"
     );
     assert!(
         after.iter().any(|row| row.kind.contains(
@@ -340,9 +450,8 @@ fn patching_one_entry_through_the_api_restarts_exactly_that_fiber() {
     // the only fiber id in any transition after the patch is the
     // scheduler's — suspended (its persisted contribution retained) and
     // re-activated with `cause: ConfigChanged` — and no new id appears.
-    // The four other fibers have no transition at all: the patch went
+    // The other fibers have no transition at all: the patch went
     // through the profile, not around the trio.
-    let scheduler = provider_fiber(&before, "jinn:cron");
     let transitioned: BTreeSet<u64> = after
         .iter()
         .filter(|row| row.kind.contains("FiberTransition") || row.kind.contains("FiberSuspended"))
@@ -423,8 +532,8 @@ fn a_bind_outside_the_grant_and_a_non_loopback_bind_are_refused_on_the_record() 
     // Both refusals are the broker's, attributed to the provider's fiber,
     // and each ends in a contained `Failed` transition of that fiber
     // alone (`cause: ConfigChanged`); the daemon's own status line names
-    // the entry as Failed. (The refusal's reason text reaches the guest
-    // typed — `denied(..)` — and is not on the log: FINDINGS.md #19.)
+    // the entry as Failed, and each refusal carries its typed reason on
+    // the record (pin `57360cc`).
     let rows = daemon.ledger_rows();
     let http_fiber = rows
         .iter()
@@ -439,6 +548,12 @@ fn a_bind_outside_the_grant_and_a_non_loopback_bind_are_refused_on_the_record() 
     assert!(
         refusals.iter().all(|row| row.fiber == Some(http_fiber)),
         "attributed to the provider: {refusals:?}"
+    );
+    assert!(
+        refusals
+            .iter()
+            .all(|row| row.entry.as_deref() == Some(PROVIDER) && row.kind.contains(r#""reason":"#)),
+        "each refusal names its entry and typed reason: {refusals:?}"
     );
     let failed: Vec<&LedgerRow> = rows
         .iter()
@@ -537,7 +652,7 @@ fn suspend_releases_the_listener_and_a_restart_relistens() {
     let joined = kinds.join("\n");
     assert_eq!(
         joined.matches("FiberSuspended").count(),
-        5,
+        ALL.len(),
         "one suspension per fiber: {joined}"
     );
     assert!(
@@ -565,18 +680,20 @@ fn suspend_releases_the_listener_and_a_restart_relistens() {
     daemon.interrupt();
 }
 
-/// FINDINGS.md #21, transcript: the operator's patch is a REVERTIBLE
-/// effect of the editor entry — the kernel keeps the pre-patch document
-/// as its inverse — so removing the editor from the profile withdraws
-/// the edit: the pre-patch document is restored (editor entry included),
-/// the watcher reconciles THAT, and the patched entry restarts on its
-/// old config. The proof records the shape; the entry names the
-/// capability that would retire it.
+/// FINDINGS.md #21, CLOSED at pin `57360cc`: the operator's patch is
+/// operator intent applied by the loader — no fs inverse, no journal
+/// entry — so removing the editor from the profile withdraws exactly
+/// the editor's own contribution and the edit STAYS: the document keeps
+/// the patch, the patched entry keeps its new config, and the editor is
+/// gone for good (never resurrected by a restored document). This is the
+/// transcript that went red on adoption, replaced by the new law's
+/// proof (the cron seam's #14 precedent).
 #[test]
-fn disposing_the_editor_reverts_the_operators_edit_finding_21() {
+fn disposing_the_editor_leaves_the_operators_edit_in_place_finding_21_closed() {
     let Some((daemon, port)) = booted("api-revert") else {
         return;
     };
+    let scheduler = provider_fiber(&daemon.ledger_rows(), "jinn:cron");
     let answer = patch(
         port,
         "/v1/profile/entries/cron-scheduler",
@@ -584,7 +701,7 @@ fn disposing_the_editor_reverts_the_operators_edit_finding_21() {
     );
     assert_eq!(answer.status, 200, "{}", answer.raw);
     daemon.eventually("the scheduler to restart on the patch", || {
-        daemon.restart_count("cron-scheduler") == 1
+        daemon.config_restarts(scheduler) == 1
     });
     // The operator now removes the editor entry (a direct profile edit,
     // the way an operator retires a plugin).
@@ -597,42 +714,97 @@ fn disposing_the_editor_reverts_the_operators_edit_finding_21() {
             .log()
             .contains(&format!(r#"disposed=[EntryId("{EDITOR}")]"#))
     });
-    // The withdrawal of the editor's write restores the PRE-PATCH document.
-    daemon.eventually("the profile write to be withdrawn on the record", || {
+    daemon.eventually("the editor's own trail to be withdrawn", || {
         daemon
             .ledger_kinds()
             .iter()
-            .any(|kind| kind.contains(r#"EffectWithdrawn":{"label":"fs write profile.json"#))
+            .any(|kind| kind.contains(r#"EffectWithdrawn":{"label":"jinn-profile-edit on duty""#))
     });
-    daemon.eventually("the pre-patch document to come back and reconcile", || {
-        let document: Option<serde_json::Value> = std::fs::read(daemon.root.join("profile.json"))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok());
-        document.is_some_and(|mut document| {
-            let entries = document["entries"].as_array().map_or(0, Vec::len);
-            entries == 5
-                && entry_config(&mut document, "cron-scheduler")["data"]["tick-ms"]
-                    == composition::kit::TICK_MS
-        })
-    });
-    daemon.eventually("the scheduler to restart on its OLD config", || {
-        daemon.restart_count("cron-scheduler") >= 2
-    });
-    daemon.eventually(
-        "the editor to be re-created by the restored document",
-        || {
-            daemon
-                .log()
-                .contains(&format!(r#"created=[EntryId("{EDITOR}")]"#))
-        },
+    // Give a reversal every chance to show: nothing does.
+    std::thread::sleep(Duration::from_millis(1_500));
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(daemon.root.join("profile.json")).expect("profile"))
+            .expect("parses");
+    assert_eq!(
+        document["entries"].as_array().map_or(0, Vec::len),
+        ALL.len() - 1,
+        "the editor stays gone: {document}"
     );
-    eprintln!(
-        "FINDINGS #21 transcript: root {}",
-        daemon
-            .root
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
+    let tick_ms = entry_config(&mut document, "cron-scheduler")["data"]["tick-ms"].clone();
+    assert_eq!(
+        tick_ms,
+        composition::kit::TICK_MS + 50,
+        "the edit survives the editor: {document}"
+    );
+    let kinds = daemon.ledger_kinds().join("\n");
+    assert!(
+        !kinds.contains(r#"EffectWithdrawn":{"label":"fs write profile.json"#),
+        "no document withdrawal: {kinds}"
+    );
+    assert_eq!(
+        daemon.config_restarts(scheduler),
+        1,
+        "the scheduler never restarted on an old config"
+    );
+    assert!(
+        !daemon
+            .log()
+            .contains(&format!(r#"created=[EntryId("{EDITOR}")]"#)),
+        "the editor was not resurrected"
+    );
+    let health = get(port, "/v1/health");
+    assert_eq!(health.body["entries"], ALL.len() - 1, "{}", health.raw);
+    daemon.interrupt();
+}
+
+/// FINDINGS.md #25: the same api trio booted in the CRON layout (the
+/// profile beside the data root, `<root>/data` as `jinn:fs`'s surface —
+/// the soak's layout) cannot read the document of record through any
+/// granted surface. The answer is typed: `document.readable: false`
+/// with the finding, the entries still listed from the kernel's own
+/// view (authority fields empty, never guessed), `get` the same typed
+/// `unavailable`, and a patch still applies through `jinn:profile`
+/// (the write side needs no document read).
+#[test]
+fn the_operator_api_serves_a_profile_beside_the_data_root_finding_25() {
+    let Some(binary) = gate() else {
+        return;
+    };
+    let (root, port) = fresh_api_root("api-beside");
+    let daemon = Daemon::boot(binary, &root);
+    daemon.await_ready();
+    let health = get(port, "/v1/health");
+    assert_eq!(health.status, 200, "{}", health.raw);
+    assert_eq!(health.body["ok"], true, "{}", health.raw);
+    assert_eq!(health.body["profile-readable"], false, "{}", health.raw);
+    assert_eq!(health.body["entries"], ALL.len(), "{}", health.raw);
+    let status = get(port, "/v1/status");
+    let report = &status.body;
+    assert_eq!(report["document"]["readable"], false, "{report}");
+    assert_eq!(
+        report["document"]["unavailable"]["finding"],
+        jinn_api::FINDING_NO_DOCUMENT_READ,
+        "{report}"
+    );
+    let entries = report["entries"].as_array().expect("entries");
+    assert_eq!(entries.len(), ALL.len(), "{report}");
+    let scheduler = entries
+        .iter()
+        .find(|entry| entry["id"] == "cron-scheduler")
+        .expect("listed by the kernel");
+    assert_eq!(scheduler["state"], "active", "{scheduler}");
+    assert_eq!(
+        scheduler["hash"], "",
+        "no authority field is guessed: {scheduler}"
+    );
+    assert_eq!(report["readiness"]["boot-reconciled"], true, "{report}");
+    let document = get(port, "/v1/profile");
+    assert_eq!(document.status, 503, "{}", document.raw);
+    assert_eq!(
+        document.body["error"]["finding"],
+        jinn_api::FINDING_NO_DOCUMENT_READ,
+        "{}",
+        document.raw
     );
     daemon.interrupt();
 }

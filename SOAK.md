@@ -23,10 +23,10 @@ SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
 
 | Path | What |
 |---|---|
-| `$SOAK/bin/` | `jinnd` (built from the pinned commit by the composition harness's git-archive build) + `jinnd.commit` (its pin marker), `cron-kit` (release), `detach.py` and `soak-run.sh` (copies of the `tools/soak/` originals) |
-| `$SOAK/profile.json`, `$SOAK/artifacts/` | The generated kit (`cron-kit kit`) — never hand-edited |
+| `$SOAK/bin/` | `jinnd` (built from the pinned commit by the composition harness's git-archive build) + `jinnd.commit` (its pin marker), `api-kit` (release; `cron-kit` until the sixth bump), `detach.py` and `soak-run.sh` (copies of the `tools/soak/` originals) |
+| `$SOAK/data/profile.json`, `$SOAK/artifacts/` | The generated kit (`api-kit kit`: the cron seam plus the operator-API trio since the sixth bump; `cron-kit kit` before it) — never hand-edited. The profile moved INTO the data root at the sixth bump so the api consumers can read it through their scoped `jinn:fs` (FINDINGS.md #25); the wrapper passes `--artifacts`/`--data` explicitly. |
 | `$SOAK/ledger.sqlite` | The daemon's append-only ledger (the evidence surface) |
-| `$SOAK/data/` | The daemon's data root: `cron/` (state, the append-only history log, per-fire run records), `health/` (the consumer's reports) |
+| `$SOAK/data/` | The daemon's data root: `cron/` (state, the append-only history log, per-fire run records), `health/` (the consumer's reports), and since the sixth bump `profile.json` (the daemon's watcher is non-recursive on the profile's directory, so the fibers' subdirectories never wake it) |
 | `$SOAK/data.inverses/` | The kernel's `jinn:fs` effect-retention store (since pin `41cb2f47`): one durable inverse per live revertible effect, keyed by effect id — the byte curve FINDINGS.md #8 asked for is measured here |
 | `$SOAK/logs/` | `jinnd.log`, `ops.log` (operator actions, one timestamped line each — restarts and the pin bump count toward the +7d audit) |
 | `$SOAK/run/` | `jinnd.pid`; the supervisor's two scratch files, `launchd.hostboot` (the host boot stamp the wrapper compares to tell a reboot from a crash restart) and `launchd.reason` (one word an operator drops to name a planned start; the wrapper consumes it) |
@@ -43,11 +43,18 @@ mkdir -p "$SOAK/bin" "$SOAK/logs" "$SOAK/run"
 cargo test -p composition          # builds the PINNED daemon via git archive + proves the seam
 cp target/composition/pinned-jinnd/target/debug/jinnd "$SOAK/bin/jinnd"
 cp target/composition/pinned-jinnd/.commit "$SOAK/bin/jinnd.commit"   # the wrapper logs this pin
-cargo build --release -p cron-kit && cp target/release/cron-kit "$SOAK/bin/cron-kit"
+cargo build --release -p api-kit && cp target/release/api-kit "$SOAK/bin/api-kit"
 install -m 0755 tools/soak/detach.py "$SOAK/bin/detach.py"
 tools/soak/install-launchd.sh                  # wrapper + LaunchAgent, files only (§Supervisor)
-"$SOAK/bin/cron-kit" kit "$SOAK" --every-ms 900000 --tick-ms 900000
+"$SOAK/bin/api-kit" kit "$SOAK" --port 7921 --every-ms 900000 --tick-ms 900000
+mv "$SOAK/profile.json" "$SOAK/data/profile.json"   # the document sits in the data root (FINDINGS.md #25)
 ```
+
+`--port 7921` is the operator API's loopback port (its `jinn:net` grant is
+scoped to exactly that port; nothing routes to production — the API
+serves this composition alone). Before the sixth bump the kit was
+`cron-kit kit "$SOAK" --every-ms 900000 --tick-ms 900000` and the profile
+sat at `$SOAK/profile.json`.
 
 `--tick-ms 900000` is the scheduler's alarm period: one wake per 15 minutes,
 the same cadence and the same fire-lateness envelope the retired timer
@@ -154,7 +161,8 @@ Do not run this while the agent is loaded; that is the double start.
 SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
 mark=$(wc -l < "$SOAK/logs/jinnd.log")
 /usr/bin/python3 "$SOAK/bin/detach.py" "$SOAK/logs/jinnd.log" \
-  "$SOAK/bin/jinnd" --profile "$SOAK/profile.json" --ledger "$SOAK/ledger.sqlite" \
+  "$SOAK/bin/jinnd" --profile "$SOAK/data/profile.json" --ledger "$SOAK/ledger.sqlite" \
+  --artifacts "$SOAK/artifacts" --data "$SOAK/data" \
   > "$SOAK/run/jinnd.pid"
 until tail -n +"$((mark + 1))" "$SOAK/logs/jinnd.log" | grep -q '"jinnd":"ready"'; do sleep 1; done
 echo "$(date -u +%FT%TZ) started: jinnd $(cat "$SOAK/run/jinnd.pid")" >> "$SOAK/logs/ops.log"
@@ -171,8 +179,16 @@ recorded in §Pin bump mid-soak cannot recur at this pin).
 SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}; pid=$(cat "$SOAK/run/jinnd.pid" 2>/dev/null); if kill -0 "$pid" 2>/dev/null; then echo "jinnd alive pid=$pid"; else echo "jinnd DOWN"; fi; last=$(ls -t "$SOAK/data/cron/runs/health" 2>/dev/null | head -1); if [ -n "$last" ]; then echo "last fire: $last ($(( ( $(date +%s) - $(stat -f %m "$SOAK/data/cron/runs/health/$last") ) / 60 )) min ago)"; else echo "no fires yet"; fi; grep -o '"fires": *[0-9]*' "$SOAK/data/health/report.json" 2>/dev/null; echo "ledger rows: $(sqlite3 "$SOAK/ledger.sqlite" 'SELECT COUNT(*) FROM events')"; echo "size: $(du -sh "$SOAK" | cut -f1)"
 ```
 
+Since the sixth bump the operator API is the second check — one loopback
+request, answered from the kernel's own view of the composition:
+
+```sh
+curl -s 127.0.0.1:7921/v1/health
+```
+
 Healthy: the daemon alive, last fire under 30 min old (two wakes), ledger
-rows growing, size growing slowly. Any `DOWN`, a stale last fire, or a
+rows growing, size growing slowly, `/v1/health` answering `"ok":true` with
+five entries. Any `DOWN`, a stale last fire, or a
 shrinking/exploding size is a soak event — record it in `ops.log`, keep the
 evidence, investigate before restarting. (The ledger count opens the live
 database read-write as the composition suite does — SELECT only; a
@@ -335,6 +351,52 @@ shape). Duty gap ≈ 20 s. The soak's tree is unchanged — the operator-API
 seam is NOT mounted in the soak profile (the M2 acceptance run keeps the
 composition it started with; the api trio is proven in the composition
 suite and served only there).
+
+**Executed 2026-08-29 (sixth bump):** `1b098be` → `57360cc` (jinnd
+M2-K7: `jinn:introspect`, the live `jinn:ledger` reader, `jinn:profile`
+`patch-entry` as operator intent, the `jinn:net` readiness wake; harness
+packet `packet/2.2-settings`, PLA-314). Supervised, per this procedure:
+a clean SIGINT stop of the `1b098be` daemon (planned, logged with
+before/after evidence — state, history and report byte-identical across
+the stop), Setup re-run from the bumped repo with `api-kit` replacing
+`cron-kit` as the kit builder: the composition suite rebuilt the cached
+daemon at the new pin, the wrapper was re-rendered (it now passes
+`--profile data/profile.json --artifacts --data` explicitly), the kit
+regenerated SEVEN entries — the cron pair (byte-identical duty: same
+job, same cadence), the api trio on loopback `:7921`, the settings pair
+— and the profile was MOVED into the data root (FINDINGS.md #25), then
+`printf planned-start` + `kickstart`. Start evidence: the readiness
+line, verbatim in `ops.log` beside the `pin bump 1b098be -> 57360cc`
+line. The boot's ledger shows SEVEN `ServiceProvided` rows (fs, clock,
+process, net, introspect, ledger, profile), the scheduler RESUMING with
+one catch-up fire for the boundary that elapsed inside the stop window
+(FINDINGS.md #13 shape), its first settings declaration one clock floor
+later, and `jinn-api-http` listening with ZERO alarms (FINDINGS.md #23
+closed). Duty gap ≈ 2 min (the relocation and the kit regeneration were
+inside it). **This is the first bump that changes the soak's tree:** the
+M2 acceptance composition (the cron pair) is unchanged and still the
+only duty; the api trio and the settings pair are mounted BESIDE it as
+the seams that qualified for real duty (the API answers from the
+kernel's own view and holds no alarm; the scheduler consumes its job
+table through `jinn:settings`). The idle-growth measurement that
+qualifies the API is in the next paragraph.
+
+**Idle ledger growth with the API mounted (2026-08-29):** measured over a 971 s window starting right
+after the two post-boot operator requests (ledger rows 1926 → 1948, no
+operator request made inside it). The window contained exactly one
+scheduler wake (the 15-minute cadence): +22 rows, ALL attributed to the
+cron duty — `cron-scheduler` 10 (the wake, its settings re-declaration,
+state write, fire, run record, history append), `health-snapshot` 10
+(its report chain), `jinn-settings-profile` 2 (the declaration's overlay
+read) — and ZERO rows attributed to `jinn-api-http`, `jinn-status`,
+`jinn-profile-edit` or `jinn-settings-store`. The mounted API's idle cost
+is 0 rows/min (the poll shape FINDINGS.md #23 measured was ≈ 8 rows/s);
+the settings seam adds 4 rows per scheduler wake (`ContractResolved` +
+`declare` on the scheduler, `ContractResolved` + `overlays` on the
+provider) — 384 rows/day at this cadence, the price of a layer that is
+guest knowledge (FINDINGS.md #27). The +7d audit's per-tick baseline is
+therefore ≈ 22 rows/wake from this bump on (≈ 5 before the first bump,
+≈ 15 after it). Recorded in `ops.log` beside the bump line.
 
 ## The +7d audit (closes the soak)
 

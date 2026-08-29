@@ -562,6 +562,14 @@ fn a_clean_shutdown_suspends_and_a_restart_resumes_the_schedule() {
     daemon.eventually("a fire on the resumed schedule", || {
         fires(&daemon) > fires_before
     });
+    // The consumer's report lands BEFORE the scheduler's own history
+    // append (the fire's last step): wait for the record, not the fire.
+    daemon.eventually("the resumed fire's history record", || {
+        fired_records(&daemon)
+            .iter()
+            .filter_map(|record| record["scheduled-ms"].as_u64())
+            .any(|boundary| boundary > last)
+    });
     let records = history(&daemon);
     assert_eq!(
         records

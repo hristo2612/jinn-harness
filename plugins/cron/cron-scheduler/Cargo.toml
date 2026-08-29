@@ -16,6 +16,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 jinn-cron = { path = "../jinn-cron" }
+jinn-settings = { path = "../../settings/jinn-settings" }
 serde = "1.0"
 serde_json = "1.0"
 # Guest-side bindings of the pinned plugin world (kernel-pin/wit).

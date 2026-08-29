@@ -1,0 +1,27 @@
+# The settings seam's profile-backed provider guest: provides
+# `jinn:settings`, holds the declared namespaces of this incarnation,
+# resolves defaults < owner entry < overlay (the overlay read from the
+# `jinn:settings-store` entry), and writes every applied patch through the
+# kernel's `jinn:profile` `patch-entry` — the owner entry for a restart-path
+# key, the store entry for a hot key — so a settings patch IS a profile
+# patch and the daemon's loader is the apply path. Compiles for
+# wasm32-unknown-unknown ONLY and is deliberately NOT a workspace member;
+# `api-kit` builds and encodes it.
+[package]
+name = "jinn-settings-profile"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-api = { path = "../../api/jinn-api" }
+jinn-settings = { path = "../jinn-settings" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+wit-bindgen = "0.43.0"
+
+[workspace]
