@@ -1041,7 +1041,11 @@ fn listener_received_bytes(daemon: &Daemon, budget: usize) -> u64 {
             daemon
                 .data_json("engine-probe/last.json")
                 .is_some_and(|record| {
-                    record["engine"] == SPAWN_ENGINE && record["outcome"] == "exited"
+                    record["engine"] == SPAWN_ENGINE
+                        && matches!(
+                            record["outcome"].as_str().unwrap_or_default(),
+                            "exited" | "cancelled" | "failed"
+                        )
                 })
         },
     );
@@ -1049,13 +1053,18 @@ fn listener_received_bytes(daemon: &Daemon, budget: usize) -> u64 {
         .data_json("engine-probe/last.json")
         .expect("the probe's record");
     // The count is only worth reading if the listener actually saw the
-    // run: events arrived, in order, and the provider said it cut.
+    // run: events arrived, in order, and the provider said it cut. A
+    // spent output budget ENDS the run — the provider kills the child —
+    // so `cancelled` with reason `budget` is what a listener downstream
+    // of the cut sees, not a clean exit.
     assert!(
         record["events"].as_u64().unwrap_or_default() > 1,
         "the listener saw the run: {record}"
     );
     assert_eq!(record["order-ok"], true, "{record}");
     assert_eq!(record["provider-truncated"], true, "{record}");
+    assert_eq!(record["outcome"], "cancelled", "{record}");
+    assert_eq!(record["detail"], "budget", "{record}");
     record["text-bytes"]
         .as_u64()
         .unwrap_or_else(|| panic!("the listener's byte count: {record}"))
