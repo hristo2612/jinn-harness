@@ -529,7 +529,7 @@ impl Guest for Probe {
         // The schedule. A one-shot at `now` would fire INSIDE the boot
         // reconcile, and a call into a provider that has not yet swapped
         // out of its staging incarnation permanently kills that
-        // provider's slot — `FINDINGS.md` #29, the kernel gap this
+        // provider's slot — `FINDINGS.md` #30, the kernel gap this
         // consumer found. The first wake is therefore one period out,
         // where the composition has settled; that also happens to be
         // what a schedule means. `alarm-every`'s own first wake is one

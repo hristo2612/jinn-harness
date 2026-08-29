@@ -71,7 +71,7 @@ and the kernel does not know it: to the broker, `jinn:engine.codex` is an
 opaque string, so nothing checks that two entries do not claim the same
 engine id (the slot refusal catches it, but as a duplicate PROVISION, not
 as a duplicate engine), and `jinn:introspect` reports provisions the
-operator must parse to see engines. `FINDINGS.md` #28 records this as the
+operator must parse to see engines. `FINDINGS.md` #29 records this as the
 kernel friction it is, with the capability shape that would retire the
 encoding — instance-qualified provision and resolve, so a contract can be
 provided *at* a name.

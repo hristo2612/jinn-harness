@@ -30,7 +30,11 @@ of the `3fd7b053` pin bump (jinnd M2-K8). Entries 19, 20, 21 and 23 are
 also closes 22's profile case; entry 25 was hit adopting that pin (the
 document of record is readable by a guest only under the data root) and
 entries 26–27 were hit building the settings seam on it, and entry 28
-closing its round-1 consistency blocker.
+closing its round-1 consistency blocker. Entries 29–30 were hit building
+the engines seam on the `3fd7b053` pin (phase 2.3): both are shaped,
+reproducible packet cards, and 30 is the sharpest entry in this file — a
+live composition can permanently lose a contract with no fault, no
+refusal, and no log line.
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -1125,7 +1129,7 @@ contracts); the refusal is pinned by the settings composition suite
   ledger is a complete causal story, emits included since the
   `DispatchTrace` tap landed (finding 2).
 
-## 28. A contract has one provider slot and no notion of an instance — N engines coexisting means N contract names
+## 29. A contract has one provider slot and no notion of an instance — N engines coexisting means N contract names
 
 Hit building the engines seam on `3fd7b05` (phase 2.3). The broker holds
 `providers: contract -> provider`, and `provide` refuses a second peer for
@@ -1167,7 +1171,7 @@ convention, and the emulation is what should be retired.
 refusal); the encoding and its three proofs are pinned by the engines
 composition suite (`tests/composition/tests/engines.rs`).
 
-## 29. `services.provide` has no staging path — a provision made in `activate` binds the STAGING instance, and one call before the swap commit kills the contract for good
+## 30. `services.provide` has no staging path — a provision made in `activate` binds the STAGING instance, and one call before the swap commit kills the contract for good
 
 Hit building the engines seam on `3fd7b05` (phase 2.3), and it is the
 sharpest entry in this file: a live composition can permanently lose a

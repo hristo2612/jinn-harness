@@ -25,7 +25,7 @@
 //!   to this crate.
 //!
 //! The kernel has no shape for instance multiplicity of one contract;
-//! FINDINGS.md #28 records the friction and what would retire the
+//! FINDINGS.md #29 records the friction and what would retire the
 //! encoding.
 //!
 //! # Secrets
