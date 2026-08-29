@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use composition::api::{delete, get, post};
 use composition::daemon::{jinnd_source, pinned_commit, pinned_daemon};
-use composition::kit::{artifact_hash, entry_mut, fresh_engine_root, Daemon};
+use composition::kit::{artifact_hash, entry_mut, fresh_engine_root, Daemon, ExtraDaemonLoad};
 
 /// The switchable slot's entry id and the engine id it serves.
 const DEFAULT_ID: &str = "jinn-engine-default";
@@ -484,6 +484,10 @@ fn the_probe_runs_on_its_schedule_and_records_what_it_saw() {
 
 #[test]
 fn a_vendor_engine_answers_for_real_or_is_honestly_environment_gated() {
+    // This proof spawns REAL vendor CLIs, whose load the daemon budget
+    // does not model; it takes the rest of that budget for its duration
+    // so a slow answer here is never charged to another suite.
+    let _load = ExtraDaemonLoad::all_but_one();
     let Some((daemon, port, _root)) = booted("engines-vendor") else {
         return;
     };

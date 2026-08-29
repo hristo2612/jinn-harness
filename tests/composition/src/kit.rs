@@ -312,6 +312,37 @@ impl Drop for DaemonPermit {
     }
 }
 
+/// Extra daemon permits, held for the duration of a test whose cost the
+/// permit model does not capture. [`daemon_budget`] rations DAEMONS,
+/// which is the right unit for every proof but one: the vendor-engine
+/// proof also spawns two external LLM CLIs, and their cost lands on the
+/// same box — on this suite's other daemons, and on the request bounds of
+/// every OTHER test binary running beside it. Rationing them as if they
+/// were free is what turns an unrelated suite's 45 s request bound into a
+/// question about the machine's mood.
+///
+/// So that one test takes the REST of the budget while it runs. Acquired
+/// before its own daemon boots, so it never waits on a slot it is itself
+/// holding, and released on drop however the test ends.
+pub struct ExtraDaemonLoad(
+    /// Never read — held so the permits release on drop.
+    #[allow(dead_code)]
+    Vec<DaemonPermit>,
+);
+
+impl ExtraDaemonLoad {
+    /// Takes every permit but one — the one the caller's own daemon is
+    /// about to take.
+    #[must_use]
+    pub fn all_but_one() -> Self {
+        Self(
+            (1..daemon_budget())
+                .map(|_| DaemonPermit::acquire())
+                .collect(),
+        )
+    }
+}
+
 /// The daemon's machine-readable readiness line (FINDINGS.md #12 minimum,
 /// pin `9e61e47`): emitted on stderr once the watcher is armed AND the boot
 /// reconcile is done — the operator lane keys on this, never on boot
