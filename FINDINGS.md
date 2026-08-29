@@ -24,7 +24,8 @@ and `jinn:net` as of the `1b098be` pin bump (jinnd M2-K6). Entries 19–24
 were hit building the operator-API seam on that pin (phase 2.1): 19 and
 20 are the introspection gaps the status surface names in its answers,
 21 is the edit lane's revertibility hazard (transcript-pinned), 22–24 are
-shape frictions with source evidence. Entries 19, 20, 21 and 23 are
+shape frictions with source evidence. Entries 24 and 25 are **closed** as
+of the `3fd7b053` pin bump (jinnd M2-K8). Entries 19, 20, 21 and 23 are
 **closed** as of the `57360cc` pin bump (jinnd M2-K7; phase 2.2), which
 also closes 22's profile case; entry 25 was hit adopting that pin (the
 document of record is readable by a guest only under the data root) and
@@ -177,6 +178,7 @@ first consumer of `jinn:net` (`plugins/api/jinn-api-http` listens on
 loopback under a port-scoped grant; refusals for an out-of-range port and
 a non-loopback host proven on the record). What remains of this entry:
 `jinn:keystore` is still declared and unprovided.
+
 
 ## 6. No transactional pairing of related effects
 
@@ -735,6 +737,23 @@ Entry 21's shape (i) removes the profile case entirely.
 the loader's write-back is stage + fsync + rename). The general case
 (`jinn:fs` `write` for data files) stays open.
 
+**Fully closed 2026-08-29 — retired by pin 3fd7b05 (jinnd M2-K8).** The
+card's shape shipped for the data plane too: `jinn:fs` `write` AND
+`append` now commit whole by stage + fsync + rename
+(`contracts/jinn-fs/metadata.toml`, `commit = "stage-fsync-rename"` on
+both operations; the 0.2.0 "O(1) per record" note on `append` is retired
+in the bundle, an honest trade of per-record cost for a tail that is never
+torn). A concurrent reader observes the prior document or the new one,
+never a prefix. Harness side, every guest-kept document is now atomic
+without a guard of its own: the cron scheduler's `state.json` and the
+health job's report (`plugins/cron/`), the settings store's overlays, and
+— the reason this closure mattered for this packet — the engine probe's
+`last.json` and its `history.log`
+(`plugins/engines/jinn-engine-probe/src/lib.rs`), which the composition
+suite and an operator read WHILE the daemon is running. The suite reads
+those files mid-run with no retry-on-parse-failure, which is only sound
+because of this commit shape.
+
 ## 23. Sockets have no readiness wake — a server polls at the clock floor, on the record
 
 `jinn:net` v0.1 is non-blocking by design (R1): `accept` and `read` answer
@@ -793,6 +812,24 @@ Low severity, structural.
 
 *Evidence grade:* source-confirmed; no transcript (no misuse to record).
 
+**Closed 2026-08-29 — retired by pin 3fd7b05 (jinnd M2-K8).** A grant may
+now carry `ops` beside `contract`/`scope` — an operation-class attenuation
+validated fail-closed against the vocabulary each bundle declares
+(`grants/ops.rs` `declared_ops`, mirroring every `[operations.*]`) and
+enforced per call at the broker (`broker/authority.rs` `check_op`: an
+operation outside the class is a ledgered `GrantRefused` naming it, never
+a default-accept). Authority is now exactly as wide as its use here:
+`jinn-status` reads the document of record under `ops = ["entry",
+"document"]` and CANNOT patch it, while `jinn-profile-edit` holds all
+three — both written in `tools/api-kit/src/main.rs` (`api_entries`) from
+`jinn_api::KERNEL_PROFILE_READ_OPS` / `KERNEL_PROFILE_EDIT_OPS`
+(`plugins/api/jinn-api/src/kernel.rs`). Proven on the real daemon by
+`a_read_only_profile_grant_holds_no_patch_authority_finding_24_closed`
+(`tests/composition/tests/api.rs`): the shipped classes read back from the
+document of record, and the editor narrowed to the viewer's read-only
+class has its `patch-entry` refused on the ledger while its `document`
+read keeps working.
+
 ## 25. The document of record is reachable by a guest only under the data root — `jinn:introspect` carries no authority fields, `jinn:profile` has no read
 
 Hit adopting `57360cc`. Entry 21's closure moved the WRITE side of the
@@ -833,6 +870,29 @@ of entry 24 for every viewer.
 `contracts/jinn-profile` at the pin); composition
 `the_operator_api_serves_a_profile_beside_the_data_root_finding_25`
 pins the typed answer.
+
+**Closed 2026-08-29 — retired by pin 3fd7b05 (jinnd M2-K8).** The card's
+second disjunct shipped: `jinn:profile` 0.2.0 gained the reads `entry(id)`
+and `document()` (`daemon/profile_read.rs`), answering the document of
+record's authority fields — `id`, `package`, `version`, `hash`, `grants`,
+`config`, `disabled`, `parent` — for every entry the caller's `entry-ids`
+scope admits, each a ledgered call, a read outside the scope a ledgered
+grant refusal. The harness reads the document through that contract now,
+not through a file: `plugins/api/jinn-status/src/lib.rs`
+(`profile_document`, feeding `status`/`health`) and
+`plugins/api/jinn-profile-edit/src/lib.rs` (`read_profile`, feeding both
+`get` and the local entry-patch law), over the wire in
+`plugins/api/jinn-api/src/kernel.rs` (`profile_entry_payload`,
+`decode_profile_document`, `decode_profile_entry`, `ProfileEntryRecord`).
+Neither consumer holds any `jinn:fs` grant on the document any more
+(`tools/api-kit/src/main.rs`), so the data-root coupling is gone from both
+the read path and the authority side; the typed `unavailable` answer stays
+for the one case left, a viewer mounted without the read grant. Proven on
+the real daemon by
+`the_operator_api_reads_the_document_beside_the_data_root_finding_25_closed`
+(`tests/composition/tests/api.rs`), which asserts in the soak's layout —
+the profile BESIDE the data root — exactly the completeness the previous
+pin could only answer as unavailable.
 
 ## 26. `patch-entry` awaits the patched fiber's restart — an owner that resolves its settings in `activate` cannot be patched by its settings provider
 
@@ -877,6 +937,28 @@ class, (b) removes the boot-ordering retry. Both keep R1.
 refusal names the class); the harness shape is pinned by the settings
 composition suite (`declare_resolve_and_patch_on_both_paths_with_the_c5_c6_transcript`:
 the restart path lands with the owner making no call from `activate`).
+
+**Closed 2026-08-29 — retired by pin 3fd7b05 (jinnd M2-K8), shape (a).**
+`jinn:profile` 0.2.0 answers `accepted(seq)` once the document has
+committed and the patched fiber's restart is SCHEDULED; the call never
+awaits the restart (`contracts/jinn-profile/metadata.toml`, `settle =
+"deferred-restart-scheduled-never-awaited"`). The two-hop deadlock class
+is therefore gone: a settings provider may patch the entry that resolves
+it from `activate`, and the seam is free of the constraint that shaped it.
+Harness side, the new answer is decoded and USED rather than merely
+tolerated: `jinn_api::decode_profile_answer`
+(`plugins/api/jinn-api/src/kernel.rs`) answers the accepted patch's
+`ProfilePatched` ledger sequence, and both callers ride it out to the
+operator as `patched-seq` — `plugins/api/jinn-profile-edit/src/lib.rs` on
+the API's `patch-entry` answer and
+`plugins/settings/jinn-settings-profile/src/lib.rs` on the settings
+`patched` answer — so a caller can follow the restart it did not wait for
+through `jinn:ledger`, which is the only way a non-blocking amendment is
+observable at all. The owner-side shape `cron-scheduler` already had
+(resolve on its own alarm wake, absorb `changed` in place) is KEPT, but it
+is no longer a workaround: it is what makes a provider restart or a
+provider swap heal within one wake, and it is now a resilience property
+rather than a deadlock avoidance.
 
 ## 27. C5/C6 decision evidence — what a settings patch costs on the restart path and on the hot path, measured on the real daemon
 
