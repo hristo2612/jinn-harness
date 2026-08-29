@@ -195,3 +195,46 @@ leaves the plan does. The three probes stay as named cases beside the
 property. Two-layer trees are the property's domain because the
 defaults are not addressable — a path only the defaults resolve keeps
 its honest no-recovery refusal and is tested by name.
+
+## Why the ask is the requested resolution, over the whole RFC 7396 domain
+
+Round 5's definition read a merge patch as its LEAVES — atomics and
+`null`s — and dropped an empty object as asking nothing. The verifier's
+probe laid `{}` over an overlay atomic: under RFC 7396 an object
+replaces an atomic, so the requested resolution held `group: {}`, the
+patch landed in the entry, and the next `get` still answered the
+overlay's `5` — accepted, and wrong. The generator had the same hole:
+every patch object held at least one field and empty objects were
+ignored, so the property proved its claim over a subset of the domain.
+Round 6 closes the class rather than the case. What a patch asks for is
+now stated once as the REQUESTED RESOLUTION — RFC 7396 applied to the
+document as it resolves — compared leaf for leaf with the post-state
+resolution under every key the patch names (`asking`, `divergence`);
+`asked_leaves` treats `{}` as an object-valued leaf, so the overlay's
+cold-key rule refuses `{ cold: {} }` like any set. The resolver that
+names the shadowing node is unchanged: the definition of the resolving
+layer was right, the reading of the patch was partial.
+
+Reading the patch as a resolution surfaced a consequence the leaf
+reading could not see: an object written over the TARGET layer's atomic
+un-wipes the layer below it, whose subtree the atomic had removed from
+the resolution — `group.x` in the entry under an overlay `group: 5`,
+patched hot with `{ group: { h: 7 } }`, resurfaces in the next `get`
+though the requested resolution never held it. The divergence walk
+names those leaves in the entry (`group.x`), their path-precise removal
+is the recovery, and the retry lands — one round, siblings kept. This
+is the "object replaces an atomic" half of RFC 7396 taken to its end in
+a layered document, and it is a named case beside the `{}` probe.
+
+The property's generator now draws every value from the whole domain
+at every depth in both layers and the patch: an atomic, `null`, `{}`,
+or a nested object of ZERO or more such values. Its first full-domain
+run found two artifacts of explicit-layer removals: `resolve ⊕ patch`
+turned an overlay atomic into `{}` for a nested `null` the operator
+addressed to the entry, so a recovery the seam advertised was refused
+as shadowed by the overlay; and a nested `null` over an absent key
+creates its container in that layer (`d: {}`), which the pruned ask
+lacked, so the plan blamed its own layer. An explicit-layer removal
+asks nothing of the resolution — nor does the container it creates —
+so `asking` prunes both and reports the pruned paths, and the walk
+skips them. Both were found by the generator, not by a probe.

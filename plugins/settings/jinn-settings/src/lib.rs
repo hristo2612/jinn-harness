@@ -310,8 +310,9 @@ pub fn plan_patch_in(
             "a settings patch is a JSON object (RFC 7396 merge patch)",
         ));
     };
+    let (asked, cleared) = asking(patch, layer.is_some());
     let mut intended = resolve(layers);
-    merge_patch(&mut intended, patch);
+    merge_patch(&mut intended, &asked);
     let is_hot = |key: &String| declaration.hot_keys.iter().any(|hot| hot == key);
     let applied = match layer {
         Some(PatchLayer::Overlay) => {
@@ -373,28 +374,32 @@ pub fn plan_patch_in(
         )
     })?;
     // The formal definition of shadowing (README §The shadowing law),
-    // implemented once: for every leaf path P the patch asks for, the
-    // post-state resolution must be the asked-for value (a set) or absent
-    // (a keys-chosen removal; an explicit-layer removal is the operator
-    // clearing that layer and asks for nothing). Where it is not, the
-    // layer resolving P — the first in precedence holding P itself or an
-    // ATOMIC value at a strict prefix of P — is the shadowing layer, and
-    // the node it holds there is the shadowing node.
+    // implemented once. What the patch asks for is the requested
+    // resolution `intended` — RFC 7396 applied to the document as it
+    // resolves — under every key the patch names; an explicit-layer
+    // removal asks for nothing (the operator is clearing that layer).
+    // Every leaf where the post-state resolution diverges from it is
+    // shadowed, and the layer resolving that leaf — the first in
+    // precedence holding it or an ATOMIC value at a strict prefix of it
+    // — is the shadowing layer, the node it holds there the shadowing
+    // node.
     let target = match applied {
         Applied::Hot => LayerName::Overlay,
         Applied::Restart => LayerName::Entry,
     };
+    let mut divergent = Vec::new();
+    for key in keys.keys() {
+        let path = vec![key.clone()];
+        divergence(
+            value_at(&intended, &path),
+            value_at(&resolved, &path),
+            &path,
+            &cleared,
+            &mut divergent,
+        );
+    }
     let mut shadowing: Vec<(LayerName, Vec<String>)> = Vec::new();
-    for (path, wanted) in asked_leaves(patch, &[]) {
-        let got = value_at(&resolved, &path);
-        let consistent = match &wanted {
-            Some(wanted) => got == Some(wanted),
-            None if layer.is_some() => true,
-            None => got.is_none(),
-        };
-        if consistent {
-            continue;
-        }
+    for path in divergent {
         let node = match resolver(&after, &path) {
             Some((holder, node)) if holder != target => (holder, node),
             // Unreachable by the resolution law (a leaf that diverges is
@@ -421,9 +426,9 @@ fn value_at<'a>(value: &'a serde_json::Value, path: &[String]) -> Option<&'a ser
 }
 
 /// The leaf paths a merge patch asks for, in patch order: `Some(value)`
-/// for a set (a non-object value — an array is atomic under RFC 7396),
-/// `None` for a removal. An object recurses; an empty object asks for
-/// nothing.
+/// for a set (a non-object value — an array is atomic under RFC 7396 —
+/// or an EMPTY object, an object-valued leaf that sets the key to an
+/// object), `None` for a removal. A non-empty object recurses.
 fn asked_leaves(
     patch: &serde_json::Value,
     prefix: &[String],
@@ -437,11 +442,96 @@ fn asked_leaves(
             let path = [prefix, std::slice::from_ref(key)].concat();
             match value {
                 serde_json::Value::Null => vec![(path, None)],
-                serde_json::Value::Object(_) => asked_leaves(value, &path),
+                serde_json::Value::Object(fields) if !fields.is_empty() => {
+                    asked_leaves(value, &path)
+                }
                 _ => vec![(path, Some(value.clone()))],
             }
         })
         .collect()
+}
+
+/// The patch as an ask on the resolved document (what the requested
+/// resolution lays over it), with the paths it asks nothing about. With
+/// the keys choosing the layer it is the patch itself. With an explicit
+/// layer a `null` is the operator clearing THAT layer and asks nothing
+/// of the resolution, so it is dropped — and with it any object that
+/// held nothing but removals (the container RFC 7396 creates for them
+/// in that layer is part of the clearing); a literal `{}` stays, it
+/// asks for an object. The dropped paths are returned beside the ask.
+fn asking(patch: &serde_json::Value, explicit: bool) -> (serde_json::Value, Vec<Vec<String>>) {
+    let mut cleared = Vec::new();
+    let asked = if explicit {
+        prune(patch, &[], &mut cleared)
+    } else {
+        patch.clone()
+    };
+    (asked, cleared)
+}
+
+fn prune(
+    patch: &serde_json::Value,
+    prefix: &[String],
+    cleared: &mut Vec<Vec<String>>,
+) -> serde_json::Value {
+    let Some(fields) = patch.as_object() else {
+        return patch.clone();
+    };
+    let mut kept = serde_json::Map::new();
+    for (key, value) in fields {
+        let path = [prefix, std::slice::from_ref(key)].concat();
+        match value {
+            serde_json::Value::Null => cleared.push(path),
+            serde_json::Value::Object(inner) if !inner.is_empty() => {
+                let mut below = Vec::new();
+                let pruned = prune(value, &path, &mut below);
+                if pruned.as_object().is_some_and(|inner| inner.is_empty()) {
+                    cleared.push(path);
+                } else {
+                    cleared.extend(below);
+                    kept.insert(key.clone(), pruned);
+                }
+            }
+            _ => {
+                kept.insert(key.clone(), value.clone());
+            }
+        }
+    }
+    serde_json::Value::Object(kept)
+}
+
+/// The leaves under `path` where `got` diverges from `wanted`: two
+/// objects are walked together (a leaf either lacks is a divergence);
+/// anything else that differs is one divergence at `path` itself — an
+/// object where a removal or an atomic was asked for is named whole, so
+/// its removal is one node. A path under `cleared` (an explicit-layer
+/// removal) asks for nothing.
+fn divergence(
+    wanted: Option<&serde_json::Value>,
+    got: Option<&serde_json::Value>,
+    path: &[String],
+    cleared: &[Vec<String>],
+    out: &mut Vec<Vec<String>>,
+) {
+    if cleared.iter().any(|node| path.starts_with(node)) {
+        return;
+    }
+    match (
+        wanted.and_then(|v| v.as_object()),
+        got.and_then(|v| v.as_object()),
+    ) {
+        (Some(wanted), Some(got)) => {
+            let keys = wanted
+                .keys()
+                .chain(got.keys().filter(|k| !wanted.contains_key(*k)));
+            for key in keys {
+                let path = [path, std::slice::from_ref(key)].concat();
+                divergence(wanted.get(key), got.get(key), &path, cleared, out);
+            }
+        }
+        _ if wanted != got => out.push(path.to_vec()),
+        _ => {}
+    }
 }
 
 /// The layer that resolves `path`, and the node it resolves it with: the

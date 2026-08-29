@@ -73,14 +73,23 @@ two layers could never be written atomically.
 Shadowing has one definition, implemented once (`plan_patch_in`,
 `resolver`), and it is stated in terms of the merge law above.
 
-**What a patch asks for.** A merge patch is walked per RFC 7396: an
-object recurses, so its leaves are the paths that matter. Every leaf
-path P it holds asks for one thing: a non-object value (a string, a
-number, a bool, an ARRAY — arrays are atomic under RFC 7396) asks that
-P resolve to exactly that value; a `null` asks that P resolve absent.
-An empty object asks for nothing. With an explicit `layer`, a `null`
-asks for nothing either: it is the operator clearing that layer at P
-(§The layer selector).
+**What a patch asks for.** A merge patch asks for the REQUESTED
+RESOLUTION: RFC 7396 applied to the document as it resolves,
+`resolve(layers) ⊕ patch`, under every key the patch names. That is
+the whole value domain, at every depth: a non-object value (a string,
+a number, a bool, an ARRAY — arrays are atomic under RFC 7396) asks
+that its path resolve to exactly that value, replacing whatever
+subtree resolved there; a `null` asks that its path resolve absent; a
+non-empty object merges, so it recurses — and where an ATOMIC resolved
+at its path it replaces it, asking for exactly the subtree the
+requested resolution holds there (nothing a lower layer held beneath
+the atomic may resurface); an EMPTY object `{}` is an object-valued
+leaf: over an atomic or nothing it asks for `{}`, over an object it
+asks for nothing new (RFC 7396 never removes children). With an
+explicit `layer`, a `null` asks for nothing: it is the operator
+clearing that layer at that path (§The layer selector), and so is any
+object in the patch that holds nothing but removals (the container
+RFC 7396 creates for them in that layer is part of the clearing).
 
 **The target layer T** is the layer the patch lands in (§The patch law:
 the explicit `layer`, else the keys choose).
@@ -95,35 +104,46 @@ forces: an atomic that a HIGHER layer has already replaced with an
 object at that same prefix resolves nothing — it still wiped every
 layer below it, so the path is absent and no layer resolves it.
 
-**The law.** After the write, every leaf P the patch asks for must
-resolve as asked. Where one does not, its resolving layer L ≠ T, and
-the patch is refused `shadowed { path: <the resolving node, Q or P>,
-layer: L }` — the node named is the actual shadowing node (an atomic
-ancestor names the ancestor, never a leaf below it), `key` is that path
-dot-joined (`group.inner`; a top-level key is itself), and `path` its
-segments. The recovery is the path-precise RFC 7396 removal of exactly
-that node in L: `recovery { namespace, patch: <a null at that path>,
-layer: L }`. Removing a node cannot lose settings beside it — a `null`
-at a nested path deletes that path alone and preserves every sibling —
-and an atomic has nothing below it. When several asked-for leaves are
-shadowed, the recovery removes every shadowing node at once (they all
-lie in one layer by construction: the overlay shadows the entry's sets;
-a removal from one of the two is shadowed by the other); `key`/`path`
-name the first. The `detail` spells the call: `patch("cron",
-{"notify-token":null}, layer: entry), then retry this patch`.
+**The law.** After the write, under every key the patch names, the
+next `get` must resolve leaf for leaf what the requested resolution
+holds (an object it holds where a removal or an atomic was asked for
+is one divergent node, named whole). Where a leaf P diverges, its
+resolving layer L ≠ T, and the patch is refused `shadowed { path: <the
+resolving node, Q or P>, layer: L }` — the node named is the actual
+shadowing node (an atomic ancestor names the ancestor, never a leaf
+below it), `key` is that path dot-joined (`group.inner`; a top-level
+key is itself), and `path` its segments. The recovery is the
+path-precise RFC 7396 removal of exactly that node in L: `recovery {
+namespace, patch: <a null at that path>, layer: L }`. Removing a node
+cannot lose settings beside it — a `null` at a nested path deletes
+that path alone and preserves every sibling — and an atomic has
+nothing below it. When several leaves are shadowed, the recovery
+removes every shadowing node at once (they all lie in one layer by
+construction: the overlay shadows the entry's sets; a removal from one
+of the two is shadowed by the other; a lower layer's leaves that an
+object written over the target's atomic would let resurface are named
+in that lower layer); `key`/`path` name the first. The `detail` spells
+the call: `patch("cron", {"notify-token":null}, layer: entry), then
+retry this patch`.
 
 **The guarantee, as proven.** The definition is pinned by a property
 test over random two-layer trees, random merge patches and a random
 target layer (`shadowing_is_one_definition_over_random_two_layer_trees`,
-ten thousand cases from a fixed seed): refused ⇒ executing the
-advertised recovery, then retrying the patch as it was, lands and the
-next `get` resolves what the patch asked for; not refused ⇒ the next
-`get` resolves what the patch asked for; and every path neither the
-patch nor the recovery addressed is byte-identical in both layers
-afterwards. The three probes that found the earlier, case-by-case
+ten thousand cases from a fixed seed), the generator drawing from the
+WHOLE RFC 7396 domain at every depth in both layers and in the patch —
+atomics, `null`, `{}`, nested objects of zero or more fields, so
+atomics land over objects and objects over atomics: refused ⇒
+executing the advertised recovery, then retrying the patch as it was,
+lands and the next `get` resolves the requested resolution; not
+refused ⇒ the next `get` resolves the requested resolution; and every
+path neither the patch nor the recovery addressed is byte-identical in
+both layers afterwards. The probes that found the earlier, case-by-case
 detection wanting are kept as named cases — a key held in both layers
 removed (`notify-token`), a nested leaf beside an untouched sibling
-(`group.changed`), and a leaf below an atomic ancestor (`group.inner`).
+(`group.changed`), a leaf below an atomic ancestor (`group.inner`), an
+empty object laid over an atomic (`{"cold":true,"group":{}}`), and an
+object laid over the overlay's atomic where the entry's subtree would
+resurface (`group.x`).
 
 The one shape without a recovery: a path only the defaults resolve
 (`layer: defaults`, no `recovery`) — a declared default cannot be
@@ -193,4 +213,8 @@ events without calling back (the payload carries the resolved settings).
   removal. Same day, additive: the shadowing law stated as one
   definition — the resolving layer and node, an atomic ancestor named
   as the node, one recovery for every shadowing node in the layer —
-  and pinned by a property test (§The shadowing law).
+  and pinned by a property test (§The shadowing law). Same day: the
+  ask is the requested resolution under the patch's keys over the
+  whole RFC 7396 value domain — `{}` an object-valued leaf, an object
+  over an atomic the whole subtree — and the property's generator
+  covers that domain (§The shadowing law).
