@@ -53,9 +53,12 @@ Three jobs the plist cannot do:
 2. **An honest `ops.log` line.** A supervisor start has to be as visible as
    an operator start, and it has to be DISTINGUISHABLE: the wrapper resolves
    a reason — `adopt`/`planned-start` (an operator dropped a reason file),
-   `boot` (first start since this host booted, compared against
-   `kern.boottime`), else `keepalive-restart` — so the audit counts outages
-   apart from planned restarts without any human annotation.
+   `boot`, else `keepalive-restart` — so the audit counts outages apart
+   from planned restarts without any human annotation. *(As shipped here,
+   `boot` was decided from a stamp file, not from `kern.boottime`; that
+   cost a false `reason=boot` on 2026-08-29 and was replaced — see
+   `2026-08-29-soak-honest-relaunch.md`, which owns the decision from
+   then on.)*
 3. **Pid continuity.** The wrapper `exec`s the daemon, so jinnd inherits the
    wrapper's pid. `run/jinnd.pid` stays the daemon's own pid (the health
    check and §Stop are untouched), and launchd's `SuccessfulExit` keys on
@@ -63,9 +66,12 @@ Three jobs the plist cannot do:
 
 The reason heuristic is deliberately observational, not clever: it cannot
 know why launchd relaunched, only whether the host boot changed and whether
-an operator claimed the start. Both failure directions are safe — an
-unclaimed planned start reads as `keepalive-restart` (over-counts an
-outage), never the reverse.
+an operator claimed the start. The claim made here — that both failure
+directions are safe, an unclaimed planned start over-counting an outage
+and never the reverse — was WRONG, and 2026-08-29 is the counterexample:
+a crash restart was written as `boot`. The safe direction is only safe if
+the boot test cannot silently fail open; see
+`2026-08-29-soak-honest-relaunch.md`.
 
 ## Adoption without a double start
 
