@@ -352,6 +352,37 @@ seam is NOT mounted in the soak profile (the M2 acceptance run keeps the
 composition it started with; the api trio is proven in the composition
 suite and served only there).
 
+**Executed 2026-08-29 (sixth bump):** `1b098be` → `57360cc` (jinnd
+M2-K7: `jinn:introspect`, the live `jinn:ledger` reader, `jinn:profile`
+`patch-entry` as operator intent, the `jinn:net` readiness wake; harness
+packet `packet/2.2-settings`, PLA-314). Supervised, per this procedure:
+a clean SIGINT stop of the `1b098be` daemon (planned, logged with
+before/after evidence — state, history and report byte-identical across
+the stop), Setup re-run from the bumped repo with `api-kit` replacing
+`cron-kit` as the kit builder: the composition suite rebuilt the cached
+daemon at the new pin, the wrapper was re-rendered (it now passes
+`--profile data/profile.json --artifacts --data` explicitly), the kit
+regenerated SEVEN entries — the cron pair (byte-identical duty: same
+job, same cadence), the api trio on loopback `:7921`, the settings pair
+— and the profile was MOVED into the data root (FINDINGS.md #25), then
+`printf planned-start` + `kickstart`. Start evidence: the readiness
+line, verbatim in `ops.log` beside the `pin bump 1b098be -> 57360cc`
+line. The boot's ledger shows SEVEN `ServiceProvided` rows (fs, clock,
+process, net, introspect, ledger, profile), the scheduler RESUMING with
+one catch-up fire for the boundary that elapsed inside the stop window
+(FINDINGS.md #13 shape), its first settings declaration one clock floor
+later, and `jinn-api-http` listening with ZERO alarms (FINDINGS.md #23
+closed). Duty gap ≈ 2 min (the relocation and the kit regeneration were
+inside it). **This is the first bump that changes the soak's tree:** the
+M2 acceptance composition (the cron pair) is unchanged and still the
+only duty; the api trio and the settings pair are mounted BESIDE it as
+the seams that qualified for real duty (the API answers from the
+kernel's own view and holds no alarm; the scheduler consumes its job
+table through `jinn:settings`). The idle-growth measurement that
+qualifies the API is in the next paragraph.
+
+**Idle ledger growth with the API mounted (2026-08-29):** IDLE_EVIDENCE
+
 ## The +7d audit (closes the soak)
 
 At soak start + 7 days, against `ops.log`, the ledger, and `data/`:

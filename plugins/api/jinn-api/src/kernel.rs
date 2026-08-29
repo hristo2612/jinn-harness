@@ -197,9 +197,10 @@ mod tests {
         .expect("decodes");
         assert_eq!(page.events[0].kind, "ArtifactLoaded");
         assert_eq!(page.next_from, 2);
-        let readiness: Readiness =
-            serde_json::from_value(serde_json::json!({ "boot-reconciled": true, "watcher-armed": true }))
-                .expect("decodes");
+        let readiness: Readiness = serde_json::from_value(
+            serde_json::json!({ "boot-reconciled": true, "watcher-armed": true }),
+        )
+        .expect("decodes");
         assert!(readiness.boot_reconciled && readiness.watcher_armed);
     }
 }

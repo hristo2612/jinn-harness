@@ -374,7 +374,10 @@ impl Daemon {
         self.ledger_rows()
             .iter()
             .filter(|row| row.fiber == Some(fiber))
-            .filter(|row| row.kind.contains(r#""to":"Active","cause":"ConfigChanged""#))
+            .filter(|row| {
+                row.kind
+                    .contains(r#""to":"Active","cause":"ConfigChanged""#)
+            })
             .count()
     }
 

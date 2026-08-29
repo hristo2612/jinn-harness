@@ -27,6 +27,7 @@ dependencies = [
  "cron-kit",
  "jinn-api",
  "jinn-cron",
+ "jinn-settings",
  "serde_json",
 ]
 
@@ -68,6 +69,7 @@ dependencies = [
  "harness-pin",
  "jinn-api",
  "jinn-cron",
+ "jinn-settings",
  "rusqlite",
  "serde_json",
 ]
@@ -86,6 +88,7 @@ name = "cron-kit"
 version = "0.1.0"
 dependencies = [
  "jinn-cron",
+ "jinn-settings",
  "serde_json",
  "sha2",
  "wit-component",
@@ -261,6 +264,15 @@ dependencies = [
 
 [[package]]
 name = "jinn-cron"
+version = "0.1.0"
+dependencies = [
+ "jinn-settings",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jinn-settings"
 version = "0.1.0"
 dependencies = [
  "serde",

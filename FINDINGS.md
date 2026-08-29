@@ -831,6 +831,130 @@ of entry 24 for every viewer.
 `the_operator_api_serves_a_profile_beside_the_data_root_finding_25`
 pins the typed answer.
 
+## 26. `patch-entry` awaits the patched fiber's restart — an owner that resolves its settings in `activate` cannot be patched by its settings provider
+
+Hit building the settings seam on `57360cc`. The kernel's `jinn:profile`
+`patch-entry` answers only after the loader has restarted the patched
+fiber (`profile_cap.rs`: `loader.update_entry(..).await`, then
+`ProfilePatched`). The kernel guards the direct case (an entry patching
+itself is refused: "would await its own restart from inside its own host
+call"), but the two-hop case is the seam's normal shape: the settings
+provider, inside its `patch` handler, patches the OWNER entry; the owner
+restarts; if the owner's `activate` calls `jinn:settings` (`declare`,
+`get`) that call lands on a provider instance that is mid-`patch`,
+waiting for the restart that is waiting for the call — the
+nested-dispatch class of entry 4, held until the guest deadline, and the
+owner's activation fails. There is no readiness or injection surface a
+guest can declare to order activation (entry 7), and no deferred
+amendment shape (the paper's Algorithm 5 stages the desired state and
+answers at once — recorded as a post-M1 candidate in the kernel's
+decision log 2026-08-25 ruling 1).
+
+**Harness-side handling shipped:** the owner never calls the provider
+from `activate`. `cron-scheduler` plans its activation on its entry
+layer alone, resolves the settings from a one-shot `alarm-at(now)` one
+clock floor later and re-declares on every wake (the `declare` answer
+IS the job table; a provider restart or swap heals within one wake), and
+absorbs `jinn:settings/changed` from the payload without calling back.
+The provider patches the overlay STORE entry synchronously (its fiber
+calls nothing in `activate`) and the owner entry synchronously too — the
+owner's activation makes no call. The bound this leaves is stated in
+entry 27.
+
+**Packet-card shape:** either (a) a non-blocking amendment answer
+(`patch-entry` returns `accepted` once the document is committed and the
+restart is scheduled — the Algorithm-5 shape the decision log already
+names), so a patched owner may resolve anything in `activate`; or (b) a
+guest-declarable injection in the profile entry (`requires:
+["jinn:settings"]`) so the kernel gates the owner's activation on the
+provider's availability (entry 7's card) — (a) removes this deadlock
+class, (b) removes the boot-ordering retry. Both keep R1.
+
+*Evidence grade:* source-confirmed (`profile_cap.rs`, the self-patch
+refusal names the class); the harness shape is pinned by the settings
+composition suite (`declare_resolve_and_patch_on_both_paths_with_the_c5_c6_transcript`:
+the restart path lands with the owner making no call from `activate`).
+
+## 27. C5/C6 decision evidence — what a settings patch costs on the restart path and on the hot path, measured on the real daemon
+
+Recorded for SOURCE-OF-TRUTH's open decisions C5 (hot-config acceptance)
+and C6 (per-entry config layering / intercept plumbing), from the
+settings composition suite
+(`declare_resolve_and_patch_on_both_paths_with_the_c5_c6_transcript`,
+run root `settings-paths-74740`, pin `57360cc`, suite kit: 2 s job
+period, 500 ms tick). Ledger rows are quoted by sequence from that run.
+
+**The kernel's answer to C5 today:** a `jinn:profile` `patch-entry`
+ALWAYS restarts the patched fiber (reconcile-by-id; `cause:
+ConfigChanged`). There is no kernel path by which a plugin absorbs a
+change to its own entry's config in place. Hot-config is therefore
+possible only by keeping the changed layer OUTSIDE the owner's entry —
+and the only home that keeps the profile the single source of truth is
+another entry. The harness built exactly that (the `jinn-settings-store`
+entry + the `jinn:settings-store` read; `plugins/settings/README.md`),
+which is a guest-side emulation of what C6's intercept chain would give
+the kernel natively: a per-entry config LAYER the loader resolves.
+
+**Restart path** (`tick-ms` patch → the owner entry; rows 188–208, 21
+rows, answered to the HTTP caller in 28 ms): the provider's
+`patch-entry` call (188) → the owner's kernel registrations released and
+its fiber suspended with its contribution retained (`listen`, `alarm`,
+`ServiceWithdrawn`, `FiberSuspended { retained: 5 }`, 189–192) → the
+successor incarnation activates (three `fs` reads of state/history, the
+provision, `now`, the activation plan's state write, the on-duty effect,
+the new `alarm every 250ms`, the listener and the one-shot settings
+alarm, 193–203) → four transitions to `Active` (204–207) →
+`ProfilePatched { entry: cron-scheduler, by: jinn-settings-profile }`
+(208). Duty gap: the whole suspend → Active lies inside the 28 ms
+answer; the schedule RESUMED from the persisted `last` (no
+`schedule-started`). State continuity: exact (the retained journal). One
+bound: the successor's activation plan runs on the ENTRY layer alone
+(the overlay arrives one clock floor later on its settings alarm), so a
+job the overlay had removed can fire once on restart and a job the
+overlay added waits one floor.
+
+**Hot path** (`jobs` patch → the store entry; rows 116–148, 33 rows,
+answered in 56 ms): the HTTP crossing (116) → the provider reads the
+overlay (117–118) and patches the STORE through `jinn:profile` (119–120)
+→ the store's trivial fiber cycles (`ServiceWithdrawn`, `FiberSuspended
+{ retained: 0 }`, re-provision, four transitions, 121–128) →
+`ProfilePatched { entry: jinn-settings-store }` (129) → the `changed`
+event delivered serially to the scheduler, which re-plans IN PLACE on
+the new table: `now`, state write, and — because the halved schedule was
+already due — one fire with the consumer's full report chain and the run
+record + history append (130–147) → `DispatchTrace { topic:
+jinn:settings/changed, listeners: 1, failures: 0 }` (148). The owner's
+fiber never transitioned; its alarm, listener, provision and state were
+untouched; the store's cycle is the price of keeping the profile the
+truth (8 rows). Without the coincident fire the hot path is 15 rows.
+
+**Reading for the decision.** Per patch the two paths cost the same
+order of ledger rows and the same order of latency (tens of
+milliseconds on this box) — the restart path is not expensive because
+suspend ≠ dispose made a restart a state-preserving event (entry 14's
+closure). What separates them is CONTINUITY, not cost: the restart path
+drops every kernel registration for the duration and re-plans from the
+entry layer (the bound above); the hot path keeps them all and applies
+exactly the resolved layer. The harness could build hot-config on top of
+the kernel with one extra entry and one extra contract, at the price of
+(a) two homes for the owner's effective config in the document (its
+entry and the store's overlay — a reader of the profile must resolve
+them; `jinn:introspect` shows neither), (b) a provider that must never
+be called from an owner's `activate` (entry 26), and (c) every owner
+re-declaring on every wake because the layer is guest knowledge.
+**Recommendation for C6:** a kernel-resolved per-entry layer (the
+intercept chain the paper already names) would make the store entry
+unnecessary, give the loader one resolved config to hand `activate`,
+and let `jinn:introspect` report effective config. **Recommendation for
+C5:** accept hot-config as a DECLARED per-key property of a namespace
+(the `hot-keys` shape here), never a default — a kernel registration
+(an alarm period, a listener topic, a bind port) cannot be changed in
+place and must restart.
+
+*Evidence grade:* measured — every row above is on the pinned run's
+ledger, the suite re-prints the transcript on every run; the soak
+carries the same seam on the 15-minute cadence (SOAK.md, sixth bump).
+
 ---
 
 ## What held (evidence the paradigm carries production shape)

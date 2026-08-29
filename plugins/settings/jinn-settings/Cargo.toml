@@ -1,0 +1,19 @@
+# The settings seam's service definition: the `jinn:settings` contract as
+# code — namespace declarations (schema, defaults, hot keys), the closed
+# schema language and its validator, typed secret references, layered
+# resolution (defaults < owner entry < overlay), the patch plan (which
+# layer a patch lands in, hence whether the owner restarts), the
+# `changed`/`refused` event payloads, and the answer envelope. Compiled
+# natively (unit tests, tools) and into the wasm guests; it therefore
+# depends on nothing but serde.
+[package]
+name = "jinn-settings"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

@@ -1,0 +1,23 @@
+# The settings seam's overlay store guest: the HOT layer's home in the
+# profile document. Its `config.data.overlays` is the per-namespace
+# overlay; it provides `jinn:settings-store` and answers it verbatim. A
+# hot settings patch is a `jinn:profile` patch of THIS entry (the loader
+# restarts this trivial fiber, never the owner), so the profile stays the
+# single source of truth. Compiles for wasm32-unknown-unknown ONLY and is
+# deliberately NOT a workspace member; `api-kit` builds and encodes it.
+[package]
+name = "jinn-settings-store"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-settings = { path = "../jinn-settings" }
+serde_json = "1.0"
+wit-bindgen = "0.43.0"
+
+[workspace]

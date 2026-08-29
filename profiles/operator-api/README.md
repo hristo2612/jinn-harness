@@ -1,8 +1,16 @@
 # The operator-API profile
 
-The api trio mounted beside the cron seam, five entries: `cron-scheduler`
-and `health-snapshot` exactly as `profiles/cron` mounts them (one home:
-`cron-kit`'s `cron_entries`), plus `jinn-api-http` (granted `jinn:net`
+The api trio and the settings pair mounted beside the cron seam, seven
+entries: `cron-scheduler` and `health-snapshot` exactly as `profiles/cron`
+mounts them (one home: `cron-kit`'s `cron_entries`; the scheduler holds
+`jinn:settings` and the `jinn:settings/changed` listen grant in both
+profiles — in the cron-only profile the resolve answers
+missing-dependency and the entry layer is the whole truth),
+`jinn-settings-profile` (granted `jinn:settings` to provide,
+`jinn:settings-store`, and `jinn:profile` scoped to exactly the entries
+it may patch: every namespace owner and the store) and
+`jinn-settings-store` (granted only what it provides; its
+`config.data.overlays` is the hot layer's home), plus `jinn-api-http` (granted `jinn:net`
 scoped to exactly its port, `jinn:clock`, and both api contracts),
 `jinn-status` (granted `jinn:api-status`, `jinn:fs` scoped to
 `profile.json`, and `jinn:cron` for its probe) and `jinn-profile-edit`
@@ -23,9 +31,13 @@ Boot it with the data root AT the kit root:
 jinnd --profile <root>/profile.json --ledger <root>/ledger.sqlite --artifacts <root>/artifacts --data <root>
 ```
 
-The profile document is edited THROUGH `jinn:fs` (the consumers hold a
-`path-prefix` scope of `profile.json`), and `jinn:fs` resolves every path
-under the daemon's data root — so the document must sit inside it. With
+The profile document is READ through `jinn:fs` (the consumers hold a
+`path-prefix` scope of `profile.json`; the edit itself goes through the
+kernel's `jinn:profile` since pin `57360cc` and needs no document read),
+and `jinn:fs` resolves every path under the daemon's data root — so the
+document must sit inside it for the authority fields and `get` to be
+answerable (FINDINGS.md #25; beside the data root the API still serves,
+typed). With
 `--data <root>` the cron seam's files land at `<root>/cron/` and
 `<root>/health/`, the kernel's inverse-retention store at
 `<root>.inverses/` (a sibling of the root, the kernel's `<data>.inverses`
@@ -33,10 +45,11 @@ rule), and the daemon watches `<root>` for the profile and
 `<root>/artifacts` for swaps — nothing else under the root is classified
 by the watcher.
 
-Two authority consequences of that layout are on the record: a `jinn:fs`
-grant cannot be attenuated to read-only, so `jinn-status` holds a
-write-capable scope on the document it only reads (FINDINGS.md #24); and
-the editor's write is a revertible effect of its entry (#21).
+One authority consequence of that layout is on the record: a `jinn:fs`
+grant cannot be attenuated to read-only, so both consumers hold a
+write-capable scope on the document they only read (FINDINGS.md #24, #25).
+The editor's write is no longer a fiber effect (#21 closed): disposing
+the editor leaves the document exactly as patched.
 
 The API serves the harness's own composition only — loopback, one port,
 no production routing (AGENTS.md cutover rule). The real-composition

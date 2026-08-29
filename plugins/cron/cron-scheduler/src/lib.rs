@@ -17,15 +17,32 @@
 //! config-edit restart SUSPENDS this fiber — the persisted state and
 //! history stay on disk for the entry, `undo` never runs on suspension —
 //! and only the entry's removal from the profile withdraws them.
+//!
+//! Settings (phase 2.2): the job table is CONSUMED through `jinn:settings`
+//! — this guest declares the `cron` namespace (schema, defaults, hot keys)
+//! and takes the RESOLVED settings (defaults < its entry config < the
+//! overlay) from the provider's answer on every alarm wake, and absorbs a
+//! `jinn:settings/changed` event in place. The entry config it activated
+//! on is the entry LAYER of that resolution, never bypassed. It never
+//! calls the provider from `activate`: the provider patches this entry
+//! synchronously (the restart path), and an activation that called back
+//! would be the nested-dispatch deadlock (FINDINGS.md #4, #26) — so the
+//! first resolution happens on a one-shot alarm right after activation,
+//! and the activation plan runs on the entry layer alone. With no
+//! provider reachable (the cron-only profile, or boot ordering —
+//! FINDINGS.md #7) the entry layer is the whole truth and every wake
+//! retries the declaration.
 
 use std::sync::Mutex;
 
 use jinn_cron::{
     bounded_history, history_line, parse_config, parse_history_lines, parse_legacy_history,
-    plan_tick, run_record_path, FirePayload, JobSpec, ParsedConfig, RunOutcome, RunRecord,
-    SchedulerState, TickPayload, CRON_CONTRACT, HISTORY_CAP, HISTORY_PATH, LEGACY_HISTORY_PATH,
-    QUARANTINE_DIR, STATE_PATH, WAKE_TOPIC,
+    plan_tick, run_record_path, settings_declaration, FirePayload, JobSpec, ParsedConfig,
+    RunOutcome, RunRecord, SchedulerState, TickPayload, CRON_CONTRACT, HISTORY_CAP, HISTORY_PATH,
+    LEGACY_HISTORY_PATH, QUARANTINE_DIR, SETTINGS_CHANGED_TOPIC, SETTINGS_NAMESPACE, STATE_PATH,
+    WAKE_TOPIC,
 };
+use jinn_settings::{Answer as SettingsAnswer, Changed, DeclareRequest, Outcome, Resolved};
 
 wit_bindgen::generate!({
     path: "../../../kernel-pin/wit",
@@ -40,11 +57,22 @@ const EFFECT_TOKEN: u64 = 1;
 /// The token the alarm is requested under; a wake carrying any other
 /// token is not ours.
 const ALARM_TOKEN: u64 = 2;
+/// The one-shot alarm right after activation: the first settings
+/// resolution (never from `activate` itself — see the crate doc).
+const SETTINGS_TOKEN: u64 = 3;
+/// The `jinn:settings/changed` listener.
+const CHANGED_TOKEN: u64 = 4;
 /// No idempotency claim: each state write and history append is a new
 /// effect by construction (a tick never repeats within a fiber).
 const NO_KEY: &str = "";
 
 static JOBS: Mutex<Vec<JobSpec>> = Mutex::new(Vec::new());
+/// This entry's id (the kernel names it in the declaration), and the raw
+/// entry config it activated on — the entry LAYER it declares.
+static ENTRY: Mutex<String> = Mutex::new(String::new());
+static ENTRY_LAYER: Mutex<Option<serde_json::Value>> = Mutex::new(None);
+/// The settings revision last applied (`None`: entry layer only).
+static SETTINGS_REVISION: Mutex<Option<u64>> = Mutex::new(None);
 static STATE: Mutex<Option<SchedulerState>> = Mutex::new(None);
 /// The bounded window the `history` operation serves; the log on disk is
 /// the append-only lane it is seeded from.
@@ -206,6 +234,88 @@ fn run_tick(tick: &TickPayload) -> Result<u64, GuestFault> {
     Ok(fired)
 }
 
+/// Lays resolved settings over the job table: the resolved `jobs` replace
+/// the table (config faults become run records, never silent); answers
+/// whether the table changed. `tick-ms` is a restart-path key and is not
+/// touched here (the alarm is the fiber's).
+fn apply_settings(settings: &serde_json::Value, revision: u64) -> Result<bool, GuestFault> {
+    let parsed = parse_config(&serde_json::to_vec(settings).expect("settings encode"))
+        .map_err(|detail| GuestFault::Failed(format!("resolved settings: {detail}")))?;
+    let changed = {
+        let mut jobs = JOBS.lock().unwrap();
+        let changed = *jobs != parsed.jobs;
+        *jobs = parsed.jobs;
+        changed
+    };
+    *SETTINGS_REVISION.lock().unwrap() = Some(revision);
+    if !parsed.faults.is_empty() {
+        persist_history(
+            parsed
+                .faults
+                .into_iter()
+                .map(|detail| RunRecord {
+                    job: String::new(),
+                    scheduled_ms: 0,
+                    now_ms: 0,
+                    tick_seq: 0,
+                    outcome: RunOutcome::ConfigFault {
+                        detail,
+                        extra: jinn_cron::Extensions::new(),
+                    },
+                    extra: jinn_cron::Extensions::new(),
+                })
+                .collect(),
+        )?;
+    }
+    Ok(changed)
+}
+
+/// One declaration on the provider (idempotent upsert; the answer is the
+/// resolved settings), applied. `Ok(false)` when no provider answers —
+/// the entry layer stays the truth and the next wake retries.
+fn sync_settings() -> Result<bool, GuestFault> {
+    let Ok(handle) = services::resolve(jinn_settings::SETTINGS_CONTRACT) else {
+        return Ok(false);
+    };
+    let request = DeclareRequest {
+        declaration: settings_declaration(&ENTRY.lock().unwrap()),
+        current: ENTRY_LAYER.lock().unwrap().clone().unwrap_or_default(),
+    };
+    let Ok(bytes) = services::call(
+        handle,
+        jinn_settings::OP_DECLARE,
+        &serde_json::to_vec(&request).expect("declare encodes"),
+    ) else {
+        return Ok(false);
+    };
+    match SettingsAnswer::decode(&bytes).outcome {
+        Outcome::Ok(value) => {
+            let resolved: Resolved = serde_json::from_value(value)
+                .map_err(|bad| GuestFault::Failed(format!("declare answer: {bad}")))?;
+            apply_settings(&resolved.settings, resolved.revision)
+        }
+        Outcome::Error(_) => Ok(false),
+    }
+}
+
+/// A settings sync followed by a plan when the table changed (a job that
+/// appeared starts its schedule now, one that left never fires again).
+fn sync_and_plan(now_ms: u64) -> Result<(), GuestFault> {
+    if sync_settings()? {
+        let seq = {
+            let mut wakes = WAKES.lock().unwrap();
+            *wakes += 1;
+            *wakes
+        };
+        run_tick(&TickPayload {
+            seq,
+            now_ms,
+            extra: jinn_cron::Extensions::new(),
+        })?;
+    }
+    Ok(())
+}
+
 struct Scheduler;
 
 impl Guest for Scheduler {
@@ -217,6 +327,15 @@ impl Guest for Scheduler {
         } = parse_config(&config).map_err(GuestFault::Failed)?;
         *JOBS.lock().unwrap() = jobs;
         *WAKES.lock().unwrap() = 0;
+        *SETTINGS_REVISION.lock().unwrap() = None;
+        *ENTRY_LAYER.lock().unwrap() = serde_json::from_slice(&config).ok();
+        // The entry id the settings seam names (`entry-id` in config,
+        // written by the kit); absent, the namespace's entry is unnamed
+        // and a restart-path patch has no target.
+        *ENTRY.lock().unwrap() = serde_json::from_slice::<serde_json::Value>(&config)
+            .ok()
+            .and_then(|value| value[jinn_cron::ENTRY_ID_KEY].as_str().map(str::to_owned))
+            .unwrap_or_default();
         // Config faults and persistence faults are run records (contract:
         // never silent).
         let mut fault_records: Vec<RunRecord> = faults
@@ -276,6 +395,13 @@ impl Guest for Scheduler {
             extra: jinn_cron::Extensions::new(),
         })?;
         clock::alarm_every(tick_ms, ALARM_TOKEN).map_err(|error| fault("alarm", error))?;
+        // The settings seam, one wake later (never from here): a listener
+        // for applied patches and a one-shot alarm for the first
+        // resolution. Both are kernel registrations released with the
+        // incarnation. A refused listen (no grant — the cron-only
+        // profile) is the honest "no settings seam here".
+        let _ = events::listen(SETTINGS_CHANGED_TOPIC, CHANGED_TOKEN);
+        clock::alarm_at(now_ms, SETTINGS_TOKEN).map_err(|error| fault("settings alarm", error))?;
         Ok(())
     }
 
@@ -288,16 +414,46 @@ impl Guest for Scheduler {
     }
 
     fn handle_event(token: u64, topic: String, payload: Vec<u8>) -> Result<Vec<u8>, GuestFault> {
-        // Only the kernel's typed wake of OUR alarm is time; anything else
-        // on this entry point is a contract violation, refused loudly.
+        // An applied settings patch: absorb the resolved settings in
+        // place — never calling back into the provider (it is mid-call).
+        if topic == SETTINGS_CHANGED_TOPIC && token == CHANGED_TOKEN {
+            let changed: Changed = serde_json::from_slice(&payload)
+                .map_err(|bad| GuestFault::Failed(format!("malformed changed event: {bad}")))?;
+            if changed.namespace == SETTINGS_NAMESPACE && apply_settings(&changed.settings, changed.revision)? {
+                let now_ms = clock::now().map_err(|error| fault("clock now", error))?;
+                let seq = {
+                    let mut wakes = WAKES.lock().unwrap();
+                    *wakes += 1;
+                    *wakes
+                };
+                run_tick(&TickPayload {
+                    seq,
+                    now_ms,
+                    extra: jinn_cron::Extensions::new(),
+                })?;
+            }
+            return Ok(b"applied".to_vec());
+        }
+        // Only the kernel's typed wake of OUR alarms is time; anything
+        // else on this entry point is a contract violation, refused loudly.
         let instant: Option<[u8; 8]> = payload.as_slice().try_into().ok();
-        let (Some(instant), true, true) = (instant, topic == WAKE_TOPIC, token == ALARM_TOKEN)
-        else {
+        let (Some(instant), true) = (instant, topic == WAKE_TOPIC) else {
             return Err(GuestFault::Failed(format!(
                 "unexpected event {topic:?} (token {token}, {} bytes)",
                 payload.len()
             )));
         };
+        let now_ms = u64::from_le_bytes(instant);
+        if token == SETTINGS_TOKEN {
+            sync_and_plan(now_ms)?;
+            return Ok(Vec::new());
+        }
+        if token != ALARM_TOKEN {
+            return Err(GuestFault::Failed(format!("a wake for an unknown alarm token {token}")));
+        }
+        // Every wake re-declares: the provider's answer IS the job table
+        // (a provider restart or swap heals here), then the firing law.
+        sync_settings()?;
         let seq = {
             let mut wakes = WAKES.lock().unwrap();
             *wakes += 1;
@@ -305,7 +461,7 @@ impl Guest for Scheduler {
         };
         let fired = run_tick(&TickPayload {
             seq,
-            now_ms: u64::from_le_bytes(instant),
+            now_ms,
             extra: jinn_cron::Extensions::new(),
         })?;
         Ok(serde_json::to_vec(&serde_json::json!({ "fires": fired })).expect("summary encodes"))
@@ -332,7 +488,11 @@ impl Guest for Scheduler {
                         })
                     })
                     .collect();
-                Ok(serde_json::to_vec(&serde_json::json!({ "jobs": jobs })).expect("jobs encode"))
+                Ok(serde_json::to_vec(&serde_json::json!({
+                    "jobs": jobs,
+                    "settings-revision": *SETTINGS_REVISION.lock().unwrap(),
+                }))
+                .expect("jobs encode"))
             }
             jinn_cron::OP_HISTORY => {
                 Ok(serde_json::to_vec(&*HISTORY.lock().unwrap()).expect("history encodes"))

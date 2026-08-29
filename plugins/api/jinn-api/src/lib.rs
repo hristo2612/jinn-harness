@@ -838,11 +838,17 @@ mod tests {
         ];
         merge_introspection(&mut entries, &kernel);
         assert_eq!(entries[0].fiber, Some(4));
-        assert_eq!(entries[0].provisions.as_deref(), Some(&["jinn:cron".to_owned()][..]));
+        assert_eq!(
+            entries[0].provisions.as_deref(),
+            Some(&["jinn:cron".to_owned()][..])
+        );
         assert_eq!(entries[0].hash, "h", "authority fields kept");
         assert_eq!(entries[1].fiber, None, "no kernel view for b");
         assert_eq!(entries[2].id, "only-kernel");
-        assert!(entries[2].package.is_empty(), "no authority for a kernel-only entry");
+        assert!(
+            entries[2].package.is_empty(),
+            "no authority for a kernel-only entry"
+        );
     }
 
     #[test]
@@ -967,7 +973,10 @@ mod tests {
         assert_eq!(id.as_deref(), Some("cron-scheduler"));
         assert!(patch.body);
         let (settings, ns) = route("PATCH", "/v1/settings/cron").expect("settings patch");
-        assert_eq!((settings.contract, settings.param), (SETTINGS_CONTRACT, "namespace"));
+        assert_eq!(
+            (settings.contract, settings.param),
+            (SETTINGS_CONTRACT, "namespace")
+        );
         assert_eq!(ns.as_deref(), Some("cron"));
         let (list, none) = route("GET", "/v1/settings").expect("namespaces");
         assert_eq!(list.operation, OP_SETTINGS_NAMESPACES);

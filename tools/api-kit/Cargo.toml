@@ -20,4 +20,5 @@ publish = false
 cron-kit = { path = "../cron-kit" }
 jinn-api = { path = "../../plugins/api/jinn-api" }
 jinn-cron = { path = "../../plugins/cron/jinn-cron" }
+jinn-settings = { path = "../../plugins/settings/jinn-settings" }
 serde_json = "1.0"

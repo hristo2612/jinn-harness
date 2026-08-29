@@ -19,6 +19,7 @@ publish = false
 harness-pin = { path = "../../tools/harness-pin" }
 jinn-api = { path = "../../plugins/api/jinn-api" }
 jinn-cron = { path = "../../plugins/cron/jinn-cron" }
+jinn-settings = { path = "../../plugins/settings/jinn-settings" }
 # The ledger is the evidence surface (Law 2): tests read the daemon's
 # append-only SQLite directly. Bundled so CI needs no system sqlite.
 rusqlite = { version = "0.32", features = ["bundled"] }

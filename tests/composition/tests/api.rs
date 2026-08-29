@@ -24,12 +24,16 @@ use composition::kit::{
 const PROVIDER: &str = "jinn-api-http";
 const STATUS: &str = "jinn-status";
 const EDITOR: &str = "jinn-profile-edit";
-const ALL: [&str; 5] = [
+/// Every entry of the operator profile: the cron seam, the api trio and
+/// the settings pair (`profiles/operator-api/README.md`).
+const ALL: [&str; 7] = [
     "cron-scheduler",
     "health-snapshot",
     PROVIDER,
     STATUS,
     EDITOR,
+    "jinn-settings-profile",
+    "jinn-settings-store",
 ];
 
 /// The pinned daemon binary, or a LOUD skip.
@@ -135,7 +139,15 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
         serde_json::json!(["jinn:cron"]),
         "{scheduler}"
     );
-    assert_eq!(scheduler["registrations"]["alarms"], 1, "{scheduler}");
+    // The periodic alarm, plus the one-shot settings alarm while the
+    // kernel still counts it (a fired `alarm-at` stays a registration of
+    // the seat until the fiber releases it).
+    assert!(
+        scheduler["registrations"]["alarms"]
+            .as_u64()
+            .is_some_and(|alarms| (1..=2).contains(&alarms)),
+        "{scheduler}"
+    );
     let http = entries
         .iter()
         .find(|entry| entry["id"] == PROVIDER)
@@ -146,7 +158,9 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
         "the HTTP provider holds NO alarm (FINDINGS.md #23 closed): {http}"
     );
     assert!(
-        http["registrations"]["sockets"].as_u64().is_some_and(|n| n >= 1),
+        http["registrations"]["sockets"]
+            .as_u64()
+            .is_some_and(|n| n >= 1),
         "the listener is a kernel registration: {http}"
     );
     assert!(
@@ -174,7 +188,9 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
         "{report}"
     );
     assert!(
-        report["last-ledger-seq"].as_u64().is_some_and(|seq| seq > 0),
+        report["last-ledger-seq"]
+            .as_u64()
+            .is_some_and(|seq| seq > 0),
         "{report}"
     );
     assert_eq!(report["document"]["readable"], true, "{report}");
@@ -182,7 +198,7 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
     // `health`: every entry Active by the kernel's word, the probe live.
     let health = get(port, "/v1/health");
     assert_eq!(health.body["ok"], true, "{}", health.raw);
-    assert_eq!(health.body["entries"], 5, "{}", health.raw);
+    assert_eq!(health.body["entries"], ALL.len(), "{}", health.raw);
     assert_eq!(health.body["probes-live"], 1, "{}", health.raw);
 
     // `ledger-tail`: a REAL page through the granted reader — events
@@ -198,7 +214,10 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
     assert_eq!(events[0]["id"], 8, "{}", tail.raw);
     assert!(events[0]["kind"].is_string(), "{}", tail.raw);
     assert!(
-        matches!(events[0]["sensitivity"].as_str(), Some("public" | "personal")),
+        matches!(
+            events[0]["sensitivity"].as_str(),
+            Some("public" | "personal")
+        ),
         "{}",
         tail.raw
     );
@@ -213,7 +232,12 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
     );
     let last = report["last-ledger-seq"].as_u64().expect("seq");
     let beyond = get(port, &format!("/v1/ledger/tail?after={}", last + 1000));
-    assert_eq!(beyond.body["events"], serde_json::json!([]), "{}", beyond.raw);
+    assert_eq!(
+        beyond.body["events"],
+        serde_json::json!([]),
+        "{}",
+        beyond.raw
+    );
     assert!(beyond.body["next-after"].is_null(), "{}", beyond.raw);
 
     // The transport's own refusals are typed too.
@@ -286,8 +310,8 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
         );
     }
     assert!(
-        rows.iter().any(|row| row.entry.as_deref() == Some(STATUS)
-            && row.kind.contains("LedgerConsumed")),
+        rows.iter()
+            .any(|row| row.entry.as_deref() == Some(STATUS) && row.kind.contains("LedgerConsumed")),
         "the ledger read is receipted under the reader: {joined}"
     );
     let listener = rows
@@ -318,7 +342,7 @@ fn patching_one_entry_through_the_api_restarts_exactly_that_fiber() {
     };
     let before = daemon.ledger_rows();
     let fibers_before = active_fibers(&before);
-    assert_eq!(fibers_before.len(), 5, "five fibers active at boot");
+    assert_eq!(fibers_before.len(), ALL.len(), "every entry active at boot");
     let editor = provider_fiber(&before, "jinn:api-profile");
     let last_seq = before.last().map_or(0, |row| row.seq);
 
@@ -353,7 +377,11 @@ fn patching_one_entry_through_the_api_restarts_exactly_that_fiber() {
         daemon.config_restarts(scheduler) == 1
     });
     for other in fibers_before.iter().filter(|fiber| **fiber != scheduler) {
-        assert_eq!(daemon.config_restarts(*other), 0, "fiber {other} kept its incarnation");
+        assert_eq!(
+            daemon.config_restarts(*other),
+            0,
+            "fiber {other} kept its incarnation"
+        );
     }
     // The document of record carries the patch (the API never bypassed it).
     let document: serde_json::Value =
@@ -383,13 +411,16 @@ fn patching_one_entry_through_the_api_restarts_exactly_that_fiber() {
     // `jinn:profile` call, recorded as `ProfilePatched` under the editor
     // with NO fs effect (operator intent, not a fiber's contribution —
     // FINDINGS.md #21 closed), and after it exactly ONE fiber cycled —
-    // the scheduler's successor incarnation — while the four other
-    // fibers appear in no transition since.
+    // the scheduler's successor incarnation — while every other fiber
+    // appears in no transition since.
     let rows = daemon.ledger_rows();
     let after: Vec<&LedgerRow> = rows.iter().filter(|row| row.seq > last_seq).collect();
     let patched = after
         .iter()
-        .find(|row| row.kind.contains(r#"ProfilePatched":{"entry":"cron-scheduler","by":"jinn-profile-edit""#))
+        .find(|row| {
+            row.kind
+                .contains(r#"ProfilePatched":{"entry":"cron-scheduler","by":"jinn-profile-edit""#)
+        })
         .expect("the patch is operator intent on the record");
     assert_eq!(
         (patched.entry.as_deref(), patched.fiber),
@@ -398,13 +429,14 @@ fn patching_one_entry_through_the_api_restarts_exactly_that_fiber() {
     );
     assert!(
         after.iter().any(|row| row.fiber == Some(editor)
-            && row.kind == r#"{"ContractCall":{"contract":"jinn:profile","operation":"patch-entry"}}"#),
+            && row.kind
+                == r#"{"ContractCall":{"contract":"jinn:profile","operation":"patch-entry"}}"#),
         "the kernel patch is a granted contract call"
     );
     assert!(
-        !after
-            .iter()
-            .any(|row| row.kind.contains(r#"EffectRegistered":{"label":"fs write profile"#)),
+        !after.iter().any(|row| row
+            .kind
+            .contains(r#"EffectRegistered":{"label":"fs write profile"#)),
         "no fs effect carries the edit: {after:?}"
     );
     assert!(
@@ -418,7 +450,7 @@ fn patching_one_entry_through_the_api_restarts_exactly_that_fiber() {
     // the only fiber id in any transition after the patch is the
     // scheduler's — suspended (its persisted contribution retained) and
     // re-activated with `cause: ConfigChanged` — and no new id appears.
-    // The four other fibers have no transition at all: the patch went
+    // The other fibers have no transition at all: the patch went
     // through the profile, not around the trio.
     let transitioned: BTreeSet<u64> = after
         .iter()
@@ -518,8 +550,9 @@ fn a_bind_outside_the_grant_and_a_non_loopback_bind_are_refused_on_the_record() 
         "attributed to the provider: {refusals:?}"
     );
     assert!(
-        refusals.iter().all(|row| row.entry.as_deref() == Some(PROVIDER)
-            && row.kind.contains(r#""reason":"#)),
+        refusals
+            .iter()
+            .all(|row| row.entry.as_deref() == Some(PROVIDER) && row.kind.contains(r#""reason":"#)),
         "each refusal names its entry and typed reason: {refusals:?}"
     );
     let failed: Vec<&LedgerRow> = rows
@@ -619,7 +652,7 @@ fn suspend_releases_the_listener_and_a_restart_relistens() {
     let joined = kinds.join("\n");
     assert_eq!(
         joined.matches("FiberSuspended").count(),
-        5,
+        ALL.len(),
         "one suspension per fiber: {joined}"
     );
     assert!(
@@ -694,7 +727,7 @@ fn disposing_the_editor_leaves_the_operators_edit_in_place_finding_21_closed() {
             .expect("parses");
     assert_eq!(
         document["entries"].as_array().map_or(0, Vec::len),
-        4,
+        ALL.len() - 1,
         "the editor stays gone: {document}"
     );
     let tick_ms = entry_config(&mut document, "cron-scheduler")["data"]["tick-ms"].clone();
@@ -720,7 +753,7 @@ fn disposing_the_editor_leaves_the_operators_edit_in_place_finding_21_closed() {
         "the editor was not resurrected"
     );
     let health = get(port, "/v1/health");
-    assert_eq!(health.body["entries"], 4, "{}", health.raw);
+    assert_eq!(health.body["entries"], ALL.len() - 1, "{}", health.raw);
     daemon.interrupt();
 }
 
@@ -744,7 +777,7 @@ fn the_operator_api_serves_a_profile_beside_the_data_root_finding_25() {
     assert_eq!(health.status, 200, "{}", health.raw);
     assert_eq!(health.body["ok"], true, "{}", health.raw);
     assert_eq!(health.body["profile-readable"], false, "{}", health.raw);
-    assert_eq!(health.body["entries"], 5, "{}", health.raw);
+    assert_eq!(health.body["entries"], ALL.len(), "{}", health.raw);
     let status = get(port, "/v1/status");
     let report = &status.body;
     assert_eq!(report["document"]["readable"], false, "{report}");
@@ -754,13 +787,16 @@ fn the_operator_api_serves_a_profile_beside_the_data_root_finding_25() {
         "{report}"
     );
     let entries = report["entries"].as_array().expect("entries");
-    assert_eq!(entries.len(), 5, "{report}");
+    assert_eq!(entries.len(), ALL.len(), "{report}");
     let scheduler = entries
         .iter()
         .find(|entry| entry["id"] == "cron-scheduler")
         .expect("listed by the kernel");
     assert_eq!(scheduler["state"], "active", "{scheduler}");
-    assert_eq!(scheduler["hash"], "", "no authority field is guessed: {scheduler}");
+    assert_eq!(
+        scheduler["hash"], "",
+        "no authority field is guessed: {scheduler}"
+    );
     assert_eq!(report["readiness"]["boot-reconciled"], true, "{report}");
     let document = get(port, "/v1/profile");
     assert_eq!(document.status, 503, "{}", document.raw);

@@ -36,6 +36,15 @@ provider exposes ONE surface:
 | `GET` | `/v1/ledger/tail?after=N&limit=M` | `jinn:api-status` / `ledger-tail` | `{after, limit}` |
 | `GET` | `/v1/profile` | `jinn:api-profile` / `get` | — |
 | `PATCH` | `/v1/profile/entries/{id}` | `jinn:api-profile` / `patch-entry` | the JSON body + `id` from the path |
+| `GET` | `/v1/settings` | `jinn:settings` / `namespaces` | — |
+| `GET` | `/v1/settings/{ns}` | `jinn:settings` / `get` | `{namespace}` from the path |
+| `PATCH` | `/v1/settings/{ns}` | `jinn:settings` / `patch` | the JSON body (`{patch}`) + `namespace` from the path |
+
+The settings rows (0.2.0) route to the settings seam's provider directly:
+its envelope is this seam's envelope (`plugins/settings/jinn-settings/README.md`),
+so the transport maps its typed errors to the same status codes. Each
+route names the request field its path parameter lands in (`param`) and
+whether the payload is the body or the query (`body`).
 
 HTTP status mapping of the typed error codes is the provider's
 (`jinn-api-http-wire`): `not-found` 404, `invalid` 422, `unavailable`
