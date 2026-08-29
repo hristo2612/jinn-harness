@@ -43,6 +43,8 @@ use serde::{Deserialize, Serialize};
 pub use jinn_settings::{is_secret_ref, SecretRef, SECRET_REF_KEY};
 
 #[cfg(test)]
+mod additivity_tests;
+#[cfg(test)]
 mod tests;
 
 /// Additive JSON: fields a newer peer sends survive a round trip.
