@@ -11,22 +11,34 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod engines;
 pub mod kernel;
 
+pub use engines::{
+    decode_engine_answer, engine_api_error, engine_list, engine_routable, engine_route,
+    is_engines_path, no_such_engine, run_id_payload, run_payload, EngineEntry, EngineList,
+    EngineRoute, ENGINES_PATH, ENGINE_METHODS,
+};
+pub use jinn_engine::{engine_contract, engines_in, EngineSlot};
+
 pub use kernel::{
-    decode_last_seq, decode_profile_answer, ledger_read_range_payload, profile_patch_payload,
-    refusal_is_retryable, IntrospectEntry, LedgerEvent, LedgerPage, Readiness, Registrations,
-    INTROSPECT_CONTRACT, KERNEL_PROFILE_CONTRACT, KERNEL_PROFILE_SCOPE_ALL, LEDGER_CONTRACT,
-    OP_INTROSPECT_ENTRIES, OP_INTROSPECT_READINESS, OP_KERNEL_PATCH_ENTRY, OP_LEDGER_LAST_SEQ,
+    decode_last_seq, decode_profile_answer, decode_profile_document, decode_profile_entry,
+    ledger_read_range_payload, profile_entry_payload, profile_patch_payload, refusal_is_retryable,
+    IntrospectEntry, LedgerEvent, LedgerPage, ProfileEntryRecord, Readiness, Registrations,
+    INTROSPECT_CONTRACT, KERNEL_PROFILE_CONTRACT, KERNEL_PROFILE_EDIT_OPS, KERNEL_PROFILE_READ_OPS,
+    KERNEL_PROFILE_SCOPE_ALL, LEDGER_CONTRACT, OP_INTROSPECT_ENTRIES, OP_INTROSPECT_READINESS,
+    OP_KERNEL_DOCUMENT, OP_KERNEL_ENTRY, OP_KERNEL_PATCH_ENTRY, OP_LEDGER_LAST_SEQ,
     OP_LEDGER_READ_RANGE,
 };
 
 /// The schema version every answer carries (`api-version`). Within 0.x
-/// every change is strictly additive (kernel R12 discipline). 0.2.0 (pin
-/// `57360cc`): introspection fields on every entry, `readiness`,
-/// `last-ledger-seq` and `document` on the status report, real ledger
-/// pages, the patch applied by the kernel's own `jinn:profile`.
-pub const API_VERSION: &str = "0.2.0";
+/// every change is strictly additive (kernel R12 discipline). 0.3.0: the
+/// engines surface — four routes onto `jinn:engine.<id>` ([`engines`])
+/// and `engines` on the status report. 0.2.0 (pin `57360cc`):
+/// introspection fields on every entry, `readiness`, `last-ledger-seq`
+/// and `document` on the status report, real ledger pages, the patch
+/// applied by the kernel's own `jinn:profile`.
+pub const API_VERSION: &str = "0.3.0";
 
 /// The status/health/ledger contract, provided by `jinn-status`.
 pub const STATUS_CONTRACT: &str = "jinn:api-status";
@@ -54,11 +66,13 @@ pub const LEDGER_TAIL_MAX_LIMIT: u32 = 500;
 pub const FINDING_NO_INTROSPECTION: u32 = 19;
 /// See [`FINDING_NO_INTROSPECTION`].
 pub const FINDING_NO_LEDGER_READER: u32 = 20;
-/// FINDINGS.md #25: the document of record is reachable by a guest only
-/// through a `jinn:fs` scope, i.e. only when it sits under the data root;
-/// `jinn:introspect` carries no authority fields (package, hash, grants)
-/// and `jinn:profile` has no read. Where the document is out of reach the
-/// status report says so by this number, never guesses.
+/// FINDINGS.md #25 — CLOSED at pin `3fd7b05` (`jinn:profile` 0.2.0 gained
+/// `entry`/`document`, so the document of record no longer has to sit
+/// under the data root to be read). The number stays as the vocabulary of
+/// the one case left: a viewer mounted WITHOUT the `jinn:profile` read
+/// grant (unresolvable, or a scope/`ops` refusal) says so by this number
+/// and lists the kernel's own view with the authority fields empty — a
+/// consumer never guesses, and never faults to say no.
 pub const FINDING_NO_DOCUMENT_READ: u32 = 25;
 
 /// The status fields the kernel cannot honestly answer at this pin —
@@ -416,6 +430,13 @@ pub struct StatusReport {
     pub last_ledger_seq: Option<u64>,
     #[serde(default)]
     pub document: DocumentStatus,
+    /// Every engine the composition holds, as the KERNEL reports each
+    /// entry's `provisions` — an engine is here because an entry provides
+    /// its contract, and gone when the entry is. Never a table this seam
+    /// keeps. The contract itself:
+    /// `plugins/engines/jinn-engine/README.md`.
+    #[serde(default)]
+    pub engines: Vec<EngineSlot>,
     #[serde(flatten)]
     pub extra: Extensions,
 }
@@ -852,6 +873,69 @@ mod tests {
     }
 
     #[test]
+    fn the_status_engines_are_the_kernels_own_provisions() {
+        // The exact adapter `jinn-status` applies to the introspection
+        // answer: an engine is here because an entry PROVIDES its
+        // contract — no table, no configuration.
+        let kernel = [
+            IntrospectEntry {
+                id: "jinn-engine-default".into(),
+                provisions: vec!["jinn:engine.default".into()],
+                ..IntrospectEntry::default()
+            },
+            IntrospectEntry {
+                id: "cron-scheduler".into(),
+                provisions: vec!["jinn:cron".into()],
+                ..IntrospectEntry::default()
+            },
+            IntrospectEntry {
+                id: "jinn-engine-claude".into(),
+                provisions: vec!["jinn:engine.claude".into()],
+                ..IntrospectEntry::default()
+            },
+        ];
+
+        let engines = engines_in(kernel.iter().map(|entry| {
+            (
+                entry.id.as_str(),
+                entry.provisions.iter().map(String::as_str),
+            )
+        }));
+        assert_eq!(
+            engines,
+            vec![
+                EngineSlot {
+                    engine: "claude".into(),
+                    contract: "jinn:engine.claude".into(),
+                    entry: "jinn-engine-claude".into(),
+                    ..EngineSlot::default()
+                },
+                EngineSlot {
+                    engine: "default".into(),
+                    contract: "jinn:engine.default".into(),
+                    entry: "jinn-engine-default".into(),
+                    ..EngineSlot::default()
+                },
+            ],
+            "sorted by engine id; a non-engine provision is not an engine"
+        );
+        let report = StatusReport {
+            engines: engines.clone(),
+            ..StatusReport::default()
+        };
+        let wire = serde_json::to_value(&report).expect("encodes");
+        assert_eq!(
+            wire["engines"],
+            json!([{ "engine": "claude", "contract": "jinn:engine.claude",
+                     "entry": "jinn-engine-claude" },
+                   { "engine": "default", "contract": "jinn:engine.default",
+                     "entry": "jinn-engine-default" }])
+        );
+        // An entry that disappears takes its engine with it.
+        assert!(engines_in(std::iter::empty::<(&str, Vec<&str>)>()).is_empty());
+    }
+
+    #[test]
     fn schemas_preserve_unknown_fields_round_trip() {
         let wire = json!({ "id": "a", "config": { "data": { "x": 1 }, "novel": true },
                            "idempotency-key": "k", "future": [1] });
@@ -860,7 +944,8 @@ mod tests {
         assert_eq!(serde_json::to_value(&request).expect("encodes"), wire);
         let report = json!({ "api-version": "0.1.0", "entries": [], "probes": [],
                              "kernel": { "unavailable": [], "finding": 19, "more": 1 },
-                             "document": { "readable": true }, "extra-top": "y" });
+                             "document": { "readable": true }, "engines": [],
+                             "extra-top": "y" });
         let decoded: StatusReport = serde_json::from_value(report.clone()).expect("decodes");
         assert_eq!(serde_json::to_value(&decoded).expect("encodes"), report);
     }

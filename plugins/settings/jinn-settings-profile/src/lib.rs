@@ -168,8 +168,11 @@ fn namespaces() -> Namespaces {
     }
 }
 
-/// One `jinn:profile` patch of `entry`, typed either way.
-fn kernel_patch(entry: &str, merge: &serde_json::Value) -> Result<(), SettingsError> {
+/// One `jinn:profile` patch of `entry`, typed either way. Since pin
+/// `3fd7b05` (0.2.0, FINDINGS.md #26) the call ACCEPTS and never awaits
+/// the patched fiber's restart, so the two-hop deadlock class is gone;
+/// the answered `ProfilePatched` sequence rides out as `patched-seq`.
+fn kernel_patch(entry: &str, merge: &serde_json::Value) -> Result<Option<u64>, SettingsError> {
     let handle = services::resolve(KERNEL_PROFILE_CONTRACT).map_err(|refused| {
         error(ErrorCode::Refused, format!("{KERNEL_PROFILE_CONTRACT}: {refused:?}"))
     })?;
@@ -233,18 +236,21 @@ fn patch(payload: &[u8]) -> Result<Patched, SettingsError> {
             serde_json::json!({ "data": { "overlays": { request.namespace.clone(): request.patch } } }),
         ),
     };
-    if let Err(refused) = kernel_patch(&target, &merge) {
-        emit(
-            REFUSED_TOPIC,
-            DispatchMode::Emit,
-            &Refused {
-                namespace: request.namespace.clone(),
-                error: refused.clone(),
-                extra: jinn_settings::Extensions::new(),
-            },
-        );
-        return Err(refused);
-    }
+    let sequence = match kernel_patch(&target, &merge) {
+        Ok(sequence) => sequence,
+        Err(refused) => {
+            emit(
+                REFUSED_TOPIC,
+                DispatchMode::Emit,
+                &Refused {
+                    namespace: request.namespace.clone(),
+                    error: refused.clone(),
+                    extra: jinn_settings::Extensions::new(),
+                },
+            );
+            return Err(refused);
+        }
+    };
     let revision = {
         let mut held = HELD.lock().unwrap();
         let entry = held.get_mut(&request.namespace).expect("declared above");
@@ -254,12 +260,24 @@ fn patch(payload: &[u8]) -> Result<Patched, SettingsError> {
         }
         entry.revision
     };
-    // The owner absorbs the hot layer in place from this event (serial:
-    // the answer waits for it); a restarted owner re-declares on its own
-    // wake, the event is its notice either way.
+    // The owner absorbs the HOT layer in place from this event, so the
+    // answer waits for it (serial). On the RESTART path the notice is
+    // fire-and-forget: the owner re-declares on its own wake either way,
+    // and since pin `3fd7b05` the patch does not await the restart it
+    // schedules (FINDINGS.md #26), so a serial delivery here would be
+    // aimed at a fiber the loader is replacing underneath it — the
+    // dispatch waits for an incarnation that is waiting to be swapped,
+    // and the operator's call stalls to its deadline. The blocking
+    // `patch-entry` used to hide this by finishing the restart first.
+    // FINDINGS.md #31 — this is a workaround, and it is only correct
+    // because this provider KNOWS which layer it just wrote.
+    let notice = match plan.applied {
+        Applied::Hot => DispatchMode::Serial,
+        Applied::Restart => DispatchMode::Emit,
+    };
     emit(
         CHANGED_TOPIC,
-        DispatchMode::Serial,
+        notice,
         &Changed {
             namespace: request.namespace.clone(),
             applied: Some(plan.applied),
@@ -268,13 +286,17 @@ fn patch(payload: &[u8]) -> Result<Patched, SettingsError> {
             extra: jinn_settings::Extensions::new(),
         },
     );
+    let mut extra = jinn_settings::Extensions::new();
+    if let Some(sequence) = sequence {
+        extra.insert("patched-seq".into(), serde_json::json!(sequence));
+    }
     Ok(Patched {
         api_version: API_VERSION.to_owned(),
         namespace: request.namespace,
         applied: Some(plan.applied),
         settings: plan.resolved,
         revision,
-        extra: jinn_settings::Extensions::new(),
+        extra,
     })
 }
 

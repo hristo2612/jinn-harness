@@ -24,12 +24,20 @@ and `jinn:net` as of the `1b098be` pin bump (jinnd M2-K6). Entries 19–24
 were hit building the operator-API seam on that pin (phase 2.1): 19 and
 20 are the introspection gaps the status surface names in its answers,
 21 is the edit lane's revertibility hazard (transcript-pinned), 22–24 are
-shape frictions with source evidence. Entries 19, 20, 21 and 23 are
+shape frictions with source evidence. Entries 24 and 25 are **closed** as
+of the `3fd7b053` pin bump (jinnd M2-K8). Entries 19, 20, 21 and 23 are
 **closed** as of the `57360cc` pin bump (jinnd M2-K7; phase 2.2), which
 also closes 22's profile case; entry 25 was hit adopting that pin (the
 document of record is readable by a guest only under the data root) and
 entries 26–27 were hit building the settings seam on it, and entry 28
-closing its round-1 consistency blocker.
+closing its round-1 consistency blocker. Entries 29–30 were hit building
+the engines seam on the `3fd7b053` pin (phase 2.3): both are shaped,
+reproducible packet cards, and 30 is the sharpest entry in this file — a
+live composition can permanently lose a contract with no fault, no
+refusal, and no log line. Entry 31 was hit adopting the same pin in the
+settings seam and is the entry-26 closure's shadow: the non-blocking
+`patch-entry` is right, and it turned a concealed dispatch hazard into a
+live one.
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -177,6 +185,30 @@ first consumer of `jinn:net` (`plugins/api/jinn-api-http` listens on
 loopback under a port-scoped grant; refusals for an out-of-range port and
 a non-loopback host proven on the record). What remains of this entry:
 `jinn:keystore` is still declared and unprovided.
+
+**Fully closed 2026-08-29 — retired by pin 3fd7b05 (jinnd M2-K8).** The
+daemon registers the fourth and last base provider: `jinn:keystore@0.1.0`
+(`get`, `put`, `delete`, `list`) behind the same broker choke point, under
+a `key-prefix` scope that admits NO key on a bare grant and an `ops`
+attenuation, with values sealed at rest under a master key that is never
+under the data root and a ledger record that carries the key NAME and the
+value's digest, never the value. Harness side: the engines seam is its
+first consumer — a run request carries `{"$secret": "<key>"}` references
+and each provider resolves them through `jinn:keystore` `get` at spawn
+time (`plugins/engines/jinn-engine/src/lib.rs` documents the shape;
+`jinn-engine-claude`, `jinn-engine-codex` and `jinn-engine-echo` do the
+resolving), under the grant `tools/engine-kit/src/lib.rs` writes:
+`{ contract: "jinn:keystore", scope: ["engines/"], ops: ["get"] }` — a
+prefix, read-only, so a provider reads secret values and can never write,
+delete, or enumerate them. Nothing in this repo, its profiles, or its
+ledgers holds secret material; only key names. One operational note the
+suite had to absorb: a macOS daemon with no passphrase configured falls to
+the platform keychain, whose ACL can put an OS prompt in front of the
+first mutation, so every daemon the composition suite boots sets
+`JINND_KEYSTORE_PASSPHRASE` (`tests/composition/src/kit.rs`) — the
+kernel's own packet record calls the keychain backend compiled-but-untested
+and names the passphrase as the headless choice, so this is adoption, not
+a friction.
 
 ## 6. No transactional pairing of related effects
 
@@ -735,6 +767,23 @@ Entry 21's shape (i) removes the profile case entirely.
 the loader's write-back is stage + fsync + rename). The general case
 (`jinn:fs` `write` for data files) stays open.
 
+**Fully closed 2026-08-29 — retired by pin 3fd7b05 (jinnd M2-K8).** The
+card's shape shipped for the data plane too: `jinn:fs` `write` AND
+`append` now commit whole by stage + fsync + rename
+(`contracts/jinn-fs/metadata.toml`, `commit = "stage-fsync-rename"` on
+both operations; the 0.2.0 "O(1) per record" note on `append` is retired
+in the bundle, an honest trade of per-record cost for a tail that is never
+torn). A concurrent reader observes the prior document or the new one,
+never a prefix. Harness side, every guest-kept document is now atomic
+without a guard of its own: the cron scheduler's `state.json` and the
+health job's report (`plugins/cron/`), the settings store's overlays, and
+— the reason this closure mattered for this packet — the engine probe's
+`last.json` and its `history.log`
+(`plugins/engines/jinn-engine-probe/src/lib.rs`), which the composition
+suite and an operator read WHILE the daemon is running. The suite reads
+those files mid-run with no retry-on-parse-failure, which is only sound
+because of this commit shape.
+
 ## 23. Sockets have no readiness wake — a server polls at the clock floor, on the record
 
 `jinn:net` v0.1 is non-blocking by design (R1): `accept` and `read` answer
@@ -793,6 +842,24 @@ Low severity, structural.
 
 *Evidence grade:* source-confirmed; no transcript (no misuse to record).
 
+**Closed 2026-08-29 — retired by pin 3fd7b05 (jinnd M2-K8).** A grant may
+now carry `ops` beside `contract`/`scope` — an operation-class attenuation
+validated fail-closed against the vocabulary each bundle declares
+(`grants/ops.rs` `declared_ops`, mirroring every `[operations.*]`) and
+enforced per call at the broker (`broker/authority.rs` `check_op`: an
+operation outside the class is a ledgered `GrantRefused` naming it, never
+a default-accept). Authority is now exactly as wide as its use here:
+`jinn-status` reads the document of record under `ops = ["entry",
+"document"]` and CANNOT patch it, while `jinn-profile-edit` holds all
+three — both written in `tools/api-kit/src/main.rs` (`api_entries`) from
+`jinn_api::KERNEL_PROFILE_READ_OPS` / `KERNEL_PROFILE_EDIT_OPS`
+(`plugins/api/jinn-api/src/kernel.rs`). Proven on the real daemon by
+`a_read_only_profile_grant_holds_no_patch_authority_finding_24_closed`
+(`tests/composition/tests/api.rs`): the shipped classes read back from the
+document of record, and the editor narrowed to the viewer's read-only
+class has its `patch-entry` refused on the ledger while its `document`
+read keeps working.
+
 ## 25. The document of record is reachable by a guest only under the data root — `jinn:introspect` carries no authority fields, `jinn:profile` has no read
 
 Hit adopting `57360cc`. Entry 21's closure moved the WRITE side of the
@@ -833,6 +900,29 @@ of entry 24 for every viewer.
 `contracts/jinn-profile` at the pin); composition
 `the_operator_api_serves_a_profile_beside_the_data_root_finding_25`
 pins the typed answer.
+
+**Closed 2026-08-29 — retired by pin 3fd7b05 (jinnd M2-K8).** The card's
+second disjunct shipped: `jinn:profile` 0.2.0 gained the reads `entry(id)`
+and `document()` (`daemon/profile_read.rs`), answering the document of
+record's authority fields — `id`, `package`, `version`, `hash`, `grants`,
+`config`, `disabled`, `parent` — for every entry the caller's `entry-ids`
+scope admits, each a ledgered call, a read outside the scope a ledgered
+grant refusal. The harness reads the document through that contract now,
+not through a file: `plugins/api/jinn-status/src/lib.rs`
+(`profile_document`, feeding `status`/`health`) and
+`plugins/api/jinn-profile-edit/src/lib.rs` (`read_profile`, feeding both
+`get` and the local entry-patch law), over the wire in
+`plugins/api/jinn-api/src/kernel.rs` (`profile_entry_payload`,
+`decode_profile_document`, `decode_profile_entry`, `ProfileEntryRecord`).
+Neither consumer holds any `jinn:fs` grant on the document any more
+(`tools/api-kit/src/main.rs`), so the data-root coupling is gone from both
+the read path and the authority side; the typed `unavailable` answer stays
+for the one case left, a viewer mounted without the read grant. Proven on
+the real daemon by
+`the_operator_api_reads_the_document_beside_the_data_root_finding_25_closed`
+(`tests/composition/tests/api.rs`), which asserts in the soak's layout —
+the profile BESIDE the data root — exactly the completeness the previous
+pin could only answer as unavailable.
 
 ## 26. `patch-entry` awaits the patched fiber's restart — an owner that resolves its settings in `activate` cannot be patched by its settings provider
 
@@ -877,6 +967,28 @@ class, (b) removes the boot-ordering retry. Both keep R1.
 refusal names the class); the harness shape is pinned by the settings
 composition suite (`declare_resolve_and_patch_on_both_paths_with_the_c5_c6_transcript`:
 the restart path lands with the owner making no call from `activate`).
+
+**Closed 2026-08-29 — retired by pin 3fd7b05 (jinnd M2-K8), shape (a).**
+`jinn:profile` 0.2.0 answers `accepted(seq)` once the document has
+committed and the patched fiber's restart is SCHEDULED; the call never
+awaits the restart (`contracts/jinn-profile/metadata.toml`, `settle =
+"deferred-restart-scheduled-never-awaited"`). The two-hop deadlock class
+is therefore gone: a settings provider may patch the entry that resolves
+it from `activate`, and the seam is free of the constraint that shaped it.
+Harness side, the new answer is decoded and USED rather than merely
+tolerated: `jinn_api::decode_profile_answer`
+(`plugins/api/jinn-api/src/kernel.rs`) answers the accepted patch's
+`ProfilePatched` ledger sequence, and both callers ride it out to the
+operator as `patched-seq` — `plugins/api/jinn-profile-edit/src/lib.rs` on
+the API's `patch-entry` answer and
+`plugins/settings/jinn-settings-profile/src/lib.rs` on the settings
+`patched` answer — so a caller can follow the restart it did not wait for
+through `jinn:ledger`, which is the only way a non-blocking amendment is
+observable at all. The owner-side shape `cron-scheduler` already had
+(resolve on its own alarm wake, absorb `changed` in place) is KEPT, but it
+is no longer a workaround: it is what makes a provider restart or a
+provider swap heal within one wake, and it is now a resilience property
+rather than a deadlock avoidance.
 
 ## 27. C5/C6 decision evidence — what a settings patch costs on the restart path and on the hot path, measured on the real daemon
 
@@ -1019,3 +1131,200 @@ contracts); the refusal is pinned by the settings composition suite
 - **Guest provisions and every broker crossing recorded:** the fire-run
   ledger is a complete causal story, emits included since the
   `DispatchTrace` tap landed (finding 2).
+
+## 29. A contract has one provider slot and no notion of an instance — N engines coexisting means N contract names
+
+Hit building the engines seam on `3fd7b05` (phase 2.3). The broker holds
+`providers: contract -> provider`, and `provide` refuses a second peer for
+an occupied slot with `DuplicateProvision` — deliberately, "replacement is
+never silent" (R9). `services.resolve(contract)` mints a handle against
+whoever holds the slot. There is no qualified resolve, no provider
+selection, and no per-instance grant. So a capability whose whole point is
+that SEVERAL implementations are live at once — engines, and later
+connectors, model providers, storage backends — cannot be one contract.
+
+The harness encodes the instance in the NAME: a provider serves
+`jinn:engine.<engine-id>`, the id read from its own entry's
+`config.data.engine` and written nowhere else
+(`plugins/engines/jinn-engine/src/lib.rs`, `engine_contract`). That buys
+the malleability properties cleanly — a switch is a `package`/`hash` edit
+on one entry, coexistence is a second entry, extension is a third — and it
+keeps per-engine authority where the kernel enforces it, since a grant
+names a contract and therefore an engine. But the kernel cannot see the
+structure: `jinn:engine.codex` is an opaque string to the broker, so
+nothing checks that two entries do not claim the same engine id (the slot
+refusal catches it, but reports a duplicate PROVISION, not a duplicate
+engine), a consumer's `jinn:introspect` view must parse provisions to find
+engines, and the whole convention lives in guest code where a typo is a
+`missing-dependency` at resolve rather than a profile-load refusal.
+
+**Packet-card shape:** instance-qualified provision and resolve —
+`services.provide(contract, instance)` / `resolve(contract, instance)`
+with the instance carried in the handle and in the grant scope (a
+`instances` scope beside `path-prefix` and `key-prefix`, same fail-closed
+admission), so a contract may be provided AT a name. The ledger's
+`ServiceProvided` gains the instance; `jinn:introspect` reports it
+structurally; the loader can refuse two entries claiming one instance at
+LOAD time rather than at first `provide`. This is the same class as entry
+27's C6 note: the harness is emulating a kernel concept in guest
+convention, and the emulation is what should be retired.
+
+*Evidence grade:* source-confirmed (`crates/jinnd-wasm/src/broker.rs`
+`provide`/`resolve` at the pin — the slot map and the `DuplicateProvision`
+refusal); the encoding and its three proofs are pinned by the engines
+composition suite (`tests/composition/tests/engines.rs`).
+
+## 30. `services.provide` has no staging path — a provision made in `activate` binds the STAGING instance, and one call before the swap commit kills the contract for good
+
+Hit building the engines seam on `3fd7b05` (phase 2.3), and it is the
+sharpest entry in this file: a live composition can permanently lose a
+contract with no fault, no refusal, and no log line.
+
+`events.listen` knows about staging. Its host surface checks
+`self.seat.staging` and RECORDS the registration to be committed at swap
+commit "against the new instance's own delivery face", with the comment
+"Recorded, not routed (R8)". `broker.provide` has no such path: it takes
+`peer` — the STAGING peer, because `activate` runs in staging — checks the
+grant, bumps the generation, and inserts that peer into the contract's
+single provider slot. When the swap commits, the staging instance is
+discarded. The slot still points at it.
+
+Every provider in this repo before now got away with it, because nothing
+ever called their contract before the boot reconcile finished. The engines
+seam is the first composition with a CONSUMER whose own wake can land
+inside the reconcile, and it fails immediately and permanently:
+
+```
+38 jinn-engine-default  8  ServiceProvided   jinn:engine.default        <- staging instance
+39 jinn-engine-default  8  EffectRegistered  "jinn-engine-echo on duty"
+44 jinn-engine-probe   11  EffectRegistered  "alarm at <now>"
+51 jinn-engine-probe   11  AlarmWake         alarm 1                    <- inside the reconcile
+52 jinn-engine-probe   11  ContractResolved  jinn:engine.default
+53 jinn-engine-probe   11  ContractCall      jinn:engine.default/run    <- served by staging
+54 jinn-engine-default  8  ContractCall      jinn:clock/now
+65 jinn-engine-default  8  FiberTransition   Pending -> Loading  (InitialLoad)
+66 jinn-engine-default  8  FiberTransition   Loading -> Active   (InitialLoad)
+```
+
+From seq 66 on, every call on that contract answers
+`KernelError::ProviderFailed("the instance is gone")` — the operator API's
+`describe` at 108 and its `run` at 214 both do, while
+`jinn:engine.claude` and `jinn:engine.codex`, which nobody called during
+the reconcile, answer normally from the same boot. The entry reports
+`state=Active`, the reconcile reports `faults=[]`, and the daemon log says
+nothing. The contract is dead until the entry restarts (patching it back
+to life is what made the seam's cancel proof pass while its run proof did
+not).
+
+Two things make this worse than an ordering nuisance. It is SILENT — Law 2
+records the provision and the calls, and nothing records the loss. And it
+is not recoverable by the consumer: a retry resolves the same dead slot,
+so a probe that "records a missing provider and moves on" never heals.
+
+**Packet-card shape:** give `provide` the staging path `listen` already
+has — record the provision on the staging outcome and commit it at swap
+against the committed instance's face, as
+`crate::handle::Registration::Listen` is committed today. Two smaller
+hardenings are worth the same card: a call that lands on a staging
+provider should answer a typed retryable refusal rather than be served by
+an instance about to be discarded (R9: a refusal is better than a silent
+wrong answer); and `ProviderFailed("the instance is gone")` should be a
+ledger event, not only a wire error, so a composition that loses a
+contract says so.
+
+**Harness-side handling shipped:** `jinn-engine-probe` no longer arms a
+one-shot at `now` — its first wake is one period out
+(`plugins/engines/jinn-engine-probe/src/lib.rs`), which is what a schedule
+means anyway and which keeps the first call out of the boot reconcile.
+That narrows the window; it does not close it, because nothing a guest can
+declare orders its activation against another entry's swap (entry 7) — on
+a loaded host a slow reconcile can still overlap a period.
+
+*Evidence grade:* packet-card-ready. Transcript above is run root
+`eng2` at pin `3fd7b05` (ledger seq 38-66, 107-108, 213-214), reproduced
+from the engines composition suite's `engines-run` root; source-confirmed
+in `crates/jinnd-wasm/src/surfaces.rs` (`listen` stages, `provide` does
+not) and `crates/jinnd-wasm/src/broker.rs` (`provide` inserts `peer` into
+the slot directly).
+
+
+## 31. A serial dispatch to a fiber with a pending restart stalls to the guest deadline — no refusal, no diagnostic, no row
+
+Hit adopting `3fd7b05` (jinnd M2-K8) in the settings seam, which the
+engines packet inherited. Entry 26's closure made `patch-entry`
+non-blocking: the call schedules the patched fiber's restart and returns
+at once, which is the right shape and what that entry asked for. But it
+moves a hazard from hidden to live. A guest that patches an entry and
+then makes a `DispatchMode::Serial` call to that same entry's fiber is
+now aiming at an incarnation the loader is in the middle of replacing.
+The dispatch does not fail and does not queue: it waits for a peer that
+will never answer, until the caller's guest deadline expires. The
+blocking `patch-entry` used to conceal this by finishing the restart
+before it returned.
+
+Nothing in the system says so. There is no `Restarting` refusal, no
+ledger row naming the stall, and no way to ask whether a fiber has a
+restart pending — `jinn:introspect` reports the composition, not the
+loader's in-flight work. The operator sees only an HTTP request that
+never answers, and the plugin author sees a call that works on one code
+path and hangs on the other with no signal distinguishing them.
+
+**Workaround attempted, and INSUFFICIENT.** The settings provider chooses
+its dispatch mode from the layer it just patched — `Serial` on the hot
+path (the owner absorbs the overlay in place, so the answer legitimately
+waits for it), `Emit` on the restart path (the owner re-declares on its
+own wake, so the notice needs no reply). That change is correct on its
+own merits and is kept: a notice aimed at an incarnation being replaced
+has no one to answer it, and the successor re-declares regardless. It
+does NOT close the gap. A round-2 report claimed it made
+`the_shadowed_refusals_recovery_lands_when_executed` pass; that claim was
+false, and the test fails at the same head both under `cargo test
+--workspace` and in isolation. Correcting that claim is the point of this
+re-grading.
+
+Two reasons the workaround cannot be the fix. It is only available to a
+provider that KNOWS which layer it wrote — a consumer patching an entry
+it does not own has no such knowledge and no way to acquire it. And it
+only moves the guest's own notice off the restart path; it does nothing
+about the operator's call chain, which still contains a serial dispatch
+that lands on a fiber the loader is replacing. The stall is a property of
+the kernel's dispatch, not of who sends the notice.
+
+**Evidence (final, at pin `3fd7b05`).** `tests/composition/tests/settings.rs`
+`the_shadowed_refusals_recovery_lands_when_executed`: the recovery the
+shadowed refusal names is an ENTRY-layer patch, so it takes the restart
+path, and its `PATCH /v1/settings/cron` never answers — the request dies
+on the suite's 45 s bound (`tests/composition/src/api.rs:68`,
+`WouldBlock`). The ledger trace is seq **224** `patch-entry`, **228**
+`ProfilePatched`, **230** `guest exceeded its call deadline`: the profile
+amendment lands, the restart is scheduled, and the call that follows it
+waits out the deadline. Reproduced independently twice by the verifier at
+head `7557533` — once under `cargo test --workspace` (`FAILED. 4 passed;
+1 failed`) and once isolated (`FAILED. 0 passed; 1 failed`).
+
+**Status: BLOCKED on the kernel, tracked.** The test is marked
+`#[ignore]` with a reason string naming this entry and its kernel packet
+— not deleted, not skipped silently, and with no assertion weakened. The
+kernel fix is **jinnd M2-K9** (`d95cffd`, tracked as **PLA-318**): a
+serial dispatch to a fiber with a pending restart REFUSES, typed and
+ledgered, with the pending-restart state readable through
+`jinn:introspect`. PLA-318's acceptance removes the `#[ignore]` and
+closes this entry.
+
+**Packet-card shape:** make the restart visible or make the dispatch
+survive it. Either (a) a serial dispatch to a fiber with a pending
+restart is QUEUED and delivered to the successor incarnation — the
+composability story the paper argues for, and the least surprising
+behaviour; or (b) it is refused typed (`Restarting`), so the caller can
+choose to retry, drop, or downgrade to an emit; or at minimum (c)
+`jinn:introspect` exposes pending-restart state so a guest can pick its
+dispatch mode from the kernel's knowledge instead of reconstructing it
+from its own. (a) and (b) are contract changes; (c) is additive. M2-K9
+takes (b) with (c) beside it.
+
+*Evidence grade:* packet-card-ready, and AUTHORED — the card exists as
+jinnd M2-K9 / PLA-318. Reproducible at pin `3fd7b05` on the real daemon
+with the exact call, the exact deadline and the exact ledger sequence;
+independently reproduced by the verifier. The harness has no remaining
+move here: this entry stays open, with its proof ignored and named, until
+the kernel packet lands.

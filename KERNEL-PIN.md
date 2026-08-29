@@ -8,13 +8,13 @@ itself in agreement.
 
 ```
 repo: https://github.com/hristo2612/jinnd
-commit: 57360ccd3e6493cc2d20e8e6e480daaa88486817
-wit-hash: sha256:54b0d4ef518b0b93e2ce7f18b12f36c1346d4afd0b202035dfa997abea024fa4
-contracts-hash: sha256:501c05911287f633e664a05f2d2d02e089bcd19864a5b04bb79d07528ea01d70
+commit: 3fd7b053ff3bf8155d89dcb5614e8a3f46d06a36
+wit-hash: sha256:cacb1591723a8cfa5d60cc2e2189627853ca6dc996f825bbde78e3320c6ab837
+contracts-hash: sha256:027fc18fabad0824171363383192ffdcd4561533ab17322e73dbc87dd1ad5d7d
 ```
 
 `wit-hash` covers `wit/` (the `jinn:plugin` world). `contracts-hash` covers
-`contracts/` (the capability contract bundles — `jinn:fs`, `jinn:clock`, `jinn:process`, `jinn:net`, `jinn:ledger`, `jinn:introspect`, `jinn:profile`, …).
+`contracts/` (the capability contract bundles — `jinn:fs`, `jinn:clock`, `jinn:process`, `jinn:net`, `jinn:ledger`, `jinn:introspect`, `jinn:profile`, `jinn:keystore`, …).
 Together they are the contract surface the kernel publishes (jinnd R12).
 
 ## Contract hash algorithm (normative)

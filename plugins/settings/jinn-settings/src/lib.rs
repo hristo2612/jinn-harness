@@ -41,21 +41,82 @@ pub const SECRET_REF_KEY: &str = "$secret";
 /// Unknown sibling fields, preserved across a decode → encode round trip.
 pub type Extensions = serde_json::Map<String, serde_json::Value>;
 
+/// A CLOSED surface's refusal, written once and shared by every closed
+/// surface in the distribution (this crate's `SecretRef`, the engines
+/// seam's value spaces).
+///
+/// A surface is CLOSED when it has nowhere to put content it cannot
+/// name. Its law is then REFUSAL — never a silent drop, never a guess. A
+/// drop is the silent-wrong-answer shape in its purest form: the peer
+/// that sent the field is told the document was understood. Inside a
+/// secret reference it is also a security property, since an unknown key
+/// would ride along beside a credential name.
+///
+/// The message NAMES THE SURFACE, so an operator reading a refusal knows
+/// which surface would have to be widened rather than only which value
+/// was rejected.
+///
+/// `unnamed` is the offending content as prose ("the key `x`", "the value
+/// `ultra`"); `admits` is what the surface does take.
+pub fn closed<E: serde::de::Error>(surface: &str, unnamed: &str, admits: &str) -> E {
+    E::custom(format!(
+        "{surface} is a closed surface and REFUSES {unnamed} rather than dropping or guessing it \
+         (it admits {admits})"
+    ))
+}
+
+/// How [`closed`] names the secret-reference surface.
+pub const SECRET_REF_SURFACE: &str = "a `{\"$secret\": \"<keystore key>\"}` reference";
+
 /// A typed secret reference: names a keystore key, never carries the
 /// secret. Resolution is the keystore seam's; the settings document holds
 /// only the name.
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+///
+/// The shape is CLOSED: `$secret` alone, and a sibling key is refused on
+/// DECODE (see the hand-written [`Deserialize`], and [`closed`] for why
+/// refusal rather than preservation). That is the one home for the fact —
+/// every consumer of this type, in this seam or another, inherits it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct SecretRef {
     #[serde(rename = "$secret")]
     pub secret: String,
 }
 
-/// Whether `value` is a well-formed secret reference.
+impl<'de> Deserialize<'de> for SecretRef {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let mut map = Extensions::deserialize(deserializer)?;
+        let named = map
+            .remove(SECRET_REF_KEY)
+            .ok_or_else(|| serde::de::Error::missing_field(SECRET_REF_KEY))?;
+        let secret = named
+            .as_str()
+            .ok_or_else(|| {
+                serde::de::Error::custom(format!(
+                    "{SECRET_REF_KEY} names a keystore key, so it is a string, not {named}"
+                ))
+            })?
+            .to_owned();
+        // The refusal, before the value is ever handed on: a reference
+        // with a sibling is not a reference.
+        if let Some(sibling) = map.keys().next() {
+            return Err(closed(
+                SECRET_REF_SURFACE,
+                &format!("the key `{sibling}`"),
+                SECRET_REF_KEY,
+            ));
+        }
+        Ok(Self { secret })
+    }
+}
+
+/// Whether `value` is a well-formed secret reference. The SHAPE is the
+/// decoder's law (a sibling key is refused there, one home); what is left
+/// here is the one thing a decoder cannot judge — a reference that names
+/// nothing.
 #[must_use]
 pub fn is_secret_ref(value: &serde_json::Value) -> bool {
-    serde_json::from_value::<SecretRef>(value.clone()).is_ok_and(|reference| {
-        !reference.secret.is_empty() && value.as_object().is_some_and(|object| object.len() == 1)
-    })
+    serde_json::from_value::<SecretRef>(value.clone())
+        .is_ok_and(|reference| !reference.secret.is_empty())
 }
 
 /// A namespace as its owner declares it.

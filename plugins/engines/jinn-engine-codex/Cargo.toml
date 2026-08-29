@@ -1,0 +1,26 @@
+# The engines seam's codex provider guest: spawns `codex exec --json`
+# through the granted `jinn:process`, feeds its stdout to
+# `jinn-engine-codex-wire`, and publishes the seam's typed run events. All
+# machine-specific state (the CLI's absolute path, the model list, the
+# poll cadence) is the entry's `config.data`, never source. Compiles for
+# wasm32-unknown-unknown ONLY and is deliberately NOT a workspace member
+# (see the workspace manifest's note); `engine-kit` builds and encodes it.
+[package]
+name = "jinn-engine-codex"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-engine = { path = "../jinn-engine" }
+jinn-engine-codex-wire = { path = "../jinn-engine-codex-wire" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Guest-side bindings of the pinned plugin world (kernel-pin/wit).
+wit-bindgen = "0.43.0"
+
+[workspace]

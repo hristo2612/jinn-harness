@@ -1,0 +1,25 @@
+# The engines seam's first real CONSUMER (AGENTS.md standing order 4:
+# consumers are named by their own capability, not by a provider): on a
+# schedule it runs one short prompt through a CONFIGURED engine, folds the
+# run's events off the bus, and writes the outcome through its granted
+# `jinn:fs`. It knows no provider, no CLI and no vendor — only the engine
+# id it routes on, which IS the contract name. Compiles for
+# wasm32-unknown-unknown ONLY and is deliberately NOT a workspace member
+# (see the workspace manifest's note).
+[package]
+name = "jinn-engine-probe"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-engine = { path = "../jinn-engine" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+wit-bindgen = "0.43.0"
+
+[workspace]

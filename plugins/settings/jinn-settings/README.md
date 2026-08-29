@@ -14,7 +14,7 @@ encode round trip at every nesting level.
 | Store contract | `jinn:settings-store` | Provided by the overlay store; operation `overlays`. |
 | Changed topic | `jinn:settings/changed` | Emitted serial/all after an applied patch, payload `Changed`. An owner holds a listen grant for it. |
 | Refused topic | `jinn:settings/refused` | Emitted emit/all after a refused patch, payload `Refused` — its `DispatchTrace` is the refusal's ledger record. |
-| Secret reference | `{"$secret": "<keystore key>"}` | The only shape a `secret-ref` field admits. |
+| Secret reference | `{"$secret": "<keystore key>"}` | The only shape a `secret-ref` field admits. The shape is CLOSED and its decoder REFUSES a sibling key, naming the surface (`closed`): an unknown key must never ride along beside a credential name, so this is the one wire surface in the distribution where preservation would be the wrong answer. |
 
 All payloads are UTF-8 JSON with kebab-case keys; every answer is the
 envelope `{"api-version", "ok": …}` / `{"api-version", "error": {code,

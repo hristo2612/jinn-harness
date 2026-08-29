@@ -12,7 +12,16 @@ use std::time::{Duration, Instant};
 use crate::daemon::workspace_root;
 
 /// How long a composition observation may take before the test fails.
-pub const DEADLINE: Duration = Duration::from_secs(30);
+pub const DEADLINE: Duration = Duration::from_secs(60);
+
+/// How long a BOOT may take. Separate from [`DEADLINE`] because it scales
+/// with the composition, not with the observation: a profile's every
+/// component is compiled and instantiated before the readiness line, and
+/// the suite runs its roots in parallel — the engines profile is eleven
+/// components per daemon, eight daemons at once, against a debug-built
+/// runtime. A boot that is merely SLOW is not a defect, and a deadline
+/// that calls it one turns a loaded machine into a red suite.
+pub const BOOT_DEADLINE: Duration = Duration::from_secs(240);
 
 /// The suite kit's job period: boundaries every 2 s, so a fire is never
 /// more than one period away and a restart gap of a few seconds spans
@@ -70,6 +79,77 @@ pub fn shared_api_kit() -> &'static Path {
         assert!(status.success(), "the api kit builds");
         root
     })
+}
+
+/// Builds the ENGINES kit (the engine providers and the probe beside the
+/// api trio, the settings pair and the cron seam) once per process. The
+/// probe's cadence is the suite's job period, so a probe run lands inside
+/// a test's deadline.
+pub fn shared_engine_kit() -> &'static Path {
+    static KIT: OnceLock<PathBuf> = OnceLock::new();
+    KIT.get_or_init(|| {
+        let root = workspace_root().join("target/composition/engine-kit");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("kit cache dir");
+        let status = Command::new("cargo")
+            .args(["run", "-p", "engine-kit", "--", "kit"])
+            .arg(&root)
+            .args(["--port", &KIT_PORT.to_string()])
+            .args(["--probe-every-ms", &JOB_PERIOD_MS.to_string()])
+            .args(["--every-ms", &JOB_PERIOD_MS.to_string()])
+            .args(["--tick-ms", &TICK_MS.to_string()])
+            .current_dir(workspace_root())
+            .status()
+            .expect("cargo run -p engine-kit");
+        assert!(status.success(), "the engine kit builds");
+        root
+    })
+}
+
+/// A fresh scratch root holding a copy of the shared engine kit, its HTTP
+/// provider re-pointed at a free loopback port. Answers the root and that
+/// port, as [`fresh_api_root`] does.
+#[must_use]
+pub fn fresh_engine_root(name: &str) -> (PathBuf, u16) {
+    let root = copy_kit(shared_engine_kit(), name);
+    let port = free_port();
+    let path = root.join("profile.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("profile")).expect("profile parses");
+    set_provider_port(&mut document, "jinn-api-http", port);
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&document).expect("encodes"),
+    )
+    .expect("profile");
+    (root, port)
+}
+
+/// The entry with `id` in a profile document, whole (not just its config)
+/// — the switch proof edits an entry's `package` and `hash`, which sit
+/// outside `config`.
+pub fn entry_mut<'doc>(
+    document: &'doc mut serde_json::Value,
+    id: &str,
+) -> &'doc mut serde_json::Value {
+    document["entries"]
+        .as_array_mut()
+        .expect("entries array")
+        .iter_mut()
+        .find(|entry| entry["id"] == id)
+        .unwrap_or_else(|| panic!("profile has entry {id:?}"))
+}
+
+/// One artifact's content hash, from the sidecar the kit wrote beside it
+/// — the pin a profile edit must carry when it swaps an entry's package
+/// (kernel Law 5: a profile pins plugins by content hash).
+#[must_use]
+pub fn artifact_hash(root: &Path, package: &str) -> String {
+    let sidecar = root.join(format!("artifacts/{package}.wasm.sha256"));
+    std::fs::read_to_string(&sidecar)
+        .unwrap_or_else(|error| panic!("{}: {error}", sidecar.display()))
+        .trim()
+        .to_owned()
 }
 
 /// A fresh scratch root holding a copy of the shared cron kit.
@@ -136,12 +216,131 @@ fn copy_kit(kit: &Path, name: &str) -> PathBuf {
 
 /// One live daemon over one root.
 pub struct Daemon {
+    /// Held for the daemon's life; see [`daemon_budget`].
+    _permit: DaemonPermit,
     child: Child,
     pub root: PathBuf,
     /// The daemon's data root (`jinn:fs`'s root): `<root>/data` for the
     /// cron layout, `<root>` itself for the operator layout.
     pub data_root: PathBuf,
     stderr: PathBuf,
+}
+
+/// The keystore's master-key source for every daemon this suite boots
+/// (pin `3fd7b05`, jinnd M2-K8). A macOS daemon with NO passphrase
+/// configured falls to the platform keychain, whose ACL can put an OS
+/// authorization PROMPT in front of the first `put` — an automated suite
+/// would hang on it with no operator present. The kernel's own packet
+/// record says the same: the keychain backend is compiled but untested,
+/// and a headless daemon sets the passphrase. So the suite sets one, and
+/// it is a test constant with no meaning outside these scratch roots —
+/// every run's store is a fresh directory that the run deletes.
+pub const KEYSTORE_PASSPHRASE_VAR: &str = "JINND_KEYSTORE_PASSPHRASE";
+/// See [`KEYSTORE_PASSPHRASE_VAR`]. A neutral placeholder, never a secret.
+pub const KEYSTORE_PASSPHRASE: &str = "composition-suite-scratch-passphrase";
+
+/// How many daemons this suite lets run AT ONCE, across every test
+/// binary. `cargo test` sizes its thread pool for CPU-bound unit tests
+/// AND runs each test binary as its own process in parallel; a
+/// composition test is neither — each holds a live daemon that compiles
+/// and instantiates every component of its profile and then keeps a duty
+/// cycle running, writing state through `jinn:fs`, which since pin
+/// `3fd7b05` fsyncs on every commit (FINDINGS.md #22). A dozen of those
+/// on one box do not fail faster, they fail *falsely*: requests miss
+/// their bounds and boots miss theirs, and a green suite becomes a
+/// question about the machine's mood rather than about the kernel.
+///
+/// So the suite bounds itself, and it does it ACROSS PROCESSES — an
+/// in-process semaphore would be multiplied by the number of test
+/// binaries, which is exactly the case that bites. Tests still run in
+/// parallel; only the live daemons are rationed.
+fn daemon_budget() -> usize {
+    std::thread::available_parallelism()
+        .map(|cores| (cores.get() / 3).max(2))
+        .unwrap_or(2)
+}
+
+/// Where the slots live. One file per slot, created exclusively.
+fn slot_dir() -> PathBuf {
+    workspace_root().join("target/composition/daemon-slots")
+}
+
+/// A slot a test binary that died without cleaning up may still hold; any
+/// slot older than this is reclaimed, so a crashed run cannot wedge the
+/// gate for the next one.
+const SLOT_STALE_AFTER: Duration = Duration::from_secs(900);
+
+/// The permit a live daemon holds. Released on drop, whether the test
+/// passed, failed, or panicked.
+struct DaemonPermit {
+    slot: PathBuf,
+}
+
+impl DaemonPermit {
+    fn acquire() -> Self {
+        let dir = slot_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let budget = daemon_budget();
+        loop {
+            for index in 0..budget {
+                let slot = dir.join(format!("slot-{index}"));
+                if std::fs::OpenOptions::new()
+                    .write(true)
+                    .create_new(true)
+                    .open(&slot)
+                    .is_ok()
+                {
+                    return Self { slot };
+                }
+                let stale = std::fs::metadata(&slot)
+                    .and_then(|meta| meta.modified())
+                    .ok()
+                    .and_then(|held| held.elapsed().ok())
+                    .is_some_and(|age| age > SLOT_STALE_AFTER);
+                if stale {
+                    let _ = std::fs::remove_file(&slot);
+                }
+            }
+            std::thread::sleep(Duration::from_millis(150));
+        }
+    }
+}
+
+impl Drop for DaemonPermit {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.slot);
+    }
+}
+
+/// Extra daemon permits, held for the duration of a test whose cost the
+/// permit model does not capture. [`daemon_budget`] rations DAEMONS,
+/// which is the right unit for every proof but one: the vendor-engine
+/// proof also spawns two external LLM CLIs, and their cost lands on the
+/// same box — on this suite's other daemons, and on the request bounds of
+/// every OTHER test binary running beside it. Rationing them as if they
+/// were free is what turns an unrelated suite's 45 s request bound into a
+/// question about the machine's mood.
+///
+/// So that one test takes the REST of the budget while it runs. Acquired
+/// before its own daemon boots, so it never waits on a slot it is itself
+/// holding, and released on drop however the test ends.
+pub struct ExtraDaemonLoad(
+    /// Never read — held so the permits release on drop.
+    #[allow(dead_code)]
+    Vec<DaemonPermit>,
+);
+
+impl ExtraDaemonLoad {
+    /// Takes every permit but one — the one the caller's own daemon is
+    /// about to take.
+    #[must_use]
+    pub fn all_but_one() -> Self {
+        Self(
+            (1..daemon_budget())
+                .map(|_| DaemonPermit::acquire())
+                .collect(),
+        )
+    }
 }
 
 /// The daemon's machine-readable readiness line (FINDINGS.md #12 minimum,
@@ -218,17 +417,22 @@ impl Daemon {
         cwd: &Path,
         args: impl IntoIterator<Item = &'a OsStr>,
     ) -> Self {
+        // Taken BEFORE the process exists, so the bound counts daemons
+        // that are booting as well as daemons that are serving.
+        let permit = DaemonPermit::acquire();
         let stderr = root.join("daemon.stderr");
         let sink = std::fs::File::create(&stderr).expect("stderr sink");
         let child = Command::new(binary)
             .args(args)
             .current_dir(cwd)
+            .env(KEYSTORE_PASSPHRASE_VAR, KEYSTORE_PASSPHRASE)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(sink)
             .spawn()
             .expect("daemon spawns");
         Self {
+            _permit: permit,
             child,
             root: root.to_path_buf(),
             data_root: root.join("data"),
@@ -244,9 +448,10 @@ impl Daemon {
 
     /// Waits for the readiness line — the ONLY gate the operator lane
     /// needs before its first edit (the watcher is armed, the boot
-    /// reconcile is done).
+    /// reconcile is done). Bounded by [`BOOT_DEADLINE`], not
+    /// [`DEADLINE`]: see that constant.
     pub fn await_ready(&self) {
-        self.eventually("the readiness line", || self.is_ready());
+        self.eventually_within("the readiness line", BOOT_DEADLINE, || self.is_ready());
     }
 
     /// The daemon's stderr so far (its operator-facing log), ANSI styling
@@ -258,8 +463,13 @@ impl Daemon {
 
     /// Polls until `check` holds; panics with `what` (and the daemon log)
     /// after [`DEADLINE`].
-    pub fn eventually(&self, what: &str, mut check: impl FnMut() -> bool) {
-        let deadline = Instant::now() + DEADLINE;
+    pub fn eventually(&self, what: &str, check: impl FnMut() -> bool) {
+        self.eventually_within(what, DEADLINE, check);
+    }
+
+    /// [`Daemon::eventually`] with an explicit bound.
+    pub fn eventually_within(&self, what: &str, bound: Duration, mut check: impl FnMut() -> bool) {
+        let deadline = Instant::now() + bound;
         while !check() {
             assert!(
                 Instant::now() < deadline,

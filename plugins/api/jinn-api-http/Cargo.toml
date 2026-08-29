@@ -2,7 +2,8 @@
 # loopback listener at its configured port, polls it from one `jinn:clock`
 # periodic alarm, and turns every HTTP request into ONE granted contract
 # call on the seam's consumers (`jinn:api-status`, `jinn:api-profile`) or
-# on the settings seam (`jinn:settings`, whose answers share the envelope).
+# on the settings seam (`jinn:settings`, whose answers share the envelope)
+# or on the engine its path names (`jinn:engine.<id>`).
 # Transport only — the definition owns the schema. Compiles for
 # wasm32-unknown-unknown ONLY and is deliberately NOT a workspace member
 # (see the workspace manifest's note); `api-kit` builds and encodes it.
@@ -19,6 +20,9 @@ crate-type = ["cdylib"]
 [dependencies]
 jinn-api = { path = "../jinn-api" }
 jinn-api-http-wire = { path = "../jinn-api-http-wire" }
+# The engines seam's operation names and contract names, borrowed from
+# their one home rather than spelled again here.
+jinn-engine = { path = "../../engines/jinn-engine" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # Guest-side bindings of the pinned plugin world (kernel-pin/wit).
