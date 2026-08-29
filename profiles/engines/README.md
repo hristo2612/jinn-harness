@@ -26,6 +26,7 @@ jinnd --profile <root>/profile.json --ledger <root>/ledger.sqlite \
 | `jinn-engine-default` | The SWITCHABLE slot — engine id `default`, served by the echo package at kit time. |
 | `jinn-engine-claude` | Mounted only when the `claude` CLI is on this host. |
 | `jinn-engine-codex` | Mounted only when the `codex` CLI is on this host. |
+| `jinn-engine-spawn` | The PROCESS-LIFECYCLE witness — engine id `spawn`, the echo package in its spawning shape on POSIX `sleep`/`env`. Mounted only when this host has `sleep`, `env` and `sh`. |
 | `jinn-engine-probe` | The consumer: one prompt through engine `default` on a schedule, recorded under `engine-probe/`. |
 | the api trio, the settings pair, the cron pair | Unchanged, from `profiles/operator-api` and `profiles/cron`. |
 
@@ -66,6 +67,24 @@ seam's event topic (a listen grant), a clock, and a `jinn:fs` scope on its
 own directory. The API holds one grant per engine it may route to — so an
 operator API that may run the echo engine and not a metered one is a
 profile edit, not a code path.
+
+## The lifecycle witness
+
+Every claim about a CHILD — a cancel that kills it, a suspend that does not
+let it outlive its incarnation, an executable the exec allowlist refuses, an
+environment the env policy bounds — needs a real child, and a vendor CLI is
+absent exactly when those claims matter most: in CI, and in an independent
+verification that declines to spend a metered vendor fixture. So the kit
+mounts `jinn-engine-spawn`: the echo package with a `command`, driving
+`sleep` (a child reliably alive when a kill lands) and `env` (a child that
+reports what it can see). Its `jinn:process` grant names both and no more,
+its env allowlist is the same `["HOME", "PATH"]` the vendor providers hold,
+and its `config.data` also carries the absolute path of an executable the
+allowlist does NOT admit — read by the refusal proof out of the document,
+never written into a tracked file.
+
+A host without those POSIX utilities mounts no witness, and the proofs that
+need one skip loudly rather than passing quietly.
 
 The real-composition proofs for this tree live in
 `tests/composition/tests/engines.rs`.
