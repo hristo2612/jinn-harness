@@ -1,7 +1,8 @@
 # The operator-API seam's HTTP provider guest: holds one `jinn:net`
 # loopback listener at its configured port, polls it from one `jinn:clock`
 # periodic alarm, and turns every HTTP request into ONE granted contract
-# call on the seam's consumers (`jinn:api-status`, `jinn:api-profile`).
+# call on the seam's consumers (`jinn:api-status`, `jinn:api-profile`) or
+# on the settings seam (`jinn:settings`, whose answers share the envelope).
 # Transport only — the definition owns the schema. Compiles for
 # wasm32-unknown-unknown ONLY and is deliberately NOT a workspace member
 # (see the workspace manifest's note); `api-kit` builds and encodes it.

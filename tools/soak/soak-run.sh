@@ -15,11 +15,19 @@
 # health check and §Stop expect, and the exit status launchd sees is the
 # daemon's own (which is what `KeepAlive.SuccessfulExit=false` keys on).
 #
-# Absolute `--profile`/`--ledger` paths are the wrapper's canonical form.
-# They are no longer a workaround: since pin 9e61e47 the daemon resolves a
-# relative profile path itself and arms its watcher BEFORE writing any
-# boot evidence (FINDINGS.md #18 closed); the start evidence an operator
-# waits for is the daemon's readiness line in jinnd.log (SOAK.md §Start).
+# Absolute paths are the wrapper's canonical form. They are no longer a
+# workaround: since pin 9e61e47 the daemon resolves a relative profile
+# path itself and arms its watcher BEFORE writing any boot evidence
+# (FINDINGS.md #18 closed); the start evidence an operator waits for is
+# the daemon's readiness line in jinnd.log (SOAK.md §Start).
+#
+# Since the sixth bump (pin 57360cc, the operator API mounted) the
+# profile sits INSIDE the data root — `$SOAK/data/profile.json` — so the
+# api consumers can read the document of record through their scoped
+# `jinn:fs` (FINDINGS.md #25); `--artifacts` and `--data` are therefore
+# passed explicitly (the daemon's defaults are cwd-relative, and the
+# profile's directory is no longer the root). The data root itself, the
+# ledger and the retention store did not move.
 set -eu
 
 SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
@@ -53,5 +61,7 @@ printf '%s started (launchd; reason=%s): jinnd %s (pin %s)\n' \
 printf '%s\n' "$$" >"$SOAK/run/jinnd.pid"
 
 exec "$SOAK/bin/jinnd" \
-    --profile "$SOAK/profile.json" \
-    --ledger "$SOAK/ledger.sqlite"
+    --profile "$SOAK/data/profile.json" \
+    --ledger "$SOAK/ledger.sqlite" \
+    --artifacts "$SOAK/artifacts" \
+    --data "$SOAK/data"
