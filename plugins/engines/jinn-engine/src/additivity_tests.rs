@@ -61,11 +61,12 @@ impl Rng {
     }
 }
 
-/// A `{"$secret": ...}` reference is the SETTINGS seam's closed shape —
-/// `jinn_settings::is_secret_ref` refuses an object with a second key, so
-/// a reference carrying an extra one is not a reference. It is the one
-/// nested surface this seam does not inject into; the definition README
-/// names it.
+/// A `{"$secret": ...}` reference is the SETTINGS seam's closed shape: its
+/// decoder REFUSES an object with a second key, so a reference carrying
+/// an extra one is not a reference. It is the one nested surface this
+/// preservation property does not inject into — what it owes instead is
+/// the refusal, proven by
+/// [`a_secret_reference_carrying_a_sibling_is_refused_naming_the_surface`].
 fn is_closed(object: &serde_json::Map<String, Value>) -> bool {
     object.contains_key("$secret")
 }
@@ -406,7 +407,13 @@ fn a_secret_reference_carrying_a_sibling_is_refused_naming_the_surface() {
         "api-version": API_VERSION, "engine": "default", "prompt": "ok",
         "secrets": { "ENGINE_API_KEY": { "$secret": "engines/vendor" } }
     });
-    assert_eq!(round_trip::<RunRequest>(&good), good);
+    let decoded: RunRequest = serde_json::from_value(good).expect("a reference decodes");
+    assert_eq!(
+        decoded.secrets["ENGINE_API_KEY"],
+        SecretRef {
+            secret: "engines/vendor".to_owned()
+        }
+    );
 }
 
 /// Every closed surface refuses through ONE path, so the message always

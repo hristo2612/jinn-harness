@@ -102,12 +102,19 @@ rest map uniformly, and the property test plants unknown keys at random
 depths through the whole inventory rather than checking a table of
 examples.
 
-**The named non-additive surfaces.** Two, deliberately, and nothing else:
+**The named non-additive surfaces.** Two, deliberately, and nothing else.
+A closed surface **REFUSES** what it cannot name: it never drops it and
+never guesses. A surface that quietly discarded an unknown field would be
+the same silent-wrong-answer defect additivity exists to prevent, only
+with a README entry as its disguise — the sender is told the document was
+understood. Both refusals go through the ONE shared
+`jinn_settings::closed`, so the error always names the surface that
+refused (`every_closed_surface_names_itself_when_it_refuses`).
 
 | Surface | Why it is closed | What happens instead |
 |---|---|---|
-| `{"$secret": "<key>"}` | The settings seam's own shape, whose gate refuses an object with a second key — a reference carrying extras is not a reference. One home per fact: it is not this seam's to widen. | Extra keys make it fail `is_secret_ref`, so the request is refused rather than half-read. |
-| The closed value spaces — `effort`, `tools.mode`, `state`, `code` | An enum has nowhere to put a value it cannot name, and guessing which known value a future `effort: "ultra"` meant is the silent-wrong-answer shape this seam forbids. | A LOUD decode error naming the value. Never a default, never a drop. |
+| `{"$secret": "<key>"}` | The settings seam's own shape — a reference carrying extras is not a reference. One home per fact: it is not this seam's to widen. And preservation would be the WRONG answer here even if it were: an unknown key must never ride along beside a credential name, which makes refusal a security property rather than a schema preference. | The decoder itself refuses, naming the surface and the sibling key. The request never half-reads. |
+| The closed value spaces — `effort`, `tools.mode`, `state`, `code` | An enum has nowhere to put a value it cannot name, and guessing which known value a future `effort: "ultra"` meant is the silent-wrong-answer shape this seam forbids. | A LOUD decode error naming the surface, the value, and what the surface admits. Never a default, never a drop. |
 
 ## `Runs` — the shared registry
 

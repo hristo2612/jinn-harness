@@ -47,10 +47,13 @@
 //!
 //! **The named exceptions.** Two surfaces here are deliberately closed,
 //! and the definition README says so beside this: a `{"$secret": ...}`
-//! reference (the settings seam's own shape, whose gate refuses a second
-//! key) and the closed value spaces ([`Effort`], [`ToolMode`],
-//! [`RunState`], [`ErrorCode`]), where a value this version cannot name
-//! is a LOUD decode error rather than a guess.
+//! reference (the settings seam's own shape) and the closed value spaces
+//! ([`Effort`], [`ToolMode`], [`RunState`], [`ErrorCode`]). Closed means
+//! REFUSES — both go through the one shared [`closed`], so unknown
+//! content is a loud decode error naming the surface, never a drop and
+//! never a guess. A closed surface that quietly discarded what it could
+//! not name would be the additivity defect itself, wearing a README entry
+//! as a disguise.
 //!
 //! # Secrets
 //!
@@ -64,7 +67,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub use jinn_settings::{is_secret_ref, SecretRef, SECRET_REF_KEY};
+pub use jinn_settings::{closed, is_secret_ref, SecretRef, SECRET_REF_KEY, SECRET_REF_SURFACE};
 
 #[cfg(test)]
 mod additivity_tests;
@@ -122,6 +125,38 @@ macro_rules! additive {
     };
 }
 
+/// A CLOSED VALUE SPACE, decoded through the ONE shared refusal
+/// ([`closed`], whose home is the crate that first declared a closed wire
+/// surface). An enum has nowhere to put a value it cannot name, so it
+/// refuses — never a default, never the nearest known variant, and never
+/// a drop.
+///
+/// It is hand-written rather than derived for exactly one reason: serde's
+/// own refusal names the admitted variants but not the SURFACE that
+/// refused, and an operator reading `effort` refused wants to know it was
+/// `effort`. The hazard a hand-written table carries — a name here
+/// disagreeing with what `Serialize` emits — is closed by
+/// `every_closed_variant_round_trips_through_its_own_encoding`.
+macro_rules! closed_value_space {
+    ($type:ty, $surface:literal, { $($name:literal => $variant:expr),+ $(,)? }) => {
+        impl<'de> Deserialize<'de> for $type {
+            fn deserialize<D: serde::Deserializer<'de>>(
+                deserializer: D,
+            ) -> Result<Self, D::Error> {
+                let named = String::deserialize(deserializer)?;
+                match named.as_str() {
+                    $($name => Ok($variant),)+
+                    _ => Err(closed(
+                        $surface,
+                        &format!("the value `{named}`"),
+                        &[$($name),+].join(" | "),
+                    )),
+                }
+            }
+        }
+    };
+}
+
 /// The answer envelope's version (additive within `0.x`).
 pub const API_VERSION: &str = "0.1";
 
@@ -162,8 +197,9 @@ pub fn engine_id_of(contract: &str) -> Option<&str> {
         .filter(|id| !id.is_empty())
 }
 
-/// How hard the engine should think, when it has such a control.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+/// How hard the engine should think, when it has such a control. A
+/// CLOSED value space (`closed_value_space!` below).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Effort {
     Low,
@@ -172,8 +208,10 @@ pub enum Effort {
 }
 
 /// What the run may do besides answer. Default-deny: an absent policy is
-/// [`ToolMode::Denied`], never "whatever the CLI defaults to".
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+/// [`ToolMode::Denied`], never "whatever the CLI defaults to". A CLOSED
+/// value space: the default is for an ABSENT policy, never for one this
+/// version cannot read.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ToolMode {
     /// No tool may run.
@@ -760,8 +798,8 @@ pub struct RunEvent {
     pub event: Event,
 }
 
-/// Where a run is.
-#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+/// Where a run is. A CLOSED value space.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RunState {
     /// Accepted, the child not yet spawned.
@@ -818,8 +856,9 @@ pub struct RunRecord {
 }
 
 /// Why an engine call was refused. Same discipline as the settings seam:
-/// callers classify by CASE, never by folding a message.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+/// callers classify by CASE, never by folding a message. A CLOSED value
+/// space.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum ErrorCode {
     /// Malformed request.
@@ -834,6 +873,32 @@ pub enum ErrorCode {
     /// The provider tried and the run failed.
     Failed,
 }
+
+// The closed value spaces, all four through the one refusal. The names
+// are the kebab-case wire spellings `Serialize` emits.
+closed_value_space!(Effort, "`effort`", {
+    "low" => Self::Low,
+    "medium" => Self::Medium,
+    "high" => Self::High,
+});
+closed_value_space!(ToolMode, "`tools.mode`", {
+    "denied" => Self::Denied,
+    "allowlist" => Self::Allowlist,
+});
+closed_value_space!(RunState, "`state`", {
+    "starting" => Self::Starting,
+    "running" => Self::Running,
+    "exited" => Self::Exited,
+    "cancelled" => Self::Cancelled,
+    "failed" => Self::Failed,
+});
+closed_value_space!(ErrorCode, "`code`", {
+    "invalid" => Self::Invalid,
+    "not-found" => Self::NotFound,
+    "refused" => Self::Refused,
+    "unavailable" => Self::Unavailable,
+    "failed" => Self::Failed,
+});
 
 /// A typed refusal.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]

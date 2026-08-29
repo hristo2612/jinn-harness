@@ -98,6 +98,23 @@ fn a_secret_reference_is_typed_and_a_bare_secret_is_refused() {
     assert_eq!(wire.secret, "k");
 }
 
+/// The closed surface REFUSES on decode — it does not quietly drop the
+/// sibling and answer a well-formed reference. Consumers of this type in
+/// other seams inherit exactly this (`closed`, and the engines seam's
+/// `a_secret_reference_carrying_a_sibling_is_refused_naming_the_surface`).
+#[test]
+fn a_sibling_inside_a_secret_reference_is_refused_naming_the_surface() {
+    let refused = serde_json::from_value::<SecretRef>(json!({ "$secret": "k", "scope": "eu" }))
+        .expect_err("a closed surface refuses");
+    let said = refused.to_string();
+    assert!(said.contains("$secret"), "{said}");
+    assert!(said.contains("scope"), "{said}");
+    assert!(said.contains("closed"), "{said}");
+    // A reference that names nothing is still the validator's call, not
+    // the decoder's: the shape is well formed.
+    assert!(serde_json::from_value::<SecretRef>(json!({ "$secret": "" })).is_ok());
+}
+
 #[test]
 fn a_patch_is_planned_into_the_layer_its_keys_name() {
     let declaration = declaration();
