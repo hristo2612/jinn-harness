@@ -213,3 +213,67 @@ fn wrapper_dry_run_classifies_each_start() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// `kern.boottime` is the wrapper's ONLY evidence for a boot. If it cannot
+/// be read — sysctl absent, or its `{ sec = N, usec = M }` shape changed
+/// under a future macOS — the wrapper must say so. Falling back to a zero
+/// epoch is not a safe default: `date -r 0` prints 1970 quite happily, and
+/// the death line would then read `host up since 1970-01-01T00:00:00Z`,
+/// asserting a boot time nobody measured. That is the same class of defect
+/// this packet exists to close, one level down.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_unreadable_host_boot_time_reads_unknown_never_epoch_zero() {
+    let root = std::env::temp_dir().join(format!("soak-boottime-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for dir in ["logs", "run", "stub"] {
+        std::fs::create_dir_all(root.join(dir)).expect("scratch dir");
+    }
+    std::fs::write(
+        root.join("logs/jinnd.log"),
+        "2026-08-29T14:18:19.162106Z fire\n",
+    )
+    .expect("log");
+    std::fs::write(root.join("run/jinnd.pid"), "75738\n").expect("pid");
+    use std::os::unix::fs::PermissionsExt as _;
+    for (name, body) in [
+        (
+            "launchctl",
+            "#!/bin/sh\nprintf '{\\n\\t\"LastExitStatus\" = 15;\\n};\\n'\n",
+        ),
+        // sysctl that answers nothing, as an absent or reshaped one would.
+        ("sysctl", "#!/bin/sh\nexit 1\n"),
+    ] {
+        let stub = root.join("stub").join(name);
+        std::fs::write(&stub, body).expect("stub");
+        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+    let output = Command::new("/bin/sh")
+        .arg(soak_dir().join("soak-run.sh"))
+        .env("SOAK", &root)
+        .env("SOAK_DRY_RUN", "1")
+        .env(
+            "PATH",
+            format!(
+                "{}:{}",
+                root.join("stub").display(),
+                std::env::var("PATH").unwrap_or_default()
+            ),
+        )
+        .output()
+        .expect("/bin/sh");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let out = String::from_utf8_lossy(&output.stdout);
+    assert!(out.contains("host_boot=unknown"), "{out}");
+    assert!(
+        !out.contains("1970"),
+        "a zero epoch is not a boot time: {out}"
+    );
+    // With no evidence of a boot, the wrapper must not assert one.
+    assert!(!out.contains("reason=boot"), "{out}");
+    let _ = std::fs::remove_dir_all(&root);
+}

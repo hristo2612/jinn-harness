@@ -55,8 +55,17 @@ label=run.jinn.harness-soak
 #   first-supervised-start  no previous pid on record: provenance unknown,
 #                           never asserted as a boot
 boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/^{ sec = \([0-9]*\),.*/\1/p')
-boot_sec=${boot_sec:-0}
-boot_at=$(date -u -r "$boot_sec" +%FT%TZ 2>/dev/null || echo unknown)
+if [ -n "$boot_sec" ]; then
+    boot_at=$(date -u -r "$boot_sec" +%FT%TZ 2>/dev/null || echo unknown)
+else
+    # No reading: sysctl absent, or `{ sec = N, usec = M }` reshaped under a
+    # future macOS. Say `unknown` rather than fall back to the zero epoch —
+    # `date -r 0` prints 1970 quite happily, and the death line would then
+    # assert a boot time nobody measured. A zero also keeps the comparison
+    # below conservative: with no evidence of a boot, none is claimed.
+    boot_sec=0
+    boot_at=unknown
+fi
 prev_pid=$(cat "$SOAK/run/jinnd.pid" 2>/dev/null || true)
 prev_start=$(stat -f %m "$SOAK/run/jinnd.pid" 2>/dev/null || echo 0)
 # launchd's LastExitStatus is a wait status: a signal in the low seven

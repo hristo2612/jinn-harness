@@ -117,8 +117,11 @@ daemon last said — `previous jinnd <pid> ended UNCLEAN (…): killed by
 signal 15 (SIGTERM); last log line <ts>` (or `died with the host`). The
 duty gap is `last log line` → the new readiness line. `launchd list`'s
 `LastExitStatus` is a wait status (signal in the low bits, exit code in
-the high byte); the wrapper decodes it. To see the decision without
-starting anything: `SOAK_DRY_RUN=1 sh "$SOAK/bin/soak-run.sh"`.
+the high byte); the wrapper decodes it. When `kern.boottime` cannot be
+read at all the record says `host_boot=unknown` and no boot is claimed —
+never a zero epoch, which would assert a 1970 boot nobody measured. To
+see the decision without starting anything:
+`SOAK_DRY_RUN=1 sh "$SOAK/bin/soak-run.sh"`.
 
 **Operator verbs** (`bootstrap`/`bootout`/`kickstart`, the modern `launchctl`
 lane — pick one lane and stay in it; never mix in `load`/`unload`):
