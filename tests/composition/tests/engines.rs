@@ -903,13 +903,18 @@ fn the_output_budget_cuts_the_answer_and_says_so_on_the_wire() {
         record["text"].as_str().unwrap_or_default().len() <= 32,
         "{record}"
     );
-    assert!(answer_bytes_on_the_wire(events) <= 32, "{record}");
+    assert!(answer_bytes_in_the_record(events) <= 32, "{record}");
     daemon.interrupt();
 }
 
-/// Every answer byte this run put on the bus: the payload of each
-/// text-bearing event, which is what a listener actually receives.
-fn answer_bytes_on_the_wire(events: &[serde_json::Value]) -> usize {
+/// Every answer byte in the run's RECORD: the payload of each
+/// text-bearing event `run-get` answers with. It is the same series the
+/// bus carried, read from the record rather than from a listener — the
+/// name says record because that is what it reads. What a listener
+/// genuinely received is a different measurement, and the output bound's
+/// own proof takes it from one:
+/// [`listener_received_bytes`].
+fn answer_bytes_in_the_record(events: &[serde_json::Value]) -> usize {
     events
         .iter()
         .filter(|event| event["kind"] == "delta" || event["kind"] == "turn-end")
@@ -925,10 +930,20 @@ fn answer_bytes_on_the_wire(events: &[serde_json::Value]) -> usize {
 /// delta and accounted for it afterwards, so a run declaring
 /// `output-bytes: 32` put 746 bytes on the bus and then said it had been
 /// truncated. A budget checked after the bytes have moved bounds nothing
-/// — the flood already reached the bus and the consumer. So the assertion
-/// is on what a LISTENER received, and the child is one that writes far
-/// past its allowance: the environment reporter, whose output is orders
-/// of magnitude over the 32 bytes this run declares.
+/// — the flood already reached the bus and the consumer.
+///
+/// So the load-bearing measurement is taken AT A LISTENER: the probe
+/// consumer, repointed by profile edit at the witness engine, counts the
+/// bytes of every text-bearing event it is handed off the bus and writes
+/// the total into its own record ([`listener_received_bytes`]). A
+/// measurement read out of `run-get` would be the seam reporting on
+/// itself — a real number, but not the one this test's name claims, and
+/// that is how a bound comes to look enforced while it is not. The
+/// record's own series is still checked, under a name that says record.
+///
+/// The child writes far past its allowance: the environment reporter,
+/// whose output is orders of magnitude over the 32 bytes these runs
+/// declare.
 #[test]
 fn a_child_writing_far_past_its_budget_puts_at_most_the_budget_on_the_wire() {
     let Some((daemon, port, root)) = booted("engines-output-bound") else {
@@ -959,13 +974,13 @@ fn a_child_writing_far_past_its_budget_puts_at_most_the_budget_on_the_wire() {
     let record = settled(&daemon, port, SPAWN_ENGINE, &run);
     let events = record["events"].as_array().expect("events");
 
-    // The load-bearing assertion: what reached the bus is inside the
-    // bound. A child that wrote hundreds of bytes does not get to spend
-    // them just because it wrote them.
-    let on_the_wire = answer_bytes_on_the_wire(events);
+    // The record's own series is inside the bound. This is the seam
+    // reporting on itself; the listener measurement below is the claim
+    // this test's name makes.
+    let in_the_record = answer_bytes_in_the_record(events);
     assert!(
-        on_the_wire <= BUDGET,
-        "a child writing far past its budget put {on_the_wire} bytes on the wire: {record}"
+        in_the_record <= BUDGET,
+        "a child writing far past its budget recorded {in_the_record} answer bytes: {record}"
     );
     assert!(
         record["text"].as_str().unwrap_or_default().len() <= BUDGET,
@@ -989,5 +1004,59 @@ fn a_child_writing_far_past_its_budget_puts_at_most_the_budget_on_the_wire() {
             .last()
             .is_none_or(|pid| !alive(*pid))
     });
+
+    // THE LOAD-BEARING MEASUREMENT, taken at a listener. The probe is a
+    // real guest holding the seam's `jinn:engine/event` listen grant; it
+    // folds every event the kernel hands it and reports the total
+    // answer bytes it was handed. Repointing it is a profile edit and
+    // nothing else — the grant per ENGINE moves with the id it routes to.
+    let received = listener_received_bytes(&daemon, BUDGET);
+    assert!(
+        received <= BUDGET as u64,
+        "a listener was handed {received} answer bytes for a run bounded at {BUDGET}"
+    );
     daemon.interrupt();
+}
+
+/// Repoints the probe consumer at the witness engine under `budget`
+/// output bytes and answers what it RECEIVED: the byte total it
+/// accumulated from the text-bearing events the kernel delivered to its
+/// listener, out of its own record. Nothing here is read from `run-get` —
+/// that is the point.
+fn listener_received_bytes(daemon: &Daemon, budget: usize) -> u64 {
+    daemon.edit_profile_restarting(PROBE, |document| {
+        let config = &mut entry_mut(document, PROBE)["config"];
+        for grant in config["grants"].as_array_mut().expect("the probe's grants") {
+            if grant.as_str() == Some(format!("jinn:engine.{DEFAULT_ENGINE}").as_str()) {
+                *grant = serde_json::json!(format!("jinn:engine.{SPAWN_ENGINE}"));
+            }
+        }
+        let data = &mut config["data"];
+        data["engine"] = serde_json::json!(SPAWN_ENGINE);
+        data["budget"] = serde_json::json!({ "wall-ms": 60_000, "output-bytes": budget });
+    });
+    daemon.eventually(
+        "the probe to record a run it listened to on the witness",
+        || {
+            daemon
+                .data_json("engine-probe/last.json")
+                .is_some_and(|record| {
+                    record["engine"] == SPAWN_ENGINE && record["outcome"] == "exited"
+                })
+        },
+    );
+    let record = daemon
+        .data_json("engine-probe/last.json")
+        .expect("the probe's record");
+    // The count is only worth reading if the listener actually saw the
+    // run: events arrived, in order, and the provider said it cut.
+    assert!(
+        record["events"].as_u64().unwrap_or_default() > 1,
+        "the listener saw the run: {record}"
+    );
+    assert_eq!(record["order-ok"], true, "{record}");
+    assert_eq!(record["provider-truncated"], true, "{record}");
+    record["text-bytes"]
+        .as_u64()
+        .unwrap_or_else(|| panic!("the listener's byte count: {record}"))
 }
