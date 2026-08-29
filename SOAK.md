@@ -381,7 +381,22 @@ kernel's own view and holds no alarm; the scheduler consumes its job
 table through `jinn:settings`). The idle-growth measurement that
 qualifies the API is in the next paragraph.
 
-**Idle ledger growth with the API mounted (2026-08-29):** IDLE_EVIDENCE
+**Idle ledger growth with the API mounted (2026-08-29):** measured over a 971 s window starting right
+after the two post-boot operator requests (ledger rows 1926 → 1948, no
+operator request made inside it). The window contained exactly one
+scheduler wake (the 15-minute cadence): +22 rows, ALL attributed to the
+cron duty — `cron-scheduler` 10 (the wake, its settings re-declaration,
+state write, fire, run record, history append), `health-snapshot` 10
+(its report chain), `jinn-settings-profile` 2 (the declaration's overlay
+read) — and ZERO rows attributed to `jinn-api-http`, `jinn-status`,
+`jinn-profile-edit` or `jinn-settings-store`. The mounted API's idle cost
+is 0 rows/min (the poll shape FINDINGS.md #23 measured was ≈ 8 rows/s);
+the settings seam adds 4 rows per scheduler wake (`ContractResolved` +
+`declare` on the scheduler, `ContractResolved` + `overlays` on the
+provider) — 384 rows/day at this cadence, the price of a layer that is
+guest knowledge (FINDINGS.md #27). The +7d audit's per-tick baseline is
+therefore ≈ 22 rows/wake from this bump on (≈ 5 before the first bump,
+≈ 15 after it). Recorded in `ops.log` beside the bump line.
 
 ## The +7d audit (closes the soak)
 

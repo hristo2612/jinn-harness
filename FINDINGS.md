@@ -772,7 +772,9 @@ reads, answers, closes; the idle-poll close is replaced by a bound on
 open connections. The composition suite asserts zero `AlarmWake` rows on
 the provider's fiber and one `NetReadable` per readiness transition.
 The soak measurement (SOAK.md §Pin bump mid-soak, sixth bump) is the
-idle-growth evidence: the API mounted, zero ledger rows per idle minute.
+idle-growth evidence: the API mounted in the soak, a 971 s idle window
+added ZERO rows attributed to the api entries (the +22 rows in it were
+the cron duty's one wake).
 
 ## 24. A `jinn:fs` grant cannot be attenuated to read-only
 
