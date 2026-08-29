@@ -111,3 +111,105 @@ fn shell_assets_parse_and_log_their_reason() {
         "ops.log is the soak's evidence surface"
     );
 }
+
+/// The wrapper's account of an unplanned restart must be checkable, not
+/// asserted (PLA-297, 2026-08-29: a KeepAlive relaunch after a SIGTERM was
+/// written as `reason=boot` on a host that had not rebooted). The decision
+/// keys on the host's boot time against the previous start — never on a
+/// scratch file that can go missing — and the previous instance's end is
+/// recorded from what launchd retained, before the start line.
+#[test]
+fn wrapper_decides_boot_from_uptime_and_records_the_previous_end() {
+    let wrapper = read("soak-run.sh");
+    for needle in [
+        "kern.boottime",
+        "LastExitStatus",
+        "first-supervised-start",
+        "SOAK_DRY_RUN",
+        "killed by signal",
+    ] {
+        assert!(wrapper.contains(needle), "wrapper lacks {needle:?}");
+    }
+    assert!(
+        !wrapper.contains("launchd.hostboot"),
+        "the boot stamp file is retired: uptime is the evidence"
+    );
+}
+
+/// Drives the wrapper's decision in dry-run mode over a scratch root with
+/// a stub `launchctl`: each start reason and the decoded previous end.
+#[cfg(target_os = "macos")]
+#[test]
+fn wrapper_dry_run_classifies_each_start() {
+    let root = std::env::temp_dir().join(format!("soak-dry-run-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    for dir in ["logs", "run", "stub"] {
+        std::fs::create_dir_all(root.join(dir)).expect("scratch dir");
+    }
+    // A colored daemon log whose last timestamp is the last-seen-alive bound.
+    std::fs::write(
+        root.join("logs/jinnd.log"),
+        "\u{1b}[2m2026-08-29T14:18:19.162106Z\u{1b}[0m INFO fs effect\n",
+    )
+    .expect("log");
+    let stub = root.join("stub/launchctl");
+    std::fs::write(
+        &stub,
+        "#!/bin/sh\nprintf '{\\n\\t\"LastExitStatus\" = 15;\\n};\\n'\n",
+    )
+    .expect("stub");
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let path = format!(
+        "{}:{}",
+        root.join("stub").display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let dry_run = |root: &Path| -> String {
+        let output = Command::new("/bin/sh")
+            .arg(soak_dir().join("soak-run.sh"))
+            .env("SOAK", root)
+            .env("SOAK_DRY_RUN", "1")
+            .env("PATH", &path)
+            .output()
+            .expect("/bin/sh");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    };
+
+    // No previous pid: provenance unknown, never asserted as a boot.
+    assert!(dry_run(&root).contains("reason=first-supervised-start"));
+
+    // Previous start AFTER this host booted, previous end SIGTERM: a
+    // KeepAlive restart, with the death decoded and the last-seen bound.
+    std::fs::write(root.join("run/jinnd.pid"), "75738\n").expect("pid");
+    let out = dry_run(&root);
+    assert!(out.contains("reason=keepalive-restart"), "{out}");
+    assert!(out.contains("killed by signal 15"), "{out}");
+    assert!(
+        out.contains("last_seen=2026-08-29T14:18:19.162106Z"),
+        "{out}"
+    );
+
+    // Previous start BEFORE this host booted: the daemon died with the host.
+    let touch = Command::new("touch")
+        .args(["-t", "200001010000"])
+        .arg(root.join("run/jinnd.pid"))
+        .status()
+        .expect("touch");
+    assert!(touch.success());
+    assert!(dry_run(&root).contains("reason=boot"));
+
+    // An operator's reason file wins, and dry-run does not consume it.
+    std::fs::write(root.join("run/launchd.reason"), "planned-start").expect("reason");
+    assert!(dry_run(&root).contains("reason=planned-start"));
+    assert!(
+        root.join("run/launchd.reason").is_file(),
+        "dry-run consumed the reason"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

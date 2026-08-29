@@ -32,28 +32,84 @@ set -eu
 
 SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
 mkdir -p "$SOAK/logs" "$SOAK/run"
+label=run.jinn.harness-soak
 
-# From here, anything the daemon says on stdout/stderr is the soak log.
-exec >>"$SOAK/logs/jinnd.log" 2>&1
+# --- What happened to the previous instance, and why this start happened.
+#
+# The wrapper exec's the daemon, so nobody is standing beside it when it
+# dies: the record of a death is written HERE, at the next start, from
+# what launchd retained (the daemon's own wait status) and what the daemon
+# last said (its final log line) — and it is written BEFORE the start
+# line, so the audit reads the death, then the recovery.
+#
+# The reason vocabulary (what the +7d audit counts):
+#   adopt|planned-start     the operator asked for it (a reason file,
+#                           dropped by SOAK.md's planned-start step)
+#   boot                    the host booted AFTER the previous start: the
+#                           daemon died with the host (checked against
+#                           kern.boottime, never against a scratch file —
+#                           2026-08-29 a missing stamp wrote `boot` for a
+#                           SIGTERM on a host that had not rebooted)
+#   keepalive-restart       same host boot, nobody asked: launchd replaced
+#                           a daemon that ended uncleanly
+#   first-supervised-start  no previous pid on record: provenance unknown,
+#                           never asserted as a boot
+boot_sec=$(sysctl -n kern.boottime 2>/dev/null | sed -n 's/^{ sec = \([0-9]*\),.*/\1/p')
+boot_sec=${boot_sec:-0}
+boot_at=$(date -u -r "$boot_sec" +%FT%TZ 2>/dev/null || echo unknown)
+prev_pid=$(cat "$SOAK/run/jinnd.pid" 2>/dev/null || true)
+prev_start=$(stat -f %m "$SOAK/run/jinnd.pid" 2>/dev/null || echo 0)
+# launchd's LastExitStatus is a wait status: a signal in the low seven
+# bits, an exit code in the high byte (the table form of `launchctl list`
+# shows a signal as a negative number; the detail form as positive).
+raw=$(launchctl list "$label" 2>/dev/null | sed -n 's/.*"LastExitStatus" = \(-*[0-9]*\);.*/\1/p')
+signal_name() { kill -l "$1" 2>/dev/null || echo '?'; }
+case "${raw:-}" in
+    '') prev_end="end status unknown (launchd retained none)" ;;
+    -*) prev_end="killed by signal ${raw#-} (SIG$(signal_name "${raw#-}"))" ;;
+    *)  if [ $((raw & 127)) -ne 0 ]; then
+            prev_end="killed by signal $((raw & 127)) (SIG$(signal_name $((raw & 127))))"
+        else
+            prev_end="exit $((raw >> 8))"
+        fi ;;
+esac
+esc=$(printf '\033')
+last_seen=$(LC_ALL=C sed "s/${esc}\[[0-9;]*m//g" "$SOAK/logs/jinnd.log" 2>/dev/null \
+    | grep -o '^[0-9][0-9-]*T[0-9:.]*Z' | tail -1)
+last_seen=${last_seen:-unknown}
 
-# Why this start happened, in the audit's vocabulary:
-#   adopt|planned-start  the operator asked for it (a reason file, dropped
-#                        by SOAK.md's planned-start step and consumed here)
-#   boot                 first supervised start since this host booted
-#   keepalive-restart    same host boot, nobody asked — launchd replaced a
-#                        daemon that exited uncleanly
 reason_file="$SOAK/run/launchd.reason"
-hostboot_file="$SOAK/run/launchd.hostboot"
-hostboot=$(sysctl -n kern.boottime 2>/dev/null || echo unknown)
 if [ -f "$reason_file" ]; then
     reason=$(cat "$reason_file")
-    rm -f "$reason_file"
-elif [ ! -f "$hostboot_file" ] || [ "$hostboot" != "$(cat "$hostboot_file")" ]; then
+elif [ -z "$prev_pid" ]; then
+    reason=first-supervised-start
+elif [ "$boot_sec" -gt "$prev_start" ]; then
     reason=boot
 else
     reason=keepalive-restart
 fi
-printf '%s\n' "$hostboot" >"$hostboot_file"
+
+# Dry run (the harness-pin gate, and an operator checking the decision):
+# print it, touch nothing, start nothing.
+if [ "${SOAK_DRY_RUN:-}" = 1 ]; then
+    printf 'reason=%s prev_pid=%s prev_end="%s" last_seen=%s host_boot=%s\n' \
+        "$reason" "${prev_pid:-none}" "$prev_end" "$last_seen" "$boot_at"
+    exit 0
+fi
+rm -f "$reason_file"
+
+# From here, anything the daemon says on stdout/stderr is the soak log.
+exec >>"$SOAK/logs/jinnd.log" 2>&1
+
+now=$(date -u +%FT%TZ)
+case "$reason" in
+    boot)
+        printf '%s previous jinnd %s died with the host (unplanned): last log line %s; host booted %s; launchd last status: %s\n' \
+            "$now" "$prev_pid" "$last_seen" "$boot_at" "$prev_end" >>"$SOAK/logs/ops.log" ;;
+    keepalive-restart)
+        printf '%s previous jinnd %s ended UNCLEAN (unplanned; host up since %s): %s; last log line %s; KeepAlive relaunching\n' \
+            "$now" "$prev_pid" "$boot_at" "$prev_end" "$last_seen" >>"$SOAK/logs/ops.log" ;;
+esac
 
 pin=$(cat "$SOAK/bin/jinnd.commit" 2>/dev/null || echo unknown)
 printf '%s started (launchd; reason=%s): jinnd %s (pin %s)\n' \

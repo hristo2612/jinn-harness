@@ -29,7 +29,7 @@ SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
 | `$SOAK/data/` | The daemon's data root: `cron/` (state, the append-only history log, per-fire run records), `health/` (the consumer's reports), and since the sixth bump `profile.json` (the daemon's watcher is non-recursive on the profile's directory, so the fibers' subdirectories never wake it) |
 | `$SOAK/data.inverses/` | The kernel's `jinn:fs` effect-retention store (since pin `41cb2f47`): one durable inverse per live revertible effect, keyed by effect id — the byte curve FINDINGS.md #8 asked for is measured here |
 | `$SOAK/logs/` | `jinnd.log`, `ops.log` (operator actions, one timestamped line each — restarts and the pin bump count toward the +7d audit) |
-| `$SOAK/run/` | `jinnd.pid`; the supervisor's two scratch files, `launchd.hostboot` (the host boot stamp the wrapper compares to tell a reboot from a crash restart) and `launchd.reason` (one word an operator drops to name a planned start; the wrapper consumes it) |
+| `$SOAK/run/` | `jinnd.pid` (its mtime is the previous start's time — the wrapper compares it to `kern.boottime` to tell a reboot from a crash restart); `launchd.reason` (one word an operator drops to name a planned start; the wrapper consumes it) |
 | `$SOAK/meta.json` | Start timestamp + pins, written once at soak start |
 
 ## Setup (how the runtime root is stood up)
@@ -103,8 +103,22 @@ The reason vocabulary is what the +7d audit counts:
 | reason | means |
 |---|---|
 | `adopt` / `planned-start` | an operator start — the reason file was dropped first |
-| `boot` | first supervised start since this host booted (a reboot) |
-| `keepalive-restart` | same host boot, nobody asked: launchd replaced a daemon that exited uncleanly |
+| `boot` | the host booted AFTER the previous start (`kern.boottime` vs the mtime of `run/jinnd.pid`): the daemon died with the host |
+| `keepalive-restart` | same host boot, nobody asked: launchd replaced a daemon that ended uncleanly |
+| `first-supervised-start` | no previous pid on record: provenance unknown, never asserted as a boot |
+
+The boot decision is checked against uptime, never against a scratch file:
+on 2026-08-29 a missing stamp file wrote `reason=boot` for a SIGTERM on a
+host that had not rebooted, and the audit would have read a kill as a
+routine restart. The wrapper `exec`s the daemon, so nobody is standing
+beside it when it dies; for the two unplanned reasons it therefore writes
+the DEATH before the start line, from what launchd retained and what the
+daemon last said — `previous jinnd <pid> ended UNCLEAN (…): killed by
+signal 15 (SIGTERM); last log line <ts>` (or `died with the host`). The
+duty gap is `last log line` → the new readiness line. `launchd list`'s
+`LastExitStatus` is a wait status (signal in the low bits, exit code in
+the high byte); the wrapper decodes it. To see the decision without
+starting anything: `SOAK_DRY_RUN=1 sh "$SOAK/bin/soak-run.sh"`.
 
 **Operator verbs** (`bootstrap`/`bootout`/`kickstart`, the modern `launchctl`
 lane — pick one lane and stay in it; never mix in `load`/`unload`):
