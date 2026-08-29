@@ -34,7 +34,10 @@ closing its round-1 consistency blocker. Entries 29–30 were hit building
 the engines seam on the `3fd7b053` pin (phase 2.3): both are shaped,
 reproducible packet cards, and 30 is the sharpest entry in this file — a
 live composition can permanently lose a contract with no fault, no
-refusal, and no log line.
+refusal, and no log line. Entry 31 was hit adopting the same pin in the
+settings seam and is the entry-26 closure's shadow: the non-blocking
+`patch-entry` is right, and it turned a concealed dispatch hazard into a
+live one.
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -1244,3 +1247,56 @@ in `crates/jinnd-wasm/src/surfaces.rs` (`listen` stages, `provide` does
 not) and `crates/jinnd-wasm/src/broker.rs` (`provide` inserts `peer` into
 the slot directly).
 
+
+## 31. A serial dispatch to a fiber with a pending restart stalls to the guest deadline — no refusal, no diagnostic, no row
+
+Hit adopting `3fd7b05` (jinnd M2-K8) in the settings seam, which the
+engines packet inherited. Entry 26's closure made `patch-entry`
+non-blocking: the call schedules the patched fiber's restart and returns
+at once, which is the right shape and what that entry asked for. But it
+moves a hazard from hidden to live. A guest that patches an entry and
+then makes a `DispatchMode::Serial` call to that same entry's fiber is
+now aiming at an incarnation the loader is in the middle of replacing.
+The dispatch does not fail and does not queue: it waits for a peer that
+will never answer, until the caller's guest deadline expires. The
+blocking `patch-entry` used to conceal this by finishing the restart
+before it returned.
+
+Nothing in the system says so. There is no `Restarting` refusal, no
+ledger row naming the stall, and no way to ask whether a fiber has a
+restart pending — `jinn:introspect` reports the composition, not the
+loader's in-flight work. The operator sees only an HTTP request that
+never answers, and the plugin author sees a call that works on one code
+path and hangs on the other with no signal distinguishing them.
+
+**Workaround shipped:** the settings provider chooses its dispatch mode
+from the layer it just patched — `Serial` on the hot path (the owner
+absorbs the overlay in place, so the answer legitimately waits for it),
+`Emit` on the restart path (the owner re-declares on its own wake, so the
+notice needs no reply). That is correct here only because the provider
+happens to KNOW which layer it wrote. A consumer patching an entry it
+does not own has no such knowledge and no way to acquire it.
+
+**Evidence:** `tests/composition/tests/settings.rs`
+`the_shadowed_refusals_recovery_lands_when_executed` — the shadowed
+refusal's recovery is an ENTRY-layer patch, so it takes the restart path.
+With the serial notice the operator's `PATCH /v1/settings/cron` never
+answers and the request dies on the suite's 45 s bound
+(`api.rs:68`, `WouldBlock`); with the notice fire-and-forget on that path
+the same call answers in well under a second and the test passes. Both
+observed at pin `3fd7b05` on the real daemon, isolated (a single daemon,
+no load contention), reproduced on every run of each variant.
+
+**Packet-card shape:** make the restart visible or make the dispatch
+survive it. Either (a) a serial dispatch to a fiber with a pending
+restart is QUEUED and delivered to the successor incarnation — the
+composability story the paper argues for, and the least surprising
+behaviour; or (b) it is refused typed (`Restarting`), so the caller can
+choose to retry, drop, or downgrade to an emit; or at minimum (c)
+`jinn:introspect` exposes pending-restart state so a guest can pick its
+dispatch mode from the kernel's knowledge instead of reconstructing it
+from its own. (a) and (b) are contract changes; (c) is additive.
+
+*Evidence grade:* packet-card-ready — reproducible in both directions on
+the pinned daemon, with the exact call, the exact deadline, and the
+one-line change that flips it.

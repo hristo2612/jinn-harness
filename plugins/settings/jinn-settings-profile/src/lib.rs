@@ -269,12 +269,15 @@ fn patch(payload: &[u8]) -> Result<Patched, SettingsError> {
     // dispatch waits for an incarnation that is waiting to be swapped,
     // and the operator's call stalls to its deadline. The blocking
     // `patch-entry` used to hide this by finishing the restart first.
-    // The owner absorbs the hot layer in place from this event (serial:
-    // the answer waits for it); a restarted owner re-declares on its own
-    // wake, the event is its notice either way.
+    // FINDINGS.md #31 — this is a workaround, and it is only correct
+    // because this provider KNOWS which layer it just wrote.
+    let notice = match plan.applied {
+        Applied::Hot => DispatchMode::Serial,
+        Applied::Restart => DispatchMode::Emit,
+    };
     emit(
         CHANGED_TOPIC,
-        DispatchMode::Serial,
+        notice,
         &Changed {
             namespace: request.namespace.clone(),
             applied: Some(plan.applied),

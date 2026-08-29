@@ -112,16 +112,20 @@ fn declare_resolve_and_patch_on_both_paths_with_the_c5_c6_transcript() {
         "{}",
         namespaces.raw
     );
+    // A boot-path row: on a loaded box the read can outrun the commit,
+    // so wait for it the way every other ledger assertion in this suite
+    // does (and in `engines.rs`). What is PROVEN is unchanged — the row
+    // must appear, and it must be the scheduler's own granted call.
+    const DECLARE: &str = r#"{"ContractCall":{"contract":"jinn:settings","operation":"declare"}}"#;
+    daemon.eventually("the scheduler's declaration on the record", || {
+        daemon
+            .ledger_rows()
+            .iter()
+            .any(|row| row.entry.as_deref() == Some(SCHEDULER) && row.kind == DECLARE)
+    });
     let rows = daemon.ledger_rows();
     let scheduler = fiber_of(&rows, SCHEDULER);
     let store = fiber_of(&rows, STORE);
-    assert!(
-        rows.iter()
-            .any(|row| row.entry.as_deref() == Some(SCHEDULER)
-                && row.kind
-                    == r#"{"ContractCall":{"contract":"jinn:settings","operation":"declare"}}"#),
-        "the declaration is the scheduler's granted call"
-    );
 
     // HOT PATH: a `jobs` patch lands in the overlay — the STORE entry is
     // patched through `jinn:profile` (its trivial fiber restarts), the
