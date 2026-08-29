@@ -91,8 +91,8 @@ fn patch(path: &str, payload: &[u8]) -> Result<jinn_api::PatchEntryAnswer, ApiEr
 
 fn answer<T: serde::Serialize>(result: Result<T, ApiError>) -> Answer {
     match result {
-        Ok(value) => Answer::Ok(serde_json::to_value(value).expect("an answer encodes")),
-        Err(error) => Answer::Error(error),
+        Ok(value) => Answer::ok(serde_json::to_value(value).expect("an answer encodes")),
+        Err(error) => Answer::error(error),
     }
 }
 
@@ -134,7 +134,7 @@ impl Guest for Edit {
         let answered = match operation.as_str() {
             OP_PROFILE_GET => answer(get(&path)),
             OP_PATCH_ENTRY => answer(patch(&path, &payload)),
-            other => Answer::Error(ApiError::new(
+            other => Answer::error(ApiError::new(
                 ErrorCode::NotFound,
                 format!("unknown operation {other:?}"),
             )),

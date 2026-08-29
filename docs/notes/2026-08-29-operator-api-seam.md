@@ -75,3 +75,20 @@ cron seam's discipline is pure logic in a native crate, thin IO in the
 guest. The codec is transport, so it belongs to the provider, not the
 definition — hence `jinn-api-http-wire` beside `jinn-api-http` rather
 than a module in `jinn-api`.
+
+## Why the answer envelope is a struct, not a bare enum (round 2)
+
+The first edition's `Answer` was the bare externally-tagged enum
+`{"ok": …} | {"error": {…}}`. Serde rejects any sibling of the tag on such
+an enum, so the verifier's probe `{"ok":{"n":1},"future":true}` decoded
+as a `refused` — the one place on the seam where a newer writer's field
+was not preserved, and the one answer shape (`error`) that carried no
+`api-version`. The envelope is now a struct: `api-version`, the
+`Outcome` enum flattened, and a flattened extension map flattened after
+it (order matters: the enum consumes its tag first, the map keeps the
+rest). `ok` stays a lossless `serde_json::Value` — every nested unknown
+survives by construction — and `error` keeps its own map, so the
+guarantee holds at the envelope, the variant, and every level beneath.
+`api-version` is `Option` on purpose: the seam always writes it, but a
+foreign answer that omits it must round-trip without one; inventing a
+version for a writer that stated none would be a lie on the wire.

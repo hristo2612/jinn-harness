@@ -192,6 +192,12 @@ fn status_health_and_ledger_tail_answer_through_the_api() {
         "{}",
         missing.raw
     );
+    assert_eq!(
+        missing.body["api-version"],
+        jinn_api::API_VERSION,
+        "an error answer is versioned: {}",
+        missing.raw
+    );
     let wrong_method = get(port, "/v1/profile/entries/cron-scheduler");
     assert_eq!(wrong_method.status, 405, "{}", wrong_method.raw);
 

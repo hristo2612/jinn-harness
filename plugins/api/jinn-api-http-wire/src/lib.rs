@@ -5,7 +5,7 @@
 //! closes), no percent-decoding beyond what an operator path needs —
 //! R10-sized on purpose: this is the whole transport.
 
-use jinn_api::{ApiError, ErrorCode};
+use jinn_api::{Answer, ApiError, ErrorCode, Outcome};
 
 /// The largest request head (request line + headers) accepted.
 pub const HEAD_CAP: usize = 16 * 1024;
@@ -170,11 +170,22 @@ pub fn response(status: u16, body: &[u8]) -> Vec<u8> {
     wire
 }
 
-/// A typed error as a response: `{"error": {...}}` under its status.
+/// A typed error as a response: the versioned envelope
+/// `{"api-version": …, "error": {...}}` under the error's status.
 #[must_use]
 pub fn error_response(error: &ApiError) -> Vec<u8> {
-    let body = serde_json::to_vec(&serde_json::json!({ "error": error })).expect("error encodes");
-    response(status_for(error.code), &body)
+    error_answer_response(&Answer::error(error.clone()))
+}
+
+/// A decoded error answer as a response, the envelope verbatim — its
+/// version and every unknown sibling ride through to the operator. An
+/// `ok` outcome is not an error and is answered 200 with its value.
+#[must_use]
+pub fn error_answer_response(answer: &Answer) -> Vec<u8> {
+    match &answer.outcome {
+        Outcome::Error(error) => response(status_for(error.code), &answer.encode()),
+        Outcome::Ok(value) => response(200, &serde_json::to_vec(value).expect("encodes")),
+    }
 }
 
 /// The status code of each typed error class.
@@ -264,7 +275,14 @@ mod tests {
         let error =
             String::from_utf8(error_response(&ApiError::unavailable(20, "none"))).expect("ascii");
         assert!(error.starts_with("HTTP/1.1 503 Service Unavailable\r\n"));
-        assert!(error.ends_with(r#"{"error":{"code":"unavailable","detail":"none","finding":20}}"#));
+        let body: serde_json::Value =
+            serde_json::from_str(error.split("\r\n\r\n").nth(1).expect("body")).expect("json body");
+        assert_eq!(
+            body,
+            serde_json::json!({ "api-version": jinn_api::API_VERSION,
+                                "error": { "code": "unavailable", "detail": "none", "finding": 20 } }),
+            "an error answer is versioned like every other answer"
+        );
         assert_eq!(status_for(ErrorCode::NotFound), 404);
         assert_eq!(status_for(ErrorCode::Invalid), 422);
         assert_eq!(status_for(ErrorCode::Refused), 502);

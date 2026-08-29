@@ -166,16 +166,59 @@ impl ApiError {
     }
 }
 
-/// The envelope every contract answer crosses the broker in: an `ok`
-/// value or a typed `error`. A consumer never fails its fiber to say no.
+/// The outcome of one contract call: an `ok` value or a typed `error`.
+/// Externally tagged on the wire (`{"ok": …}` / `{"error": {…}}`).
+/// `Ok` carries a lossless [`serde_json::Value`], so every unknown field
+/// inside it survives by construction; `Error` carries its own flattened
+/// extension map ([`ApiError::extra`]).
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum Answer {
+pub enum Outcome {
     Ok(serde_json::Value),
     Error(ApiError),
 }
 
+/// The envelope every contract answer crosses the broker in: the schema
+/// version, the [`Outcome`], and a flattened extension map for unknown
+/// siblings (R12 additivity at the envelope level). A consumer never
+/// fails its fiber to say no.
+///
+/// Every answer this seam produces ([`Answer::ok`], [`Answer::error`],
+/// [`Answer::decode`]'s refusal) carries `api-version`. A foreign answer
+/// that omits it decodes as unversioned (`None`) and re-encodes without
+/// one — nothing is invented on the writer's behalf.
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Answer {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_version: Option<String>,
+    #[serde(flatten)]
+    pub outcome: Outcome,
+    #[serde(flatten)]
+    pub extra: Extensions,
+}
+
 impl Answer {
+    /// A versioned `ok` answer.
+    #[must_use]
+    pub fn ok(value: serde_json::Value) -> Self {
+        Self::versioned(Outcome::Ok(value))
+    }
+
+    /// A versioned `error` answer.
+    #[must_use]
+    pub fn error(error: ApiError) -> Self {
+        Self::versioned(Outcome::Error(error))
+    }
+
+    fn versioned(outcome: Outcome) -> Self {
+        Self {
+            api_version: Some(API_VERSION.to_owned()),
+            outcome,
+            extra: Extensions::new(),
+        }
+    }
+
     /// Encodes one answer for the broker wire.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
@@ -186,7 +229,7 @@ impl Answer {
     #[must_use]
     pub fn decode(bytes: &[u8]) -> Self {
         serde_json::from_slice(bytes).unwrap_or_else(|error| {
-            Self::Error(ApiError::new(
+            Self::error(ApiError::new(
                 ErrorCode::Refused,
                 format!("malformed provider answer: {error}"),
             ))
@@ -629,14 +672,93 @@ mod tests {
 
     #[test]
     fn the_answer_envelope_is_typed_both_ways() {
-        let ok = Answer::Ok(json!({ "n": 1 }));
+        let ok = Answer::ok(json!({ "n": 1 }));
         assert_eq!(Answer::decode(&ok.encode()), ok);
-        let error = Answer::Error(ApiError::unavailable(20, "no ledger reader"));
+        let error = Answer::error(ApiError::unavailable(20, "no ledger reader"));
         let decoded = Answer::decode(&error.encode());
         assert_eq!(decoded, error);
         assert!(matches!(
-            Answer::decode(b"garbage"),
-            Answer::Error(ApiError {
+            Answer::decode(b"garbage").outcome,
+            Outcome::Error(ApiError {
+                code: ErrorCode::Refused,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn every_answer_carries_the_api_version_including_errors() {
+        let ok = serde_json::to_value(Answer::ok(json!({}))).expect("encodes");
+        assert_eq!(ok["api-version"], API_VERSION);
+        let error = serde_json::to_value(Answer::error(ApiError::new(ErrorCode::Invalid, "x")))
+            .expect("encodes");
+        assert_eq!(error["api-version"], API_VERSION, "{error}");
+        assert_eq!(error["error"]["code"], "invalid");
+        let refused = serde_json::to_value(Answer::decode(b"garbage")).expect("encodes");
+        assert_eq!(
+            refused["api-version"], API_VERSION,
+            "a malformed answer's refusal is versioned too"
+        );
+    }
+
+    #[test]
+    fn the_verifier_probe_decodes_as_ok_and_keeps_its_unknown_sibling() {
+        // The exact probe from the round-1 verify: an unknown field beside `ok`.
+        let probe = br#"{"ok":{"n":1},"future":true}"#;
+        let answer = Answer::decode(probe);
+        assert_eq!(answer.outcome, Outcome::Ok(json!({ "n": 1 })), "{answer:?}");
+        assert_eq!(answer.extra["future"], true);
+        assert_eq!(
+            answer.api_version, None,
+            "an unversioned writer stays unversioned"
+        );
+        let wire: serde_json::Value = serde_json::from_slice(&answer.encode()).expect("json");
+        assert_eq!(wire, json!({ "ok": { "n": 1 }, "future": true }));
+    }
+
+    #[test]
+    fn unknown_fields_round_trip_at_every_level_of_an_ok_answer() {
+        let wire = json!({
+            "api-version": "0.9.0",
+            "ok": { "n": 1, "nested": { "deep": { "deeper": [1, { "x": null }] } } },
+            "envelope-future": { "shape": "object" }
+        });
+        let answer: Answer = serde_json::from_value(wire.clone()).expect("decodes");
+        assert_eq!(answer.api_version.as_deref(), Some("0.9.0"));
+        assert_eq!(answer.extra["envelope-future"]["shape"], "object");
+        assert_eq!(serde_json::to_value(&answer).expect("encodes"), wire);
+    }
+
+    #[test]
+    fn unknown_fields_round_trip_at_every_level_of_an_error_answer() {
+        let wire = json!({
+            "api-version": "0.9.0",
+            "error": {
+                "code": "not-found",
+                "detail": "gone",
+                "finding": 7,
+                "variant-future": { "nested": { "deep": true } }
+            },
+            "envelope-future": ["kept"]
+        });
+        let answer: Answer = serde_json::from_value(wire.clone()).expect("decodes");
+        match &answer.outcome {
+            Outcome::Error(error) => {
+                assert_eq!(error.code, ErrorCode::NotFound);
+                assert_eq!(error.extra["variant-future"]["nested"]["deep"], true);
+            }
+            other => panic!("expected an error outcome, got {other:?}"),
+        }
+        assert_eq!(answer.extra["envelope-future"][0], "kept");
+        assert_eq!(serde_json::to_value(&answer).expect("encodes"), wire);
+    }
+
+    #[test]
+    fn an_answer_with_neither_ok_nor_error_is_a_typed_refusal() {
+        let answer = Answer::decode(br#"{"api-version":"0.1.0","future":true}"#);
+        assert!(matches!(
+            answer.outcome,
+            Outcome::Error(ApiError {
                 code: ErrorCode::Refused,
                 ..
             })

@@ -15,8 +15,8 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use jinn_api::{route, Answer, ApiError, ErrorCode, OP_PATCH_ENTRY};
-use jinn_api_http_wire::{error_response, parse, response, Parse};
+use jinn_api::{route, Answer, ApiError, ErrorCode, Outcome, OP_PATCH_ENTRY};
+use jinn_api_http_wire::{error_answer_response, error_response, parse, response, Parse};
 use serde::Deserialize;
 
 wit_bindgen::generate!({
@@ -85,10 +85,7 @@ fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> 
         };
         return response(
             status,
-            &serde_json::to_vec(
-                &serde_json::json!({ "error": { "code": "not-found", "detail": detail } }),
-            )
-            .expect("encodes"),
+            &Answer::error(ApiError::new(ErrorCode::NotFound, detail)).encode(),
         );
     };
     // The request payload: the query for reads, the JSON body (plus the
@@ -126,14 +123,14 @@ fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> 
         &serde_json::to_vec(&payload).expect("encodes"),
     ) {
         Ok(bytes) => Answer::decode(&bytes),
-        Err(error) => Answer::Error(ApiError::new(
+        Err(error) => Answer::error(ApiError::new(
             ErrorCode::Refused,
             format!("{}/{} refused: {error:?}", route.contract, route.operation),
         )),
     };
-    match answer {
-        Answer::Ok(value) => response(200, &serde_json::to_vec(&value).expect("encodes")),
-        Answer::Error(error) => error_response(&error),
+    match &answer.outcome {
+        Outcome::Ok(value) => response(200, &serde_json::to_vec(value).expect("encodes")),
+        Outcome::Error(_) => error_answer_response(&answer),
     }
 }
 

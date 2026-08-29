@@ -153,8 +153,8 @@ fn ledger_tail(payload: &[u8]) -> Result<LedgerTail, ApiError> {
 
 fn answer<T: serde::Serialize>(result: Result<T, ApiError>) -> Answer {
     match result {
-        Ok(value) => Answer::Ok(serde_json::to_value(value).expect("an answer encodes")),
-        Err(error) => Answer::Error(error),
+        Ok(value) => Answer::ok(serde_json::to_value(value).expect("an answer encodes")),
+        Err(error) => Answer::error(error),
     }
 }
 
@@ -195,9 +195,9 @@ impl Guest for Status {
         let config = config();
         let answered = match operation.as_str() {
             OP_STATUS => answer(status(&config)),
-            OP_HEALTH => Answer::Ok(serde_json::to_value(health(&config)).expect("encodes")),
+            OP_HEALTH => Answer::ok(serde_json::to_value(health(&config)).expect("encodes")),
             OP_LEDGER_TAIL => answer(ledger_tail(&payload)),
-            other => Answer::Error(ApiError::new(
+            other => Answer::error(ApiError::new(
                 ErrorCode::NotFound,
                 format!("unknown operation {other:?}"),
             )),

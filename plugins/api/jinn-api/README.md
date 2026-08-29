@@ -18,9 +18,11 @@ precedent).
 | Consumer grants | the contract each provides; `jinn:fs` scoped to the profile document; `jinn:cron` (status probe) | Authority is the profile side's — requests are not grants. |
 
 All payloads on this seam are UTF-8 JSON with kebab-case keys. Every
-broker answer is the envelope `{"ok": …}` or `{"error": {code, detail,
-finding?}}` — a consumer never fails its fiber to say no (R11: a refusal
-is an answer, not a fault).
+broker answer is the envelope `{"api-version", "ok": …}` or
+`{"api-version", "error": {code, detail, finding?}}` — a consumer never
+fails its fiber to say no (R11: a refusal is an answer, not a fault).
+The HTTP provider answers `ok` with the value as the body and `error`
+with the envelope verbatim under the mapped status.
 
 ## Route table (v1)
 
@@ -98,13 +100,28 @@ capability that retires it; #22 records the write's non-atomic shape.
 
 ## Additivity (the R12 promise, mechanically)
 
-- Every schema carries a flattened extension map at every level
-  (`Extensions`): a field a newer writer adds survives this reader
-  verbatim.
+- **Every nesting level.** Every schema carries a flattened extension
+  map (`Extensions`) at every level — the `Answer` envelope, each of
+  its outcomes (`ok` is a lossless JSON value; `error` carries its own
+  map), and every report and request object beneath them. A field a
+  newer writer adds survives this reader verbatim across a decode →
+  encode round trip: `{"ok":{"n":1},"future":true}` decodes as a
+  recognized `ok` and re-encodes with `future` intact; the same holds
+  for an unknown object nested inside `error`, `status.kernel`, or a
+  patch's `config`.
+- **Version on every answer.** `api-version` rides on every answer this
+  seam produces — `ok` and `error` alike, including the transport's own
+  refusals (a route miss, a malformed body, a malformed provider
+  answer) — and on every report inside an `ok`. A foreign answer that
+  omits it decodes as unversioned and re-encodes without one: the reader
+  never invents a version on the writer's behalf.
 - `kernel.unavailable` is a list of names: fields are removed from it as
   the kernel grows, never renamed.
 - The route table is append-only within v1; a breaking change is `/v2`.
 
 ## Changes
 
-- **0.1.0 (2026-08-29, kernel pin `1b098be`):** first edition.
+- **0.1.0 (2026-08-29, kernel pin `1b098be`):** first edition. Round 2:
+  the `Answer` envelope gained `api-version` and its extension map (the
+  first edition's envelope preserved nothing beside `ok`/`error` and
+  versioned only `ok`); additive, no wire shape removed.
