@@ -129,3 +129,29 @@ caught exactly that). The overlay admits only hot keys to SET, because
 the owner plans its activation on the entry layer alone; the defaults
 are not addressable. The two-call floor for a key held in two layers is
 #28's, not this seam's.
+
+## Why shadowing is resolved at the leaf path, not the top-level key
+
+Round 3's recovery generator named the first differing TOP-LEVEL key
+and advised `{ key: null }`. For an object-valued setting that is
+broader than the patch that was refused: the verifier's probe held
+`group: { changed, untouched }` in the overlay, patched only
+`group.changed`, executed the advised `{ group: null }` — and the
+overlay's untouched sibling was gone for good before the retry. A
+recovery that erases settings the operator never touched is data loss,
+the worst class. The fix follows RFC 7396 to its end: a merge patch's
+objects merge recursively, so a nested key is its own fact, and
+shadowing is a fact about a LEAF. The plan now walks the asked-for and
+the post-state resolutions together to the first leaf that differs
+(`first_divergence`), names it as a path (`group.changed`, plus the
+segments), and the recovery is a `null` at exactly that path
+(`{ group: { changed: null } }`) — which under RFC 7396 deletes that
+path alone. Two consequences fell out: the explicit-layer consistency
+check now compares the leaves the patch SETS (`set_leaves`) rather than
+its top-level keys, since a nested removal in an explicit layer is the
+operator clearing that layer at that leaf and must not be refused as
+shadowed by the layer below (else the nested recovery would loop like
+round 2's advice); and a removal of a key only the defaults define keeps
+its no-recovery answer, now for a nested leaf too. Top-level keys are
+unchanged: their path is themselves, so every round-2/3 case answers
+byte-for-byte what it did.

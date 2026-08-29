@@ -64,8 +64,9 @@ the patch sets would still resolve from a layer above the landing layer
 (a mixed hot+cold patch lands in the entry while the overlay holds one
 of its hot keys), or a key the patch removes would resolve from a layer
 below — the WHOLE patch is refused before anything applies: `invalid`
-with a typed `shadowed { key, layer, recovery }` naming the first such
-key, the layer its value resolves from, and the recovery. There is no
+with a typed `shadowed { key, path, layer, recovery }` naming the first
+such LEAF (§The recovery — the leaf-path rule), the layer its value
+resolves from, and the recovery. There is no
 partial apply and no event that says one thing while the document
 resolves another. Refusal rather than a two-layer write is deliberate —
 the kernel patches one entry per call (FINDINGS.md #28), so two layers
@@ -75,11 +76,27 @@ could never be written atomically.
 
 The refusal names the exact call that will succeed, and that call is
 executable through this seam as it stands: `recovery { namespace,
-patch: { key: null }, layer }` — clear the shadowing layer by addressing
-it explicitly (§The layer selector), then retry the refused patch as it
-was. The `detail` spells it: `patch("cron", {"notify-token":null},
-layer: entry), then retry this patch`. Worked, for the two shapes the
-seam has met:
+patch: <removal of the shadowed leaf>, layer }` — clear the shadowing
+LEAF from the shadowing layer by addressing that layer explicitly (§The
+layer selector), then retry the refused patch as it was. The `detail`
+spells it: `patch("cron", {"notify-token":null}, layer: entry), then
+retry this patch`.
+
+**The leaf-path rule.** Shadowing is resolved at leaf-path granularity,
+never at the top-level key. A merge patch is walked per RFC 7396 —
+objects merge recursively, so a nested key is its own fact — and the
+first LEAF whose post-state value differs from the asked-for one is the
+shadowed one: `key` is its path dot-joined (`group.changed`; a
+top-level key is itself), `path` its segments (`["group", "changed"]`).
+The recovery removes exactly that leaf: a `null` at the nested path
+(`{"group": {"changed": null}}`) deletes that path alone and preserves
+every sibling in that layer (`group.untouched` stays). Executing it,
+then retrying, resolves the requested value. A recovery that nulled the
+top-level key would erase untouched siblings — data loss, refused by
+construction. A leaf the patch REMOVES is exempt from the explicit-layer
+consistency check (a removal in an explicit layer clears that layer;
+§The layer selector), so a nested recovery is never itself refused as
+shadowed by the layer below. Worked, for the shapes the seam has met:
 
 - The entry and the overlay both hold a hot key and the operator patches
   `{ key: null }`: it lands in the overlay, the entry would still resolve
@@ -92,6 +109,14 @@ seam has met:
   patch: it lands in the entry, the overlay would still resolve the hot
   key → `recovery: { patch: { key: null }, layer: overlay }`. Clearing
   the overlay, then retrying, lands the mixed patch whole in the entry.
+
+- The overlay holds `group: { changed, untouched }` and a mixed patch
+  sets `group.changed` (with a cold key): it lands in the entry, the
+  overlay would still resolve the leaf → `shadowed { key:
+  "group.changed", path: ["group", "changed"], layer: overlay, recovery:
+  { patch: { group: { changed: null } }, layer: overlay } }`. The
+  recovery leaves the overlay `{ group: { untouched } }`; the retry lands
+  whole in the entry and `group.untouched` still resolves the overlay's.
 
 The one shape without a recovery: removing a key only the defaults
 define (`layer: defaults`, no `recovery`) — a declared default cannot be
@@ -155,4 +180,7 @@ events without calling back (the payload carries the resolved settings).
   day, additive: the consistency guarantee and the typed `shadowed`
   field on an `invalid` refusal (a 0.1.0 reader without it still
   decodes). Same day, additive: the `layer` selector on `patch` and the
-  executable `recovery` inside `shadowed` (§The recovery).
+  executable `recovery` inside `shadowed` (§The recovery). Same day,
+  additive: shadowing resolved at leaf-path granularity — `path` on
+  `shadowed`, `key` the dot-joined leaf path, the recovery a
+  path-precise removal (§The recovery — the leaf-path rule).

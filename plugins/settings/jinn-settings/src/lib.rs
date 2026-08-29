@@ -198,13 +198,20 @@ pub struct Recovery {
 }
 
 /// Why a patch was refused as inconsistent: after landing in its layer,
-/// `key` would resolve from `layer` instead of to the requested value.
-/// `recovery` is the call that clears `layer` (absent when `layer` is
-/// the defaults: a declared default cannot be removed, only set).
+/// the LEAF at `path` would resolve from `layer` instead of to the
+/// requested value. Shadowing is resolved at leaf-path granularity (RFC
+/// 7396: objects merge recursively, so a nested key is its own fact):
+/// `key` is the leaf path dot-joined (`group.changed`; a top-level key
+/// is itself), `path` its segments. `recovery` is the call that clears
+/// exactly that leaf from `layer` — a `null` at the nested path deletes
+/// that path alone and preserves every sibling — absent when `layer` is
+/// the defaults (a declared default cannot be removed, only set).
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Shadowed {
     pub key: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub path: Vec<String>,
     pub layer: LayerName,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recovery: Option<Box<Recovery>>,
@@ -363,20 +370,22 @@ pub fn plan_patch_in(
             format!("schema refused the result: {detail}"),
         )
     })?;
-    let consistent = match layer {
-        None => resolved == intended,
-        Some(_) => keys
-            .iter()
-            .filter(|(_, value)| !value.is_null())
-            .all(|(key, _)| resolved.get(key) == intended.get(key)),
+    // The keys choosing: the whole post-state must be what was asked.
+    // An explicit layer: every LEAF the patch sets must resolve as
+    // asked; a leaf it removes is the operator clearing that layer.
+    let divergence = match layer {
+        None => first_divergence(&intended, &resolved, &[]),
+        Some(_) => set_leaves(patch, &[]).into_iter().find_map(|path| {
+            let asked = value_at(&intended, &path);
+            let got = value_at(&resolved, &path);
+            (asked != got).then(|| match (asked, got) {
+                (Some(asked), Some(got)) => first_divergence(asked, got, &path).unwrap_or(path),
+                _ => path,
+            })
+        }),
     };
-    if !consistent {
-        return Err(shadowed(
-            &declaration.namespace,
-            &intended,
-            &resolved,
-            &after,
-        ));
+    if let Some(path) = divergence {
+        return Err(shadowed(&declaration.namespace, path, &after));
     }
     Ok(PatchPlan {
         applied,
@@ -385,25 +394,74 @@ pub fn plan_patch_in(
     })
 }
 
-/// Names the first top-level key whose post-state value differs from the
-/// asked-for one, the layer that value resolves from, and — unless that
-/// layer is the defaults — the exact call that clears it.
-fn shadowed(
-    namespace: &str,
-    intended: &serde_json::Value,
-    resolved: &serde_json::Value,
-    after: &Layers,
-) -> SettingsError {
-    let empty = serde_json::Map::new();
-    let intended_keys = intended.as_object().unwrap_or(&empty);
-    let resolved_keys = resolved.as_object().unwrap_or(&empty);
-    let key = intended_keys
+/// The value at `path` (empty: the value itself).
+fn value_at<'a>(value: &'a serde_json::Value, path: &[String]) -> Option<&'a serde_json::Value> {
+    path.iter().try_fold(value, |value, key| value.get(key))
+}
+
+/// The first leaf path where `asked` and `got` differ, descending while
+/// both sides are objects (RFC 7396 granularity): a difference between
+/// two objects is a difference at some key inside them, never the
+/// objects themselves.
+fn first_divergence(
+    asked: &serde_json::Value,
+    got: &serde_json::Value,
+    prefix: &[String],
+) -> Option<Vec<String>> {
+    let (Some(asked), Some(got)) = (asked.as_object(), got.as_object()) else {
+        return (asked != got).then(|| prefix.to_vec());
+    };
+    asked
         .keys()
-        .chain(resolved_keys.keys())
-        .find(|key| intended_keys.get(*key) != resolved_keys.get(*key))
-        .cloned()
-        .unwrap_or_default();
-    let holds = |layer: &serde_json::Value| layer.get(&key).is_some();
+        .chain(got.keys().filter(|key| !asked.contains_key(*key)))
+        .find_map(|key| {
+            let (a, g) = (asked.get(key), got.get(key));
+            if a == g {
+                return None;
+            }
+            let path = [prefix, std::slice::from_ref(key)].concat();
+            match (a, g) {
+                (Some(a), Some(g)) => Some(first_divergence(a, g, &path).unwrap_or(path)),
+                _ => Some(path),
+            }
+        })
+}
+
+/// The leaf paths a merge patch SETS (a non-null, non-object value; an
+/// empty object counts as a leaf): the paths whose resolution the
+/// caller asked for. A `null` is a removal and is not listed.
+fn set_leaves(patch: &serde_json::Value, prefix: &[String]) -> Vec<Vec<String>> {
+    let Some(fields) = patch.as_object() else {
+        return vec![prefix.to_vec()];
+    };
+    if fields.is_empty() && !prefix.is_empty() {
+        return vec![prefix.to_vec()];
+    }
+    fields
+        .iter()
+        .filter(|(_, value)| !value.is_null())
+        .flat_map(|(key, value)| {
+            let path = [prefix, std::slice::from_ref(key)].concat();
+            set_leaves(value, &path)
+        })
+        .collect()
+}
+
+/// The merge patch that removes exactly the leaf at `path` (RFC 7396: a
+/// `null` at a nested path deletes that path alone; siblings survive).
+fn removal_of(path: &[String]) -> serde_json::Value {
+    path.iter().rev().fold(
+        serde_json::Value::Null,
+        |inner, key| serde_json::json!({ key.clone(): inner }),
+    )
+}
+
+/// Names the leaf `path` whose post-state value differs from the
+/// asked-for one, the layer that value resolves from, and — unless that
+/// layer is the defaults — the exact call that clears that leaf alone.
+fn shadowed(namespace: &str, path: Vec<String>, after: &Layers) -> SettingsError {
+    let key = path.join(".");
+    let holds = |layer: &serde_json::Value| value_at(layer, &path).is_some();
     let clears = if holds(&after.overlay) {
         Some(PatchLayer::Overlay)
     } else if holds(&after.entry) {
@@ -413,7 +471,7 @@ fn shadowed(
     };
     let (layer, detail, recovery) = match clears {
         Some(clears) => {
-            let patch = serde_json::json!({ key.clone(): null });
+            let patch = removal_of(&path);
             let detail = format!(
                 "{key:?} is shadowed by the {} layer: the patch would not resolve to the \
                  requested value, so nothing was applied. Recovery: patch({namespace:?}, \
@@ -440,6 +498,7 @@ fn shadowed(
     let mut refused = SettingsError::new(ErrorCode::Invalid, detail);
     refused.shadowed = Some(Shadowed {
         key,
+        path,
         layer,
         recovery,
     });

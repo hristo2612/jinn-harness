@@ -199,6 +199,7 @@ fn a_plan_reports_exactly_what_the_layers_resolve_to_afterwards() {
         removal.shadowed,
         Some(Shadowed {
             key: "notify-token".into(),
+            path: vec!["notify-token".into()],
             layer: LayerName::Entry,
             recovery: Some(Box::new(Recovery {
                 namespace: "cron".into(),
@@ -239,6 +240,7 @@ fn a_mixed_patch_over_an_existing_overlay_is_refused_whole_as_shadowed() {
         refused.shadowed,
         Some(Shadowed {
             key: "jobs".into(),
+            path: vec!["jobs".into()],
             layer: LayerName::Overlay,
             recovery: Some(Box::new(Recovery {
                 namespace: "cron".into(),
@@ -487,5 +489,153 @@ fn an_explicit_layer_addresses_that_layer_and_nothing_else() {
         serde_json::from_value::<PatchRequest>(json!({ "namespace": "cron", "layer": "defaults" }))
             .is_err(),
         "defaults are not addressable"
+    );
+}
+
+/// A namespace with an object-valued hot key, for the leaf-path cases.
+fn nested_declaration() -> Declaration {
+    Declaration {
+        namespace: "nested".into(),
+        entry: "nested-owner".into(),
+        schema: Schema {
+            properties: [
+                ("cold".to_owned(), Field::new(Kind::Bool)),
+                ("group".to_owned(), Field::new(Kind::Object)),
+            ]
+            .into_iter()
+            .collect(),
+            additional: false,
+            extra: Extensions::new(),
+        },
+        defaults: json!({}),
+        hot_keys: vec!["group".into()],
+        extra: Extensions::new(),
+    }
+}
+
+#[test]
+fn a_nested_shadowed_recovery_removes_only_the_shadowed_leaf() {
+    // The verifier's probe (PLA-314 round 3): the overlay holds
+    // `group.changed` beside an untouched sibling; a mixed patch touching
+    // only `group.changed` (and a cold key) lands in the entry, and the
+    // overlay would still resolve the leaf. The refusal must name the
+    // LEAF PATH, and its recovery must remove that leaf alone — the
+    // overlay's `untouched` sibling survives, and the retry resolves
+    // the requested value.
+    let declaration = nested_declaration();
+    let layers = Layers {
+        defaults: json!({}),
+        entry: json!({ "cold": false, "group": { "changed": 1, "untouched": "entry" } }),
+        overlay: json!({ "group": { "changed": 5, "untouched": "overlay" } }),
+        extra: Extensions::new(),
+    };
+    let mixed = json!({ "cold": true, "group": { "changed": 9 } });
+    let refused = plan_patch(&declaration, &layers, &mixed).unwrap_err();
+    assert_eq!(refused.code, ErrorCode::Invalid);
+    let shadowed = refused.shadowed.clone().expect("typed");
+    assert_eq!(shadowed.key, "group.changed", "the exact leaf path");
+    assert_eq!(shadowed.path, vec!["group", "changed"]);
+    assert_eq!(shadowed.layer, LayerName::Overlay);
+    let recovery = shadowed.recovery.expect("recovery");
+    assert_eq!(recovery.layer, PatchLayer::Overlay);
+    assert_eq!(
+        recovery.patch,
+        json!({ "group": { "changed": null } }),
+        "path-precise: a null at the leaf, never the top-level key"
+    );
+    assert!(
+        refused
+            .detail
+            .contains(r#""group.changed" is shadowed by the overlay layer"#)
+            && refused.detail.contains(
+                r#"patch("nested", {"group":{"changed":null}}, layer: overlay), then retry"#
+            ),
+        "{}",
+        refused.detail
+    );
+    // Execute the advised recovery: only the leaf leaves the overlay.
+    let cleared = plan_patch_in(&declaration, &layers, &recovery.patch, Some(recovery.layer))
+        .expect("the advised recovery succeeds");
+    assert_eq!(cleared.applied, Applied::Hot);
+    assert_eq!(
+        cleared.layer,
+        json!({ "group": { "untouched": "overlay" } }),
+        "the untouched overlay sibling survives"
+    );
+    assert_eq!(
+        cleared.resolved,
+        json!({ "cold": false, "group": { "changed": 1, "untouched": "overlay" } }),
+        "honest: the entry's leaf resolves now"
+    );
+    let after = Layers {
+        overlay: cleared.layer.clone(),
+        ..layers
+    };
+    assert_eq!(cleared.resolved, resolve(&after));
+    // Retry: it lands whole in the entry and resolves the requested value.
+    let retried = plan_patch(&declaration, &after, &mixed).expect("the retry lands");
+    assert_eq!(retried.applied, Applied::Restart);
+    assert_eq!(
+        retried.resolved,
+        json!({ "cold": true, "group": { "changed": 9, "untouched": "overlay" } })
+    );
+    assert_eq!(
+        retried.resolved["group"]["untouched"], "overlay",
+        "recovery must preserve the untouched overlay sibling"
+    );
+    // On the wire: the dotted leaf path and its structured form, both.
+    let wire = serde_json::to_value(&refused).expect("encodes");
+    assert_eq!(wire["shadowed"]["key"], "group.changed");
+    assert_eq!(wire["shadowed"]["path"], json!(["group", "changed"]));
+    assert_eq!(
+        wire["shadowed"]["recovery"]["patch"],
+        json!({ "group": { "changed": null } })
+    );
+    // A round-3 reader's `shadowed` without `path` still decodes.
+    let bare: Shadowed =
+        serde_json::from_value(json!({ "key": "k", "layer": "overlay" })).expect("decodes");
+    assert_eq!(bare.path, Vec::<String>::new());
+}
+
+#[test]
+fn a_two_level_deep_shadowed_leaf_is_named_and_cleared_exactly() {
+    let declaration = nested_declaration();
+    let layers = Layers {
+        defaults: json!({}),
+        entry: json!({ "cold": false,
+                       "group": { "inner": { "changed": 1, "keep": "entry" },
+                                  "untouched": "entry" } }),
+        overlay: json!({ "group": { "inner": { "changed": 5, "keep": "overlay" },
+                                    "untouched": "overlay" } }),
+        extra: Extensions::new(),
+    };
+    let mixed = json!({ "cold": true, "group": { "inner": { "changed": 9 } } });
+    let refused = plan_patch(&declaration, &layers, &mixed).unwrap_err();
+    let shadowed = refused.shadowed.expect("typed");
+    assert_eq!(shadowed.key, "group.inner.changed");
+    assert_eq!(shadowed.path, vec!["group", "inner", "changed"]);
+    assert_eq!(shadowed.layer, LayerName::Overlay);
+    let recovery = shadowed.recovery.expect("recovery");
+    assert_eq!(
+        recovery.patch,
+        json!({ "group": { "inner": { "changed": null } } })
+    );
+    let cleared = plan_patch_in(&declaration, &layers, &recovery.patch, Some(recovery.layer))
+        .expect("the advised recovery succeeds");
+    assert_eq!(
+        cleared.layer,
+        json!({ "group": { "inner": { "keep": "overlay" }, "untouched": "overlay" } }),
+        "every sibling at every level survives"
+    );
+    let after = Layers {
+        overlay: cleared.layer.clone(),
+        ..layers
+    };
+    let retried = plan_patch(&declaration, &after, &mixed).expect("the retry lands");
+    assert_eq!(
+        retried.resolved,
+        json!({ "cold": true,
+                "group": { "inner": { "changed": 9, "keep": "overlay" },
+                           "untouched": "overlay" } })
     );
 }
