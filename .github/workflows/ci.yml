@@ -47,7 +47,7 @@ jobs:
 
   composition-gate:
     # The real-composition gate (AGENTS.md standing order 3): boots the
-    # cron profile through the REAL pinned jinnd daemon. jinnd is private:
+    # cron and operator-API profiles through the REAL pinned jinnd daemon. jinnd is private:
     # without the read token the gate self-skips loudly (KERNEL-PIN.md
     # Gate-2 discipline); locally the sibling checkout makes it run
     # everywhere the verify gate runs.
@@ -58,7 +58,7 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
-      - name: real-composition (pinned jinnd daemon boots the cron profile)
+      - name: real-composition (pinned jinnd daemon boots the seam profiles)
         env:
           JINND_READ_TOKEN: ${{ secrets.JINND_READ_TOKEN }}
         run: |

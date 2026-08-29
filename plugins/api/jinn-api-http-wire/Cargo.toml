@@ -1,0 +1,16 @@
+# The HTTP provider's transport codec: a minimal HTTP/1.1 request parser
+# (one request per connection, bounded) and response framer, plus the
+# typed-error → status-code map. Pure functions, unit-tested natively,
+# compiled into the `jinn-api-http` guest. Transport is the provider's
+# business, so this crate belongs to the provider, not the definition.
+[package]
+name = "jinn-api-http-wire"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+jinn-api = { path = "../jinn-api" }
+serde_json = "1.0"

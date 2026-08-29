@@ -1,0 +1,26 @@
+# The operator-API seam's HTTP provider guest: holds one `jinn:net`
+# loopback listener at its configured port, polls it from one `jinn:clock`
+# periodic alarm, and turns every HTTP request into ONE granted contract
+# call on the seam's consumers (`jinn:api-status`, `jinn:api-profile`).
+# Transport only — the definition owns the schema. Compiles for
+# wasm32-unknown-unknown ONLY and is deliberately NOT a workspace member
+# (see the workspace manifest's note); `api-kit` builds and encodes it.
+[package]
+name = "jinn-api-http"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-api = { path = "../jinn-api" }
+jinn-api-http-wire = { path = "../jinn-api-http-wire" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Guest-side bindings of the pinned plugin world (kernel-pin/wit).
+wit-bindgen = "0.43.0"
+
+[workspace]

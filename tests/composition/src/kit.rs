@@ -46,10 +46,80 @@ pub fn shared_kit() -> &'static Path {
     })
 }
 
-/// A fresh scratch root holding a copy of the shared kit.
+/// The port the shared api kit is generated with; each test root rewrites
+/// it to a port of its own (see [`fresh_api_root`]).
+const KIT_PORT: u16 = 7911;
+
+/// Builds the operator-API kit (the api trio beside the cron seam) once
+/// per process into a shared cache.
+pub fn shared_api_kit() -> &'static Path {
+    static KIT: OnceLock<PathBuf> = OnceLock::new();
+    KIT.get_or_init(|| {
+        let root = workspace_root().join("target/composition/api-kit");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("kit cache dir");
+        let status = Command::new("cargo")
+            .args(["run", "-p", "api-kit", "--", "kit"])
+            .arg(&root)
+            .args(["--port", &KIT_PORT.to_string()])
+            .args(["--every-ms", &JOB_PERIOD_MS.to_string()])
+            .args(["--tick-ms", &TICK_MS.to_string()])
+            .current_dir(workspace_root())
+            .status()
+            .expect("cargo run -p api-kit");
+        assert!(status.success(), "the api kit builds");
+        root
+    })
+}
+
+/// A fresh scratch root holding a copy of the shared cron kit.
 #[must_use]
 pub fn fresh_root(name: &str) -> PathBuf {
-    let kit = shared_kit();
+    copy_kit(shared_kit(), name)
+}
+
+/// A fresh scratch root holding a copy of the shared api kit, its HTTP
+/// provider re-pointed at a free loopback port (the grant's bind range
+/// and the provider's `port` setting move together — one authority
+/// decision). Answers the root and that port.
+#[must_use]
+pub fn fresh_api_root(name: &str) -> (PathBuf, u16) {
+    let root = copy_kit(shared_api_kit(), name);
+    let port = free_port();
+    let path = root.join("profile.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("profile")).expect("profile parses");
+    set_provider_port(&mut document, "jinn-api-http", port);
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&document).expect("encodes"),
+    )
+    .expect("profile");
+    (root, port)
+}
+
+/// Points the named HTTP provider entry at `port`: its `jinn:net` grant
+/// scope and its `port` setting.
+pub fn set_provider_port(document: &mut serde_json::Value, id: &str, port: u16) {
+    let config = entry_config(document, id);
+    config["data"]["port"] = serde_json::json!(port);
+    for grant in config["grants"].as_array_mut().expect("grants") {
+        if grant["contract"] == "jinn:net" {
+            grant["scope"]["bind"] = serde_json::json!([port, port]);
+        }
+    }
+}
+
+/// A loopback port nobody holds right now.
+#[must_use]
+pub fn free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .and_then(|listener| listener.local_addr())
+        .map(|addr| addr.port())
+        .expect("a free loopback port")
+}
+
+fn copy_kit(kit: &Path, name: &str) -> PathBuf {
     let root = workspace_root()
         .join("target/composition/runs")
         .join(format!("{name}-{}", std::process::id()));
@@ -68,6 +138,9 @@ pub fn fresh_root(name: &str) -> PathBuf {
 pub struct Daemon {
     child: Child,
     pub root: PathBuf,
+    /// The daemon's data root (`jinn:fs`'s root): `<root>/data` for the
+    /// cron layout, `<root>` itself for the operator layout.
+    pub data_root: PathBuf,
     stderr: PathBuf,
 }
 
@@ -108,6 +181,34 @@ impl Daemon {
         )
     }
 
+    /// Boots the pinned daemon over `root` in the OPERATOR layout: the data
+    /// root IS `root`, so the profile document sits inside the `jinn:fs`
+    /// surface and the api seam's consumers reach it through their scoped
+    /// grants (profiles/operator-api/README.md).
+    #[must_use]
+    pub fn boot_operator(binary: &Path, root: &Path) -> Self {
+        let profile = root.join("profile.json");
+        let ledger = root.join("ledger.sqlite");
+        let artifacts = root.join("artifacts");
+        let mut daemon = Self::spawn(
+            binary,
+            root,
+            root,
+            [
+                OsStr::new("--profile"),
+                profile.as_os_str(),
+                OsStr::new("--ledger"),
+                ledger.as_os_str(),
+                OsStr::new("--artifacts"),
+                artifacts.as_os_str(),
+                OsStr::new("--data"),
+                root.as_os_str(),
+            ],
+        );
+        daemon.data_root = root.to_path_buf();
+        daemon
+    }
+
     /// Spawns the daemon with `args` from `cwd`; its stderr lands under
     /// `root`.
     #[must_use]
@@ -130,6 +231,7 @@ impl Daemon {
         Self {
             child,
             root: root.to_path_buf(),
+            data_root: root.join("data"),
             stderr,
         }
     }
@@ -171,7 +273,7 @@ impl Daemon {
     /// A file under the daemon's data root.
     #[must_use]
     pub fn data(&self, path: &str) -> PathBuf {
-        self.root.join("data").join(path)
+        self.data_root.join(path)
     }
 
     /// Reads a JSON file under the data root, `None` until it exists and
@@ -255,6 +357,13 @@ impl Daemon {
         kinds
     }
 
+    /// Every ledger row as `(seq, fiber, kind)` — the fiber column is the
+    /// event's attribution (the `entry` column is empty at this pin).
+    #[must_use]
+    pub fn ledger_rows(&self) -> Vec<LedgerRow> {
+        ledger_rows_at(&self.root)
+    }
+
     /// How many ledger events carry `needle` in their `kind` text.
     #[must_use]
     pub fn ledger_count(&self, needle: &str) -> usize {
@@ -329,6 +438,37 @@ impl Drop for Daemon {
         let _ = self.child.kill();
         let _ = self.child.wait();
     }
+}
+
+/// One ledger row: sequence, attributed fiber (if any), and the `kind`
+/// JSON text.
+#[derive(Clone, Debug)]
+pub struct LedgerRow {
+    pub seq: u64,
+    pub fiber: Option<u64>,
+    pub kind: String,
+}
+
+/// Every ledger row of a root (live or stopped) in sequence order — a
+/// plain WAL reader running SELECTs only (see [`Daemon::ledger_kinds`]).
+#[must_use]
+pub fn ledger_rows_at(root: &Path) -> Vec<LedgerRow> {
+    let connection = rusqlite::Connection::open(root.join("ledger.sqlite")).expect("ledger opens");
+    let mut select = connection
+        .prepare("SELECT seq, fiber, kind FROM events ORDER BY seq")
+        .expect("ledger schema");
+    let rows = select
+        .query_map([], |row| {
+            Ok(LedgerRow {
+                seq: row.get(0)?,
+                fiber: row.get(1)?,
+                kind: row.get(2)?,
+            })
+        })
+        .expect("ledger reads")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("ledger rows");
+    rows
 }
 
 /// Strips ANSI styling from the daemon's log: the daemon colors

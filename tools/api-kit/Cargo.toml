@@ -1,0 +1,23 @@
+# The operator-API seam's kit builder:
+#   api-kit kit <root> --port N [--every-ms N] [--tick-ms N] — compile the
+#       three api guests AND the two cron guests for wasm32-unknown-unknown,
+#       encode components, write the pinned operator profile (the api trio
+#       mounted beside the cron seam). --port is the HTTP provider's
+#       loopback port (its jinn:net grant is scoped to exactly that port);
+#       the cron flags are cron-kit's.
+# Boot the result with `--data <root>`: the profile is edited THROUGH
+# `jinn:fs`, so it must sit inside the daemon's data root
+# (profiles/operator-api/README.md).
+[package]
+name = "api-kit"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+cron-kit = { path = "../cron-kit" }
+jinn-api = { path = "../../plugins/api/jinn-api" }
+jinn-cron = { path = "../../plugins/cron/jinn-cron" }
+serde_json = "1.0"

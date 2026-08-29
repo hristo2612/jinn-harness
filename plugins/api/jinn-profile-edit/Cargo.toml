@@ -1,0 +1,25 @@
+# The operator-API seam's profile-edit consumer guest: provides
+# `jinn:api-profile` (get, patch-entry) — FINDINGS.md #9's operator edit
+# lane. A patch rewrites ONE entry's config in the profile document through
+# the granted `jinn:fs` scope; the daemon's own watcher reconciles the
+# result, so the profile stays the one source of truth and the API never
+# bypasses it. Compiles for wasm32-unknown-unknown ONLY and is deliberately
+# NOT a workspace member; `api-kit` builds and encodes it.
+[package]
+name = "jinn-profile-edit"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-api = { path = "../jinn-api" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# Guest-side bindings of the pinned plugin world (kernel-pin/wit).
+wit-bindgen = "0.43.0"
+
+[workspace]

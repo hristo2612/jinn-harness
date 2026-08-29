@@ -4,6 +4,9 @@
 #       guests for wasm32-unknown-unknown, encode components, write the
 #       pinned profile. --every-ms sets the health job's period; --tick-ms
 #       sets the scheduler's jinn:clock alarm period (default 60000).
+# The library (src/lib.rs) is the kit machinery — guest build, component
+# encoding, artifact + profile writing — and the cron seam's profile
+# entries, shared by every seam kit (api-kit mounts them beside its own).
 [package]
 name = "cron-kit"
 version = "0.1.0"
