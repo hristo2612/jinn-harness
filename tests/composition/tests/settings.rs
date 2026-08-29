@@ -476,6 +476,9 @@ fn a_patch_reports_exactly_what_the_next_get_resolves_in_both_orders() {
     assert_eq!(mixed.status, 200, "{}", mixed.raw);
     assert_eq!(mixed.body["applied"], "restart", "{}", mixed.raw);
     assert_eq!(mixed.body["settings"]["jobs"], requested, "{}", mixed.raw);
+    daemon.eventually("the scheduler to restart on the patched entry", || {
+        daemon.config_restarts(scheduler) == 1
+    });
     daemon.eventually("the restarted scheduler to re-declare", || {
         get(port, "/v1/settings/cron").body["layers"]["entry"]["tick-ms"] == TICK_MS / 2
     });
@@ -525,9 +528,19 @@ fn a_patch_reports_exactly_what_the_next_get_resolves_in_both_orders() {
         shadowed.raw
     );
     assert_eq!(
-        shadowed.body["error"]["shadowed"],
-        serde_json::json!({ "key": "jobs", "layer": "overlay" }),
-        "typed: which key, which layer: {}",
+        shadowed.body["error"]["shadowed"]["key"], "jobs",
+        "typed: which key: {}",
+        shadowed.raw
+    );
+    assert_eq!(
+        shadowed.body["error"]["shadowed"]["layer"], "overlay",
+        "typed: which layer: {}",
+        shadowed.raw
+    );
+    assert_eq!(
+        shadowed.body["error"]["shadowed"]["recovery"],
+        serde_json::json!({ "namespace": "cron", "patch": { "jobs": null }, "layer": "overlay" }),
+        "typed: the call that clears it: {}",
         shadowed.raw
     );
     let next = get(port, "/v1/settings/cron");
@@ -571,6 +584,154 @@ fn a_patch_reports_exactly_what_the_next_get_resolves_in_both_orders() {
         entry_config(&mut doc, STORE)["data"]["overlays"]["cron"]["jobs"],
         overlay,
         "the overlay is as the last applied patch left it"
+    );
+    daemon.interrupt();
+}
+
+/// The shadowed refusal's recovery is TRUE and executable through the
+/// seam (PLA-314 round 3, the verifier's exact scenario): the entry and
+/// the overlay both hold `notify-token`; `{notify-token: null}` is hot,
+/// lands in the overlay, the entry would still resolve it — refused,
+/// typed `shadowed { key, layer: entry, recovery }`. The test executes
+/// the recovery the refusal names (an explicit-layer removal), retries
+/// the original patch, and the next GET resolves the requested value:
+/// the key gone from the settings, from both layers, and from both
+/// entries of the document of record.
+#[test]
+fn the_shadowed_refusals_recovery_lands_when_executed() {
+    let Some((daemon, port)) = booted("settings-recovery") else {
+        return;
+    };
+    let rows = daemon.ledger_rows();
+    let scheduler = fiber_of(&rows, SCHEDULER);
+    // The entry holds the token (a mixed patch lands whole in the entry).
+    let entry = patch(
+        port,
+        "/v1/settings/cron",
+        &serde_json::json!({ "patch": {
+            "notify-token": { "$secret": "cron/entry" }, "tick-ms": TICK_MS / 2 } }),
+    );
+    assert_eq!(entry.status, 200, "{}", entry.raw);
+    assert_eq!(entry.body["applied"], "restart", "{}", entry.raw);
+    daemon.eventually("the scheduler to restart on the patched entry", || {
+        daemon.config_restarts(scheduler) == 1
+    });
+    daemon.eventually("the restarted scheduler to re-declare", || {
+        get(port, "/v1/settings/cron").body["layers"]["entry"]["notify-token"]["$secret"]
+            == "cron/entry"
+    });
+    // The overlay holds it too (a hot patch lands in the overlay).
+    let overlay = patch(
+        port,
+        "/v1/settings/cron",
+        &serde_json::json!({ "patch": { "notify-token": { "$secret": "cron/overlay" } } }),
+    );
+    assert_eq!(overlay.status, 200, "{}", overlay.raw);
+    assert_eq!(overlay.body["applied"], "hot", "{}", overlay.raw);
+    let both = get(port, "/v1/settings/cron");
+    assert_eq!(
+        both.body["layers"]["entry"]["notify-token"]["$secret"], "cron/entry",
+        "{}",
+        both.raw
+    );
+    assert_eq!(
+        both.body["layers"]["overlay"]["notify-token"]["$secret"], "cron/overlay",
+        "{}",
+        both.raw
+    );
+
+    // The verifier's probe: the keys-chosen removal is refused, and the
+    // refusal names the call that will succeed.
+    let removal = serde_json::json!({ "patch": { "notify-token": null } });
+    let refused = patch(port, "/v1/settings/cron", &removal);
+    assert_eq!(refused.status, 422, "{}", refused.raw);
+    let shadowed = &refused.body["error"]["shadowed"];
+    assert_eq!(shadowed["key"], "notify-token", "{}", refused.raw);
+    assert_eq!(shadowed["layer"], "entry", "{}", refused.raw);
+    assert_eq!(
+        shadowed["recovery"],
+        serde_json::json!({ "namespace": "cron", "patch": { "notify-token": null },
+                            "layer": "entry" }),
+        "{}",
+        refused.raw
+    );
+    assert!(
+        refused.body["error"]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail
+                .contains(r#"patch("cron", {"notify-token":null}, layer: entry), then retry"#)),
+        "{}",
+        refused.raw
+    );
+    assert_eq!(
+        get(port, "/v1/settings/cron").body["settings"],
+        both.body["settings"],
+        "nothing moved on the refusal"
+    );
+
+    // Execute EXACTLY the advised call, as the refusal spelled it.
+    let advised = serde_json::json!({
+        "patch": shadowed["recovery"]["patch"],
+        "layer": shadowed["recovery"]["layer"],
+    });
+    let cleared = patch(port, "/v1/settings/cron", &advised);
+    assert_eq!(
+        cleared.status, 200,
+        "the advised recovery succeeds: {}",
+        cleared.raw
+    );
+    assert_eq!(cleared.body["applied"], "restart", "{}", cleared.raw);
+    assert_eq!(
+        cleared.body["settings"]["notify-token"]["$secret"], "cron/overlay",
+        "honest: the overlay still resolves it: {}",
+        cleared.raw
+    );
+    daemon.eventually("the scheduler to restart on the cleared entry", || {
+        daemon.config_restarts(scheduler) == 2
+    });
+    daemon.eventually("the restarted scheduler to re-declare", || {
+        get(port, "/v1/settings/cron").body["layers"]["entry"]["notify-token"].is_null()
+    });
+    let next = get(port, "/v1/settings/cron");
+    assert_eq!(
+        next.body["settings"], cleared.body["settings"],
+        "the report is what the next GET resolves: {}",
+        next.raw
+    );
+
+    // Retry the original patch: it lands, and the next GET resolves the
+    // requested value.
+    let retried = patch(port, "/v1/settings/cron", &removal);
+    assert_eq!(retried.status, 200, "the retry lands: {}", retried.raw);
+    assert_eq!(retried.body["applied"], "hot", "{}", retried.raw);
+    assert!(
+        retried.body["settings"]["notify-token"].is_null(),
+        "{}",
+        retried.raw
+    );
+    let next = get(port, "/v1/settings/cron");
+    assert!(
+        next.body["settings"]["notify-token"].is_null(),
+        "the requested value resolves: {}",
+        next.raw
+    );
+    assert!(next.body["layers"]["entry"]["notify-token"].is_null());
+    assert!(next.body["layers"]["overlay"]["notify-token"].is_null());
+    assert_eq!(next.body["settings"], retried.body["settings"]);
+    assert_eq!(
+        next.body["settings"]["tick-ms"],
+        TICK_MS / 2,
+        "the rest of the entry layer is untouched: {}",
+        next.raw
+    );
+    let mut doc = document(&daemon);
+    assert!(
+        entry_config(&mut doc, SCHEDULER)["data"]["notify-token"].is_null(),
+        "gone from the owner entry"
+    );
+    assert!(
+        entry_config(&mut doc, STORE)["data"]["overlays"]["cron"]["notify-token"].is_null(),
+        "gone from the store entry"
     );
     daemon.interrupt();
 }

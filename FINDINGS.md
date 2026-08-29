@@ -974,8 +974,10 @@ after the first applied — and restarted the owner — is a partial apply.
 
 **Shape shipped:** refusal. The definition computes a plan's reported
 settings from the post-state layers and refuses `invalid` +
-`shadowed { key, layer }` when they differ from the request; the
-operator patches the key on its own.
+`shadowed { key, layer, recovery }` when they differ from the request;
+the recovery is the explicit-layer call that clears the shadowing layer,
+then a retry — two honest calls, one per entry, which is this finding's
+floor (`plugins/settings/jinn-settings/README.md` §The recovery).
 
 **Packet-card shape (only if C6 is ever revisited):** a multi-entry
 `patch-entries` — one call, N `(entry, merge)` pairs, applied under one

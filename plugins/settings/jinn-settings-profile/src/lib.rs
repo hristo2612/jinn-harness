@@ -29,7 +29,7 @@ use jinn_api::{
     OP_KERNEL_PATCH_ENTRY,
 };
 use jinn_settings::{
-    plan_patch, resolve, Answer, Applied, Changed, DeclareRequest, Declaration, ErrorCode,
+    plan_patch_in, resolve, Answer, Applied, Changed, DeclareRequest, Declaration, ErrorCode,
     GetRequest, Layers, NamespaceSummary, Namespaces, Overlays, PatchRequest, Patched, Refused,
     Resolved, SettingsError, API_VERSION, CHANGED_TOPIC, OP_DECLARE, OP_GET, OP_NAMESPACES,
     OP_OVERLAYS, OP_PATCH, REFUSED_TOPIC, SETTINGS_CONTRACT, STORE_CONTRACT,
@@ -208,7 +208,7 @@ fn patch(payload: &[u8]) -> Result<Patched, SettingsError> {
             ));
         };
         let layers = layers(entry)?;
-        plan_patch(&entry.declaration, &layers, &request.patch)
+        plan_patch_in(&entry.declaration, &layers, &request.patch, request.layer)
             .map(|plan| (plan, entry.declaration.entry.clone()))
     };
     let (plan, owner) = match planned {

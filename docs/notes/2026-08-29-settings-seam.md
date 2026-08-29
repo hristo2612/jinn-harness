@@ -103,8 +103,29 @@ two entries, so "apply both" is two calls, and a second call refused
 after a first applied is exactly the partial state the law forbids —
 with the extra cost that the first call has already restarted the
 owner. A refusal costs nothing, is typed to the key and the layer, and
-leaves the operator a one-step recovery. The plan now computes its
-reported settings FROM the post-state layers (`resolve(after)`) and
-refuses when that differs from what was asked, which also catches the
-removal case (a hot `null` that a lower layer still defines) the probe
-did not reach.
+leaves the operator a recovery. The plan now computes its reported
+settings FROM the post-state layers (`resolve(after)`) and refuses when
+that differs from what was asked, which also catches the removal case (a
+hot `null` that a lower layer still defines) the probe did not reach.
+
+## Why the refusal carries an executable recovery, and `patch` a layer
+
+Round 2's refusal advised "patch the key on its own" — and for the
+removal case that advice returned the identical refusal (the verifier's
+round-2 Major: a one-key hot removal lands in the overlay every time,
+the entry keeps resolving it). A recovery the operator cannot execute
+through the seam is worse than none. The fix is two additive facts:
+`patch` takes an explicit `layer: entry | overlay` (the keys still
+choose when it is absent, so nothing that worked changes), and the
+`shadowed` refusal names the exact call — `patch(ns, { key: null },
+layer: <the shadowing layer>)`, then retry. Two rules make that call
+succeed where the round-2 advice looped: an explicit-layer REMOVAL is
+the operator clearing that layer and is never refused as shadowed (the
+answer honestly reports what still resolves), and the schema then
+decides membership of the post-state resolution rather than of
+"resolved ⊕ patch" (clearing `jobs` from the overlay while the entry
+still supplies it is not "jobs is required" — the red-first unit test
+caught exactly that). The overlay admits only hot keys to SET, because
+the owner plans its activation on the entry layer alone; the defaults
+are not addressable. The two-call floor for a key held in two layers is
+#28's, not this seam's.

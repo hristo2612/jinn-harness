@@ -64,25 +64,67 @@ the patch sets would still resolve from a layer above the landing layer
 (a mixed hot+cold patch lands in the entry while the overlay holds one
 of its hot keys), or a key the patch removes would resolve from a layer
 below — the WHOLE patch is refused before anything applies: `invalid`
-with a typed `shadowed { key, layer }` naming the first such key and the
-layer its value resolves from. There is no partial apply and no event
-that says one thing while the document resolves another. The recovery is
-the operator's: patch the shadowed key on its own (it then lands in the
-layer that resolves it) or clear it there first. Refusal rather than a
-two-layer write is deliberate — the kernel patches one entry per call
-(FINDINGS.md #28), so two layers could never be written atomically.
+with a typed `shadowed { key, layer, recovery }` naming the first such
+key, the layer its value resolves from, and the recovery. There is no
+partial apply and no event that says one thing while the document
+resolves another. Refusal rather than a two-layer write is deliberate —
+the kernel patches one entry per call (FINDINGS.md #28), so two layers
+could never be written atomically.
+
+### The recovery
+
+The refusal names the exact call that will succeed, and that call is
+executable through this seam as it stands: `recovery { namespace,
+patch: { key: null }, layer }` — clear the shadowing layer by addressing
+it explicitly (§The layer selector), then retry the refused patch as it
+was. The `detail` spells it: `patch("cron", {"notify-token":null},
+layer: entry), then retry this patch`. Worked, for the two shapes the
+seam has met:
+
+- The entry and the overlay both hold a hot key and the operator patches
+  `{ key: null }`: it lands in the overlay, the entry would still resolve
+  the key → `shadowed { key, layer: entry, recovery: { patch: { key:
+  null }, layer: entry } }`. `patch(ns, { key: null }, layer: entry)`
+  clears the entry (the owner restarts; the answer honestly reports the
+  overlay's value still resolving), the retry clears the overlay, and
+  the next `get` resolves the key gone.
+- The overlay holds a hot key and the operator sends a mixed hot+cold
+  patch: it lands in the entry, the overlay would still resolve the hot
+  key → `recovery: { patch: { key: null }, layer: overlay }`. Clearing
+  the overlay, then retrying, lands the mixed patch whole in the entry.
+
+The one shape without a recovery: removing a key only the defaults
+define (`layer: defaults`, no `recovery`) — a declared default cannot be
+removed, only set. Two calls, each honest, are the floor here (#28).
+
+### The layer selector
+
+`patch(namespace, merge-patch, layer?)` with `layer: "entry" |
+"overlay"` addresses that layer directly; absent, the keys choose (§The
+patch law, steps 2–3 — the default is unchanged). The overlay admits
+only hot keys to SET (the owner plans its activation on the entry layer
+alone and would never honor a cold key there; `invalid`) and any key to
+clear. The consistency guarantee holds for an explicit layer by
+construction — the report is the post-state resolution — and a SET a
+higher layer would shadow is still refused with the recovery above. A
+REMOVAL in an explicit layer is the operator clearing that layer and is
+never refused as shadowed: the answer's `settings` and `layers` show
+what resolves now. The defaults are not addressable.
 
 ## The patch law
 
-`patch(namespace, merge-patch)`:
+`patch(namespace, merge-patch, layer?)`:
 
 1. The patch must be an object. The RESULT of laying it over the resolved
-   settings is validated against the declared schema BEFORE anything
-   applies, and the landing layer must resolve to exactly that result
-   (§The consistency guarantee); a refusal is typed (`invalid`, with
-   `shadowed { key, layer }` in the consistency case), answered, and
+   settings (with an explicit `layer`: the post-state resolution) is
+   validated against the declared schema BEFORE anything applies, and
+   the landing layer must resolve to exactly that result (§The
+   consistency guarantee); a refusal is typed (`invalid`, with `shadowed
+   { key, layer, recovery }` in the consistency case), answered, and
    emitted on the refused topic — nothing was written.
-2. A patch whose every top-level key is a hot key lands in the OVERLAY:
+2. With `layer` given, the patch lands there (§The layer selector).
+   Otherwise a patch whose every top-level key is a hot key lands in the
+   OVERLAY:
    the provider patches the store entry through `jinn:profile`
    (`{ data: { overlays: { ns: <patch> } } }`), the store's trivial
    fiber restarts, then `changed` is emitted with the resolved settings
@@ -112,4 +154,5 @@ events without calling back (the payload carries the resolved settings).
 - **0.1.0 (2026-08-29, kernel pin `57360cc`):** first edition. Same
   day, additive: the consistency guarantee and the typed `shadowed`
   field on an `invalid` refusal (a 0.1.0 reader without it still
-  decodes).
+  decodes). Same day, additive: the `layer` selector on `patch` and the
+  executable `recovery` inside `shadowed` (§The recovery).
