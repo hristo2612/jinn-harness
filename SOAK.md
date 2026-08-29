@@ -29,7 +29,7 @@ SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
 | `$SOAK/data/` | The daemon's data root: `cron/` (state, the append-only history log, per-fire run records), `health/` (the consumer's reports), and since the sixth bump `profile.json` (the daemon's watcher is non-recursive on the profile's directory, so the fibers' subdirectories never wake it) |
 | `$SOAK/data.inverses/` | The kernel's `jinn:fs` effect-retention store (since pin `41cb2f47`): one durable inverse per live revertible effect, keyed by effect id — the byte curve FINDINGS.md #8 asked for is measured here |
 | `$SOAK/logs/` | `jinnd.log`, `ops.log` (operator actions, one timestamped line each — restarts and the pin bump count toward the +7d audit) |
-| `$SOAK/run/` | `jinnd.pid` (its mtime is the previous start's time — the wrapper compares it to `kern.boottime` to tell a reboot from a crash restart); `launchd.reason` (one word an operator drops to name a planned start; the wrapper consumes it) |
+| `$SOAK/run/` | `jinnd.pid` (pid and mtime are ONE previous-start record: the wrapper proves both or neither, then compares the mtime to `kern.boottime` to tell a reboot from a crash restart); `launchd.reason` (one word an operator drops to name a planned start; the wrapper consumes it) |
 | `$SOAK/meta.json` | Start timestamp + pins, written once at soak start |
 
 ## Setup (how the runtime root is stood up)
@@ -100,28 +100,49 @@ are unchanged, and launchd keys `SuccessfulExit` on the daemon's own status.
 
 The reason vocabulary is what the +7d audit counts:
 
-| reason | means |
-|---|---|
-| `adopt` / `planned-start` | an operator start — the reason file was dropped first |
-| `boot` | the host booted AFTER the previous start (`kern.boottime` vs the mtime of `run/jinnd.pid`): the daemon died with the host |
-| `keepalive-restart` | same host boot, nobody asked: launchd replaced a daemon that ended uncleanly |
-| `first-supervised-start` | no previous pid on record: provenance unknown, never asserted as a boot |
+| reason | means | the proof it rests on |
+|---|---|---|
+| `adopt` / `planned-start` | an operator start | the reason file, read |
+| `boot` | the host booted AFTER the previous start: the daemon died with the host | a readable `kern.boottime` AND a coherent `run/jinnd.pid` record, boot strictly later |
+| `keepalive-restart` | same host boot, nobody asked: launchd replaced a daemon that ended uncleanly | the same two readings, boot NOT later |
+| `first-supervised-start` | no record of a previous start | `run/` was enumerated and held no `jinnd.pid` |
+| `unknown` | the wrapper cannot prove why this start happened | — it claims nothing, and names the input it could not read |
 
-The boot decision is checked against uptime, never against a scratch file:
-on 2026-08-29 a missing stamp file wrote `reason=boot` for a SIGTERM on a
-host that had not rebooted, and the audit would have read a kill as a
-routine restart. The wrapper `exec`s the daemon, so nobody is standing
-beside it when it dies; for the two unplanned reasons it therefore writes
-the DEATH before the start line, from what launchd retained and what the
-daemon last said — `previous jinnd <pid> ended UNCLEAN (…): killed by
-signal 15 (SIGTERM); last log line <ts>` (or `died with the host`). The
+**A claim is derived from proof, never from the absence of a contradiction.**
+Three times running, a missing or unreadable input degraded into a value
+that made a positive claim true: a vanished stamp file wrote `boot` for a
+SIGTERM on a host that had not rebooted; an unreadable `kern.boottime`
+fell back to a zero epoch and would have written `host up since
+1970-01-01T00:00:00Z`; a torn record — the pid read, then the file gone
+before the `stat` — left the previous start at `0`, which makes
+`boottime > prev_start` trivially true, and answered `boot` at rc 0. So
+the default inverted (as jinnd M2-K9 inverted serial dispatch): each
+input reads into either a value the wrapper can prove it read or the
+literal `unknown` — no `0`, no empty string, no zero epoch, nothing a
+comparison would mistake for a measurement. `boot` and
+`keepalive-restart` both claim something about the host, so both need
+both sides proven; everything else, imagined or not, is `unknown` by
+construction rather than by a guard someone remembered to write. The pid
+and the previous start's mtime are ONE record, proven as one: the record
+is looked at twice with the read between, and a tear leaves both unknown.
+`first-supervised-start` is earned by a proven absence — an enumerated
+`run/` with nothing in it — and is never inferred from a read failure.
+
+The wrapper `exec`s the daemon, so nobody is standing beside it when it
+dies; for every unplanned reason it therefore writes the DEATH before the
+start line, from what launchd retained and what the daemon last said —
+`previous jinnd <pid> ended UNCLEAN (…): killed by signal 15 (SIGTERM);
+last log line <ts>`, or `died with the host`, or, when the provenance is
+unproven, `ended, PROVENANCE UNKNOWN (could not read: <inputs>)`. The
 duty gap is `last log line` → the new readiness line. `launchd list`'s
 `LastExitStatus` is a wait status (signal in the low bits, exit code in
-the high byte); the wrapper decodes it. When `kern.boottime` cannot be
-read at all the record says `host_boot=unknown` and no boot is claimed —
-never a zero epoch, which would assert a 1970 boot nobody measured. To
-see the decision without starting anything:
-`SOAK_DRY_RUN=1 sh "$SOAK/bin/soak-run.sh"`.
+the high byte); the wrapper decodes it.
+
+To see the decision without starting anything:
+`SOAK_DRY_RUN=1 sh "$SOAK/bin/soak-run.sh"`. It touches nothing at all —
+against a runtime root that does not exist yet it therefore answers
+`reason=unknown unproven=run-directory` rather than manufacturing the
+empty `run/` it would then have reasoned from.
 
 **Operator verbs** (`bootstrap`/`bootout`/`kickstart`, the modern `launchctl`
 lane — pick one lane and stay in it; never mix in `load`/`unload`):
@@ -424,7 +445,9 @@ undo retention in RAM until pin `41cb2f47`, and from there the durable
 retention store `$SOAK/data.inverses/` plus the append-only history log,
 FINDINGS.md #8 closed), memory/disk footprint, restart/crash log — read straight off the
 `started (launchd; reason=...)` lines from the supervisor's adoption
-onward, `boot` and `keepalive-restart` counted as outages and
+onward, `boot`, `keepalive-restart` and `unknown` counted as outages
+(an end nobody could prove the cause of is still an end — its line names
+the input that was unreadable, and that is the cue to go looking) and
 `adopt`/`planned-start` as planned (the 2026-08-28 host reboot counts as
 a crash, the clean stop/start cycle after the third bump and the
 supervisor adoption as planned restarts) — zero
