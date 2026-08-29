@@ -47,7 +47,8 @@
 use std::sync::Mutex;
 
 use jinn_engine::{
-    engine_contract, Answer, Budget, Event, RunAccepted, RunEvent, RunRequest, RunState, Usage,
+    EventKind,
+    engine_contract, Answer, Budget, RunAccepted, RunEvent, RunRequest, RunState, Usage,
     API_VERSION, EVENT_TOPIC, OP_RUN,
 };
 use serde::Deserialize;
@@ -131,7 +132,7 @@ struct InFlight {
     provider_truncated: bool,
     /// The terminal detail: why a run was cancelled, or — on a run whose
     /// process exited cleanly — the failure the ENGINE itself reported
-    /// (`Event::Exited { error }`). Either way it reaches the record's
+    /// (`EventKind::Exited { error }`). Either way it reaches the record's
     /// `detail`, so a clean status never reads as a success the engine
     /// did not give.
     reason: Option<String>,
@@ -439,18 +440,18 @@ fn absorb(payload: &[u8], now_ms: u64) -> Result<&'static str, GuestFault> {
         }
         run.next_seq = incoming.seq.saturating_add(1);
         run.last_seq = Some(incoming.seq);
-        match &incoming.event {
-            Event::Started { model } => {
+        match &incoming.event.kind {
+            EventKind::Started { model } => {
                 run.state = RunState::Running;
                 if run.model.is_none() {
                     run.model.clone_from(model);
                 }
             }
-            Event::Delta { text } => {
+            EventKind::Delta { text } => {
                 run.text_bytes = run.text_bytes.saturating_add(text.len() as u64);
                 run.truncated |= append_bounded(&mut run.text, text, max_answer_bytes);
             }
-            Event::TurnEnd { text } => {
+            EventKind::TurnEnd { text } => {
                 if run.text.is_empty() {
                     if let Some(text) = text {
                         run.text_bytes = run.text_bytes.saturating_add(text.len() as u64);
@@ -458,7 +459,7 @@ fn absorb(payload: &[u8], now_ms: u64) -> Result<&'static str, GuestFault> {
                     }
                 }
             }
-            Event::Exited {
+            EventKind::Exited {
                 status,
                 usage,
                 truncated,
@@ -474,18 +475,18 @@ fn absorb(payload: &[u8], now_ms: u64) -> Result<&'static str, GuestFault> {
                     run.reason = Some(error.clone());
                 }
             }
-            Event::Cancelled { reason } => {
+            EventKind::Cancelled { reason } => {
                 run.state = RunState::Cancelled;
                 run.reason = Some(reason.clone());
             }
             // The output budget cut the answer: the provider says so on
             // the wire, and the probe's record carries it rather than
             // reporting a bounded answer as a whole one.
-            Event::Truncated { .. } => run.provider_truncated = true,
+            EventKind::Truncated { .. } => run.provider_truncated = true,
             // A tool crossing this probe never asks for, and a kind a
             // newer provider knows and this one does not: counted and
             // ordered, never guessed at (the definition's R12 additivity).
-            Event::ToolCall { .. } | Event::ToolResult { .. } | Event::Unknown { .. } => {}
+            EventKind::ToolCall { .. } | EventKind::ToolResult { .. } | EventKind::Unknown { .. } => {}
         }
         if run.state.is_terminal() {
             held.take()

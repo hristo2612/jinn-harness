@@ -141,12 +141,15 @@ fn publish(record: Option<RunEvent>) {
 /// and holding it across the bus is the nested-dispatch deadlock
 /// (FINDINGS.md #4).
 fn record_and_emit(run_id: &str, event: Event) {
-    let record = RUNS
+    let emitted = RUNS
         .lock()
         .unwrap()
         .as_mut()
-        .and_then(|runs| runs.record(run_id, event));
-    publish(record);
+        .map(|runs| runs.record_all(run_id, [event]))
+        .unwrap_or_default();
+    for record in emitted {
+        publish(Some(record));
+    }
 }
 
 
@@ -167,10 +170,9 @@ fn record_deferred(run_id: &str, event: Event) {
         .lock()
         .unwrap()
         .as_mut()
-        .and_then(|runs| runs.record(run_id, event));
-    if let Some(record) = emitted {
-        DEFERRED.lock().unwrap().push(record);
-    }
+        .map(|runs| runs.record_all(run_id, [event]))
+        .unwrap_or_default();
+    DEFERRED.lock().unwrap().extend(emitted);
 }
 
 /// Puts everything held for this fiber on the wire, in sequence. Called
@@ -267,29 +269,21 @@ fn drain(run_id: &str, handle: u64, which: ChildStream) -> (Vec<Event>, u64) {
     (events, bytes)
 }
 
-/// One drain, published, with its bytes charged to the output budget.
-/// Answers the [`Event::Truncated`] once the budget is spent — RECORDED
-/// here, so the cut is on the bus in front of whatever ends the run: a
-/// listener that saw only `cancelled` could not tell a bounded answer
-/// from a whole one.
+/// One drain, published. The output bound is NOT applied here: every
+/// event goes through `Runs::record_all`, which clips a text event to the
+/// run's remaining allowance and puts the typed cut on the bus itself,
+/// ahead of whatever ends the run. Answers whether the budget is spent,
+/// so the caller stops reading and kills the child.
 fn drain_and_account(run_id: &str, handle: u64) -> bool {
-    let (events, bytes) = drain(run_id, handle, ChildStream::Stdout);
+    let (events, _bytes) = drain(run_id, handle, ChildStream::Stdout);
     for event in events {
         record_and_emit(run_id, event);
     }
     let _ = drain(run_id, handle, ChildStream::Stderr);
-    let cut = RUNS
-        .lock()
+    RUNS.lock()
         .unwrap()
-        .as_mut()
-        .and_then(|runs| runs.read(run_id, bytes));
-    match cut {
-        Some(cut) => {
-            record_and_emit(run_id, cut);
-            true
-        }
-        None => false,
-    }
+        .as_ref()
+        .is_some_and(|runs| runs.is_truncated(run_id))
 }
 
 /// Kills a live child and records why it ended.
@@ -297,9 +291,7 @@ fn end_child(run_id: &str, handle: u64, reason: &str) {
     let _ = process::kill(handle, Signal::Terminate);
     record_and_emit(
         run_id,
-        Event::Cancelled {
-            reason: reason.to_owned(),
-        },
+        Event::cancelled(reason.to_owned()),
     );
     forget(run_id);
 }
@@ -328,12 +320,7 @@ fn end_exited(run_id: &str, handle: u64, status: i32) {
     let truncated = record_of(run_id).is_some_and(|record| record.truncated);
     record_and_emit(
         run_id,
-        Event::Exited {
-            status,
-            usage,
-            truncated,
-            error,
-        },
+        Event::exited(status, usage, truncated, error),
     );
     forget(run_id);
 }
@@ -550,7 +537,7 @@ fn op_run(config: &Config, payload: &[u8]) -> Answer {
         return fail(&run_id, ErrorCode::Failed, detail);
     }
 
-    record_deferred(&run_id, Event::Started { model });
+    record_deferred(&run_id, Event::started(model));
     if let Err(fault) = arm(now_ms.saturating_add(config.poll_ms)) {
         let _ = process::kill(handle, Signal::Terminate);
         return fail(&run_id, ErrorCode::Failed, format!("{fault:?}"));
@@ -603,9 +590,7 @@ fn op_cancel(payload: &[u8]) -> Answer {
             None => {
                 record_and_emit(
                     &run_id,
-                    Event::Cancelled {
-                        reason: "cancel".to_owned(),
-                    },
+                    Event::cancelled("cancel".to_owned()),
                 );
                 forget(&run_id);
             }

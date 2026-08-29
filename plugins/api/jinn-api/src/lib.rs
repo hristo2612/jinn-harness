@@ -907,12 +907,14 @@ mod tests {
                 EngineSlot {
                     engine: "claude".into(),
                     contract: "jinn:engine.claude".into(),
-                    entry: "jinn-engine-claude".into()
+                    entry: "jinn-engine-claude".into(),
+                    ..EngineSlot::default()
                 },
                 EngineSlot {
                     engine: "default".into(),
                     contract: "jinn:engine.default".into(),
-                    entry: "jinn-engine-default".into()
+                    entry: "jinn-engine-default".into(),
+                    ..EngineSlot::default()
                 },
             ],
             "sorted by engine id; a non-engine provision is not an engine"

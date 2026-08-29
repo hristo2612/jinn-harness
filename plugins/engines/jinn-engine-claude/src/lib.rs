@@ -43,6 +43,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use jinn_engine::{
+    EventKind,
     engine_contract, Answer, CancelRequest, Capabilities, Description, EngineError, ErrorCode,
     Event, Extensions, RunRequest, Runs, Usage, API_VERSION, EVENT_TOPIC, OP_CANCEL, OP_DESCRIBE,
     OP_RUN, OP_RUN_GET,
@@ -116,9 +117,10 @@ fn record_and_emit(run_id: &str, event: Event) {
         .lock()
         .unwrap()
         .as_mut()
-        .and_then(|runs| runs.record(run_id, event));
-    if let Some(record) = emitted {
-        let payload = serde_json::to_vec(&record).expect("a run event encodes");
+        .map(|runs| runs.record_all(run_id, [event]))
+        .unwrap_or_default();
+    for record in &emitted {
+        let payload = serde_json::to_vec(record).expect("a run event encodes");
         let _ = events::emit(EVENT_TOPIC, DispatchMode::Emit, &Selector::All, &payload);
     }
 }
@@ -141,10 +143,9 @@ fn record_deferred(run_id: &str, event: Event) {
         .lock()
         .unwrap()
         .as_mut()
-        .and_then(|runs| runs.record(run_id, event));
-    if let Some(record) = emitted {
-        DEFERRED.lock().unwrap().push(record);
-    }
+        .map(|runs| runs.record_all(run_id, [event]))
+        .unwrap_or_default();
+    DEFERRED.lock().unwrap().extend(emitted);
 }
 
 /// Puts everything held for this fiber on the wire, in sequence. Called
@@ -201,9 +202,7 @@ fn kill_and_cancel(run_id: &str, reason: &str) {
     }
     record_and_emit(
         run_id,
-        Event::Cancelled {
-            reason: reason.to_owned(),
-        },
+        Event::cancelled(reason.to_owned()),
     );
 }
 
@@ -227,7 +226,6 @@ fn drain(run_id: &str) -> bool {
             // there is nothing more to read this wake.
             Ok(ReadResult::WouldBlock) | Err(_) => break,
         };
-        let read = bytes.len() as u64;
         let events = {
             let mut children = CHILDREN.lock().unwrap();
             let Some(child) = children.get_mut(run_id) else {
@@ -236,17 +234,17 @@ fn drain(run_id: &str) -> bool {
             child.decoder.feed(&bytes)
         };
         emit_stream(run_id, events);
-        // The definition's accounting, not ours — and when the budget is
-        // spent it answers the event, so the CUT reaches the bus before
-        // the cancellation that follows it (a listener that saw only
-        // `cancelled` could not tell a bounded answer from a whole one).
-        let cut = RUNS
+        // The bound is the definition's and it has already been applied:
+        // every event above went through `Runs::record_all`, which clipped
+        // it to the run's remaining allowance and put the typed cut on the
+        // bus ahead of whatever ends the run. All that is left here is to
+        // stop reading a child whose answer is spent.
+        let spent = RUNS
             .lock()
             .unwrap()
-            .as_mut()
-            .and_then(|runs| runs.read(run_id, read));
-        if let Some(cut) = cut {
-            record_and_emit(run_id, cut);
+            .as_ref()
+            .is_some_and(|runs| runs.is_truncated(run_id));
+        if spent {
             kill_and_cancel(run_id, "budget");
             return false;
         }
@@ -276,7 +274,7 @@ fn flush_decoder(run_id: &str) -> Vec<Event> {
 /// that never occurred.
 fn emit_stream(run_id: &str, events: Vec<Event>) {
     for event in events {
-        if matches!(event, Event::Started { .. }) {
+        if matches!(event.kind, EventKind::Started { .. }) {
             continue;
         }
         record_and_emit(run_id, event);
@@ -347,12 +345,7 @@ fn poll() {
                 CHILDREN.lock().unwrap().remove(&run_id);
                 record_and_emit(
                     &run_id,
-                    Event::Exited {
-                        status,
-                        usage,
-                        truncated,
-                        error,
-                    },
+                    Event::exited(status, usage, truncated, error),
                 );
             }
             Ok(WaitResult::Running) => {}
@@ -553,7 +546,7 @@ fn run(payload: &[u8]) -> Answer {
             decoder: Decoder::new(),
         },
     );
-    record_deferred(&run_id, Event::Started { model });
+    record_deferred(&run_id, Event::started(model));
     // The only alarm this provider ever holds, and only from here.
     if let Err(error) = clock::alarm_at(now.saturating_add(config.poll_ms), POLL_TOKEN) {
         kill_and_cancel(&run_id, &format!("no poll alarm: {error:?}"));

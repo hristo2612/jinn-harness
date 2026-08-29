@@ -28,6 +28,30 @@
 //! FINDINGS.md #29 records the friction and what would retire the
 //! encoding.
 //!
+//! # Additivity
+//!
+//! **The law.** For every type and every variant of this seam, known or
+//! unknown, at every nesting depth, decode-then-encode is lossless for
+//! content the schema does not know. A field a newer peer sends rides
+//! through an older hop untouched; it is never dropped, and never
+//! silently.
+//!
+//! **The mechanism, implemented once.** Every wire type carries a REST
+//! MAP — an [`Extensions`] named `extra` — holding verbatim whatever its
+//! version did not read. Derived types get it from serde's `flatten`;
+//! the two whose tag forbids a derive ([`Event`], [`Answer`]) get it from
+//! [`decode_with_rest`] / [`encode_with_rest`], which ARE that same law
+//! written out. [`Additive`] is how the rest map is reached uniformly,
+//! and `additivity_tests` proves the law by property over every type in
+//! the seam rather than by a table of examples.
+//!
+//! **The named exceptions.** Two surfaces here are deliberately closed,
+//! and the definition README says so beside this: a `{"$secret": ...}`
+//! reference (the settings seam's own shape, whose gate refuses a second
+//! key) and the closed value spaces ([`Effort`], [`ToolMode`],
+//! [`RunState`], [`ErrorCode`]), where a value this version cannot name
+//! is a LOUD decode error rather than a guess.
+//!
 //! # Secrets
 //!
 //! A request never carries secret material. [`RunRequest::secrets`] maps a
@@ -49,6 +73,54 @@ mod tests;
 
 /// Additive JSON: fields a newer peer sends survive a round trip.
 pub type Extensions = serde_json::Map<String, serde_json::Value>;
+
+/// The rest map, reachable uniformly. Every wire type in this seam
+/// implements it, which is what lets `additivity_tests` walk the whole
+/// inventory through one property instead of one example per type.
+pub trait Additive {
+    /// What this value carried that its version could not read.
+    fn rest(&self) -> &Extensions;
+}
+
+/// Decoding half of the additivity law (module doc), written once.
+///
+/// `known` reads the fields this version understands, REMOVING them from
+/// the map; whatever is left is the rest, kept verbatim. Because the
+/// known fields are removed, a key can never be in both halves — the two
+/// can never disagree, and neither can clobber the other on the way out.
+///
+/// # Errors
+///
+/// Whatever `known` refuses: a required field absent or ill-typed.
+fn decode_with_rest<T>(
+    mut map: Extensions,
+    known: impl FnOnce(&mut Extensions) -> Result<T, String>,
+) -> Result<(T, Extensions), String> {
+    let value = known(&mut map)?;
+    Ok((value, map))
+}
+
+/// Encoding half of the same law: the fields this version knows, then the
+/// rest re-emitted unchanged. `or_insert` rather than `insert` so a
+/// known field always wins — decoding makes the overlap impossible, and
+/// this keeps a hand-built value from lying about its own shape.
+fn encode_with_rest(mut known: Extensions, rest: &Extensions) -> Extensions {
+    for (name, value) in rest {
+        known.entry(name.clone()).or_insert_with(|| value.clone());
+    }
+    known
+}
+
+/// `impl Additive` for a type whose rest map is a derived `extra`.
+macro_rules! additive {
+    ($($type:ty),* $(,)?) => {
+        $(impl Additive for $type {
+            fn rest(&self) -> &Extensions {
+                &self.extra
+            }
+        })*
+    };
+}
 
 /// The answer envelope's version (additive within `0.x`).
 pub const API_VERSION: &str = "0.1";
@@ -147,9 +219,12 @@ pub struct Budget {
     /// Wall clock, from the spawn. Past it the child is killed and the run
     /// exits `cancelled` with `reason: "budget"`.
     pub wall_ms: u64,
-    /// Stdout bytes the provider will read before it stops reading and
-    /// kills the child (the `jinn:process` bundle's own cap is 1 MiB for
-    /// `run`; a long-lived spawn has no cap but this one).
+    /// Answer bytes this run may put ON THE WIRE. The bound holds BEFORE
+    /// the bytes move: [`Runs::record_all`] charges a text-bearing event
+    /// and clips it to what is left, so a child writing far past its
+    /// budget still produces at most this many bytes for the bus and the
+    /// consumer. Past it the answer is a prefix, the cut is an
+    /// [`EventKind::Truncated`] event, and the provider kills the child.
     pub output_bytes: u64,
     /// See [`ToolPolicy::extra`].
     #[serde(flatten)]
@@ -216,6 +291,8 @@ pub struct RunAccepted {
 #[serde(rename_all = "kebab-case")]
 pub struct CancelRequest {
     pub run_id: String,
+    #[serde(flatten)]
+    pub extra: Extensions,
 }
 
 /// See [`CancelRequest`] — the same document, named for the other
@@ -287,11 +364,13 @@ pub struct Usage {
     pub extra: Extensions,
 }
 
-/// One run event, as it goes on the bus under [`EVENT_TOPIC`]. The
-/// variants are the packet's: started, delta, tool-call, tool-result,
-/// turn-end, exited.
+/// What a run event SAYS — the shape this version knows. The rest of the
+/// event (anything a newer peer added beside it) lives in the one rest
+/// map on [`Event`], never in a field per variant: the additivity law has
+/// exactly one implementation here, so a variant added later cannot be
+/// the third place that forgets it.
 #[derive(Clone, Debug, PartialEq)]
-pub enum Event {
+pub enum EventKind {
     /// The child is spawned and the run is live.
     Started { model: Option<String> },
     /// A chunk of the answer.
@@ -341,13 +420,119 @@ pub enum Event {
     /// WHOLE rather than as a decode failure or a nameless placeholder
     /// (R12's additivity on the bus, at the event level): a listener
     /// orders it, counts it, forwards it byte-for-byte, and never guesses
-    /// what it meant.
+    /// what it meant. Its payload is not special-cased — every field it
+    /// carried is unknown, so ALL of it lands in the same rest map a
+    /// known kind's unknown fields do.
     Unknown {
         /// The `kind` tag it arrived under.
         kind: String,
-        /// Every other field it carried, unread.
-        fields: Extensions,
     },
+}
+
+/// One run event, as it goes on the bus under [`EVENT_TOPIC`]: what this
+/// version can read ([`EventKind`]) plus everything it cannot, verbatim.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Event {
+    pub kind: EventKind,
+    /// The rest map — see the module doc's additivity law. Held HERE, at
+    /// the event, so every kind gets it from one implementation.
+    pub extra: Extensions,
+}
+
+impl From<EventKind> for Event {
+    fn from(kind: EventKind) -> Self {
+        Self::new(kind)
+    }
+}
+
+impl Additive for Event {
+    fn rest(&self) -> &Extensions {
+        &self.extra
+    }
+}
+
+impl Event {
+    /// An event this version authored: a known shape and nothing unread.
+    #[must_use]
+    pub fn new(kind: EventKind) -> Self {
+        Self {
+            kind,
+            extra: Extensions::new(),
+        }
+    }
+
+    /// The child is spawned and the run is live.
+    #[must_use]
+    pub fn started(model: Option<String>) -> Self {
+        Self::new(EventKind::Started { model })
+    }
+
+    /// A chunk of the answer.
+    #[must_use]
+    pub fn delta(text: impl Into<String>) -> Self {
+        Self::new(EventKind::Delta { text: text.into() })
+    }
+
+    /// The engine called a tool.
+    #[must_use]
+    pub fn tool_call(name: impl Into<String>, input: serde_json::Value) -> Self {
+        Self::new(EventKind::ToolCall {
+            name: name.into(),
+            input,
+        })
+    }
+
+    /// A tool answered.
+    #[must_use]
+    pub fn tool_result(name: impl Into<String>, ok: bool) -> Self {
+        Self::new(EventKind::ToolResult {
+            name: name.into(),
+            ok,
+        })
+    }
+
+    /// One turn finished.
+    #[must_use]
+    pub fn turn_end(text: Option<String>) -> Self {
+        Self::new(EventKind::TurnEnd { text })
+    }
+
+    /// The run is over.
+    #[must_use]
+    pub fn exited(status: i32, usage: Usage, truncated: bool, error: Option<String>) -> Self {
+        Self::new(EventKind::Exited {
+            status,
+            usage,
+            truncated,
+            error,
+        })
+    }
+
+    /// The run ended because someone asked, or a bound was hit.
+    #[must_use]
+    pub fn cancelled(reason: impl Into<String>) -> Self {
+        Self::new(EventKind::Cancelled {
+            reason: reason.into(),
+        })
+    }
+
+    /// The output budget is spent and the answer is a prefix.
+    #[must_use]
+    pub fn truncated(limit_bytes: u64, read_bytes: u64) -> Self {
+        Self::new(EventKind::Truncated {
+            limit_bytes,
+            read_bytes,
+        })
+    }
+
+    /// A kind from a newer peer, with everything it carried.
+    #[must_use]
+    pub fn unknown(kind: impl Into<String>, fields: Extensions) -> Self {
+        Self {
+            kind: EventKind::Unknown { kind: kind.into() },
+            extra: fields,
+        }
+    }
 }
 
 /// The `kind` tags this version knows. A tag outside this set is
@@ -385,6 +570,29 @@ fn optional<T: serde::de::DeserializeOwned + Default>(
     }
 }
 
+/// The longest prefix of `text` that fits in `room` BYTES and is still
+/// valid UTF-8. Byte-exact rather than char-exact because the budget is
+/// in bytes: a prefix cut mid-character would either exceed the bound (a
+/// replacement character is three bytes) or lie about what fit.
+fn clip(text: &str, room: u64) -> String {
+    let mut end = usize::try_from(room).unwrap_or(usize::MAX).min(text.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text[..end].to_owned()
+}
+
+fn put_value<T: Serialize>(
+    map: &mut Extensions,
+    name: &str,
+    value: T,
+) -> Option<serde_json::Value> {
+    map.insert(
+        name.to_owned(),
+        serde_json::to_value(value).expect("a field encodes"),
+    )
+}
+
 fn put<T: Serialize>(map: &mut Extensions, name: &str, value: T) {
     map.insert(
         name.to_owned(),
@@ -395,128 +603,129 @@ fn put<T: Serialize>(map: &mut Extensions, name: &str, value: T) {
 impl Event {
     /// The `kind` tag this event goes on the wire under.
     #[must_use]
-    pub fn kind(&self) -> &str {
-        match self {
-            Self::Started { .. } => "started",
-            Self::Delta { .. } => "delta",
-            Self::ToolCall { .. } => "tool-call",
-            Self::ToolResult { .. } => "tool-result",
-            Self::TurnEnd { .. } => "turn-end",
-            Self::Exited { .. } => "exited",
-            Self::Cancelled { .. } => "cancelled",
-            Self::Truncated { .. } => "truncated",
-            Self::Unknown { kind, .. } => kind,
+    pub fn kind_tag(&self) -> &str {
+        match &self.kind {
+            EventKind::Started { .. } => "started",
+            EventKind::Delta { .. } => "delta",
+            EventKind::ToolCall { .. } => "tool-call",
+            EventKind::ToolResult { .. } => "tool-result",
+            EventKind::TurnEnd { .. } => "turn-end",
+            EventKind::Exited { .. } => "exited",
+            EventKind::Cancelled { .. } => "cancelled",
+            EventKind::Truncated { .. } => "truncated",
+            EventKind::Unknown { kind } => kind,
         }
     }
 
-    /// The wire object, `kind` included. Written by hand rather than
-    /// derived because [`Event::Unknown`] has to serialize under the tag
-    /// it ARRIVED with — a derived internally-tagged enum can only emit
-    /// its own variant name, which is what made a future kind
-    /// indistinguishable from every other.
+    /// The wire object. Written by hand rather than derived because a
+    /// derived internally-tagged enum can only emit its OWN variant names
+    /// — which is what once made a future kind indistinguishable from
+    /// every other — and because a flattened rest map beside a tag is a
+    /// shape serde will not derive either. The additivity is not
+    /// hand-rolled: the known fields are built here and
+    /// [`encode_with_rest`] adds the rest, exactly as [`Answer`] does.
     fn to_map(&self) -> Extensions {
-        let mut map = Extensions::new();
-        map.insert(
+        let mut known = Extensions::new();
+        known.insert(
             "kind".to_owned(),
-            serde_json::Value::String(self.kind().to_owned()),
+            serde_json::Value::String(self.kind_tag().to_owned()),
         );
-        match self {
-            Self::Started { model } => {
+        match &self.kind {
+            EventKind::Started { model } => {
                 if let Some(model) = model {
-                    put(&mut map, "model", model);
+                    put(&mut known, "model", model);
                 }
             }
-            Self::Delta { text } => put(&mut map, "text", text),
-            Self::ToolCall { name, input } => {
-                put(&mut map, "name", name);
+            EventKind::Delta { text } => put(&mut known, "text", text),
+            EventKind::ToolCall { name, input } => {
+                put(&mut known, "name", name);
                 if !input.is_null() {
-                    map.insert("input".to_owned(), input.clone());
+                    known.insert("input".to_owned(), input.clone());
                 }
             }
-            Self::ToolResult { name, ok } => {
-                put(&mut map, "name", name);
-                put(&mut map, "ok", ok);
+            EventKind::ToolResult { name, ok } => {
+                put(&mut known, "name", name);
+                put(&mut known, "ok", ok);
             }
-            Self::TurnEnd { text } => {
+            EventKind::TurnEnd { text } => {
                 if let Some(text) = text {
-                    put(&mut map, "text", text);
+                    put(&mut known, "text", text);
                 }
             }
-            Self::Exited {
+            EventKind::Exited {
                 status,
                 usage,
                 truncated,
                 error,
             } => {
-                put(&mut map, "status", status);
-                put(&mut map, "usage", usage);
-                put(&mut map, "truncated", truncated);
+                put(&mut known, "status", status);
+                put(&mut known, "usage", usage);
+                put(&mut known, "truncated", truncated);
                 if let Some(error) = error {
-                    put(&mut map, "error", error);
+                    put(&mut known, "error", error);
                 }
             }
-            Self::Cancelled { reason } => put(&mut map, "reason", reason),
-            Self::Truncated {
+            EventKind::Cancelled { reason } => put(&mut known, "reason", reason),
+            EventKind::Truncated {
                 limit_bytes,
                 read_bytes,
             } => {
-                put(&mut map, "limit-bytes", limit_bytes);
-                put(&mut map, "read-bytes", read_bytes);
+                put(&mut known, "limit-bytes", limit_bytes);
+                put(&mut known, "read-bytes", read_bytes);
             }
-            // Byte-for-byte what arrived: the tag above, then every field
-            // this version never read.
-            Self::Unknown { fields, .. } => {
-                for (name, value) in fields {
-                    map.insert(name.clone(), value.clone());
-                }
-            }
+            // Nothing of a future kind is known but the tag above; all of
+            // its payload is in the rest map, added next like any other.
+            EventKind::Unknown { .. } => {}
         }
-        map
+        encode_with_rest(known, &self.extra)
     }
 
     /// The inverse of [`Event::to_map`].
-    fn from_map(mut map: Extensions) -> Result<Self, String> {
-        let kind = match map.remove("kind") {
-            Some(serde_json::Value::String(kind)) => kind,
-            Some(other) => return Err(format!("an event's kind is a string, not {other}")),
-            None => return Err("an event carries a kind".to_owned()),
-        };
-        if !KNOWN_KINDS.contains(&kind.as_str()) {
-            return Ok(Self::Unknown { kind, fields: map });
-        }
-        Ok(match kind.as_str() {
-            "started" => Self::Started {
-                model: optional(&mut map, "model")?,
-            },
-            "delta" => Self::Delta {
-                text: field(&mut map, "text")?,
-            },
-            "tool-call" => Self::ToolCall {
-                name: field(&mut map, "name")?,
-                input: optional(&mut map, "input")?,
-            },
-            "tool-result" => Self::ToolResult {
-                name: field(&mut map, "name")?,
-                ok: optional(&mut map, "ok")?,
-            },
-            "turn-end" => Self::TurnEnd {
-                text: optional(&mut map, "text")?,
-            },
-            "exited" => Self::Exited {
-                status: field(&mut map, "status")?,
-                usage: optional(&mut map, "usage")?,
-                truncated: optional(&mut map, "truncated")?,
-                error: optional(&mut map, "error")?,
-            },
-            "cancelled" => Self::Cancelled {
-                reason: field(&mut map, "reason")?,
-            },
-            // The only remaining known tag.
-            _ => Self::Truncated {
-                limit_bytes: optional(&mut map, "limit-bytes")?,
-                read_bytes: optional(&mut map, "read-bytes")?,
-            },
-        })
+    fn from_map(map: Extensions) -> Result<Self, String> {
+        let (kind, extra) = decode_with_rest(map, |map| {
+            let kind = match map.remove("kind") {
+                Some(serde_json::Value::String(kind)) => kind,
+                Some(other) => return Err(format!("an event's kind is a string, not {other}")),
+                None => return Err("an event carries a kind".to_owned()),
+            };
+            if !KNOWN_KINDS.contains(&kind.as_str()) {
+                return Ok(EventKind::Unknown { kind });
+            }
+            Ok(match kind.as_str() {
+                "started" => EventKind::Started {
+                    model: optional(map, "model")?,
+                },
+                "delta" => EventKind::Delta {
+                    text: field(map, "text")?,
+                },
+                "tool-call" => EventKind::ToolCall {
+                    name: field(map, "name")?,
+                    input: optional(map, "input")?,
+                },
+                "tool-result" => EventKind::ToolResult {
+                    name: field(map, "name")?,
+                    ok: optional(map, "ok")?,
+                },
+                "turn-end" => EventKind::TurnEnd {
+                    text: optional(map, "text")?,
+                },
+                "exited" => EventKind::Exited {
+                    status: field(map, "status")?,
+                    usage: optional(map, "usage")?,
+                    truncated: optional(map, "truncated")?,
+                    error: optional(map, "error")?,
+                },
+                "cancelled" => EventKind::Cancelled {
+                    reason: field(map, "reason")?,
+                },
+                // The only remaining known tag.
+                _ => EventKind::Truncated {
+                    limit_bytes: optional(map, "limit-bytes")?,
+                    read_bytes: optional(map, "read-bytes")?,
+                },
+            })
+        })?;
+        Ok(Self { kind, extra })
     }
 }
 
@@ -533,10 +742,11 @@ impl<'de> Deserialize<'de> for Event {
 }
 
 /// One run event with its attribution, as a listener receives it. The
-/// envelope carries NO `extra`: `event` is an internally tagged enum, and
-/// a second flattened map would swallow its own fields on the way back in
-/// (the round trip proves it). Forward compatibility lives where it
-/// belongs instead — in [`Event::Unknown`].
+/// envelope declares no rest map of its OWN: the flattened [`Event`]
+/// already is one, so a key this version cannot read at the envelope's
+/// level lands in [`Event::extra`] and comes back out there. Two rest
+/// maps at one level would each try to swallow the other's fields; one
+/// is the mechanism, and the property test holds the envelope to it.
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct RunEvent {
@@ -653,13 +863,16 @@ impl EngineError {
     }
 }
 
-/// One answer on the wire.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(rename_all = "kebab-case")]
+/// One answer on the wire. Hand-coded for the same reason [`Event`] is:
+/// its outcome is a tag, and serde will not derive a flattened rest map
+/// beside one. The law is not re-implemented here — the known fields are
+/// built and [`encode_with_rest`] / [`decode_with_rest`] do the rest.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Answer {
     pub api_version: String,
-    #[serde(flatten)]
     pub outcome: Outcome,
+    /// The rest map — see the module doc's additivity law.
+    pub extra: Extensions,
 }
 
 /// An answer's two shapes.
@@ -668,6 +881,57 @@ pub struct Answer {
 pub enum Outcome {
     Ok(serde_json::Value),
     Error(EngineError),
+}
+
+impl Additive for Answer {
+    fn rest(&self) -> &Extensions {
+        &self.extra
+    }
+}
+
+impl Answer {
+    fn to_map(&self) -> Extensions {
+        let mut known = Extensions::new();
+        put(&mut known, "api-version", &self.api_version);
+        match &self.outcome {
+            Outcome::Ok(value) => known.insert("ok".to_owned(), value.clone()),
+            Outcome::Error(error) => put_value(&mut known, "error", error),
+        };
+        encode_with_rest(known, &self.extra)
+    }
+
+    fn from_map(map: Extensions) -> Result<Self, String> {
+        let ((api_version, outcome), extra) = decode_with_rest(map, |map| {
+            let api_version: String = optional(map, "api-version")?;
+            let outcome = match (map.remove("ok"), map.remove("error")) {
+                (Some(value), None) => Outcome::Ok(value),
+                (None, Some(error)) => Outcome::Error(
+                    serde_json::from_value(error)
+                        .map_err(|error| format!("an answer's error: {error}"))?,
+                ),
+                (Some(_), Some(_)) => return Err("an answer is ok OR error, never both".to_owned()),
+                (None, None) => return Err("an answer carries ok or error".to_owned()),
+            };
+            Ok((api_version, outcome))
+        })?;
+        Ok(Self {
+            api_version,
+            outcome,
+            extra,
+        })
+    }
+}
+
+impl Serialize for Answer {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.to_map().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Answer {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_map(Extensions::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
 }
 
 impl Answer {
@@ -679,6 +943,7 @@ impl Answer {
         Self {
             api_version: API_VERSION.to_owned(),
             outcome: Outcome::Ok(serde_json::to_value(value).expect("an answer encodes")),
+            extra: Extensions::new(),
         }
     }
 
@@ -687,6 +952,7 @@ impl Answer {
         Self {
             api_version: API_VERSION.to_owned(),
             outcome: Outcome::Error(error),
+            extra: Extensions::new(),
         }
     }
 
@@ -715,7 +981,7 @@ impl Answer {
 
 /// One engine as the KERNEL's own view shows it: an entry that provides a
 /// `jinn:engine.<id>` contract. See [`engines_in`].
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct EngineSlot {
     pub engine: String,
@@ -723,6 +989,12 @@ pub struct EngineSlot {
     /// The profile entry serving it — what an operator edits to swap the
     /// implementation.
     pub entry: String,
+    /// The rest map. A slot is built from the kernel's own view rather
+    /// than received from a peer, but it is ANSWERED to one over the API,
+    /// so it carries the law like every other type here — there is no
+    /// "this one is ours" exemption to remember.
+    #[serde(flatten)]
+    pub extra: Extensions,
 }
 
 /// Every engine live in a composition, from `(entry-id, provisions)` pairs
@@ -745,6 +1017,7 @@ where
                         engine: engine.to_owned(),
                         contract: contract.to_owned(),
                         entry: entry.to_owned(),
+                        extra: Extensions::new(),
                     })
                 })
                 .collect::<Vec<_>>()
@@ -752,6 +1025,29 @@ where
         .collect();
     slots.sort_by(|left, right| left.engine.cmp(&right.engine));
     slots
+}
+
+// Every derived wire type's rest map, reached uniformly. `Event` and
+// `Answer` implement the trait beside their hand codecs, and `RunEvent`'s
+// rest is the flattened event's.
+additive!(
+    ToolPolicy,
+    Budget,
+    RunRequest,
+    RunAccepted,
+    CancelRequest,
+    Description,
+    Capabilities,
+    Usage,
+    RunRecord,
+    EngineError,
+    EngineSlot,
+);
+
+impl Additive for RunEvent {
+    fn rest(&self) -> &Extensions {
+        self.event.rest()
+    }
 }
 
 /// The run registry every provider keeps: run ids, event sequencing, the
@@ -772,7 +1068,10 @@ struct Live {
     seq: u64,
     started_ms: u64,
     budget: Budget,
-    read_bytes: u64,
+    /// Answer bytes this run has produced — what [`Budget::output_bytes`]
+    /// bounds. Charged in FULL even for the part that never reaches the
+    /// bus, so the cut can say honestly how much there was.
+    answer_bytes: u64,
 }
 
 impl Runs {
@@ -814,7 +1113,7 @@ impl Runs {
                 seq: 0,
                 started_ms: now_ms,
                 budget: request.budget.clone(),
-                read_bytes: 0,
+                answer_bytes: 0,
             },
         );
         RunAccepted {
@@ -826,29 +1125,96 @@ impl Runs {
         }
     }
 
-    /// Records `event` against `run_id` and answers the bus record to
-    /// emit. `None` for an unknown run — a provider never emits for a run
-    /// it does not hold.
-    pub fn record(&mut self, run_id: &str, event: Event) -> Option<RunEvent> {
+    /// Records `events` against `run_id` and answers the bus records to
+    /// emit — the ONE path from a provider's events to the bus, so the
+    /// output bound below cannot be bypassed by a provider that forgets
+    /// it. Empty for an unknown run: a provider never emits for a run it
+    /// does not hold.
+    pub fn record_all(
+        &mut self,
+        run_id: &str,
+        events: impl IntoIterator<Item = Event>,
+    ) -> Vec<RunEvent> {
+        let mut emitted = Vec::new();
+        for event in events {
+            for admitted in self.admit(run_id, event) {
+                emitted.extend(self.record_one(run_id, admitted));
+            }
+        }
+        emitted
+    }
+
+    /// The OUTPUT BOUND, in one place, applied before any byte moves.
+    ///
+    /// A text-bearing event is charged against the run's remaining
+    /// allowance and CLIPPED to it; the typed cut follows the prefix that
+    /// fit, and once the budget is spent every later text event is
+    /// dropped whole. Accounting after the emit — which is what this
+    /// replaced — bounds nothing: the bytes are already on the bus and
+    /// already in the consumer by the time anyone counts them.
+    ///
+    /// Non-text events are never charged and never dropped: an `exited`
+    /// suppressed by a budget would lose the run's own outcome.
+    fn admit(&mut self, run_id: &str, event: Event) -> Vec<Event> {
+        let Some(live) = self.live.get_mut(run_id) else {
+            return vec![event];
+        };
+        let text = match &event.kind {
+            EventKind::Delta { text } => text.clone(),
+            EventKind::TurnEnd { text: Some(text) } => text.clone(),
+            _ => return vec![event],
+        };
+        let limit = live.budget.output_bytes;
+        let spent = live.answer_bytes;
+        let room = limit.saturating_sub(spent);
+        let produced = text.len() as u64;
+        live.answer_bytes = spent.saturating_add(produced);
+        if produced <= room {
+            return vec![event];
+        }
+        let mut admitted = Vec::new();
+        let head = clip(&text, room);
+        if !head.is_empty() {
+            let kind = match event.kind {
+                EventKind::Delta { .. } => EventKind::Delta { text: head },
+                _ => EventKind::TurnEnd { text: Some(head) },
+            };
+            admitted.push(Event {
+                kind,
+                // A newer peer's fields ride with the prefix: clipping the
+                // answer is not licence to drop what came beside it.
+                extra: event.extra,
+            });
+        }
+        // Once per run: recording the cut marks the record, and a marked
+        // record has already told the story.
+        if !live.record.truncated {
+            admitted.push(Event::truncated(limit, live.answer_bytes));
+        }
+        admitted
+    }
+
+    /// Records one already-admitted event.
+    fn record_one(&mut self, run_id: &str, event: Event) -> Option<RunEvent> {
         let live = self.live.get_mut(run_id)?;
         let seq = live.seq;
         live.seq += 1;
-        match &event {
-            Event::Started { model } => {
+        match &event.kind {
+            EventKind::Started { model } => {
                 live.record.state = RunState::Running;
                 if live.record.model.is_none() {
                     live.record.model.clone_from(model);
                 }
             }
-            Event::Delta { text } => live.record.text.push_str(text),
-            Event::TurnEnd { text } => {
+            EventKind::Delta { text } => live.record.text.push_str(text),
+            EventKind::TurnEnd { text } => {
                 if live.record.text.is_empty() {
                     if let Some(text) = text {
                         live.record.text.clone_from(text);
                     }
                 }
             }
-            Event::Exited {
+            EventKind::Exited {
                 status,
                 usage,
                 truncated,
@@ -860,14 +1226,16 @@ impl Runs {
                 live.record.truncated |= *truncated;
                 live.record.error.clone_from(error);
             }
-            Event::Cancelled { .. } => live.record.state = RunState::Cancelled,
+            EventKind::Cancelled { .. } => live.record.state = RunState::Cancelled,
             // Recording the cut is what marks the record: one fact, one
             // source, and a listener and a `run-get` reader can never
             // disagree about whether the answer is whole.
-            Event::Truncated { .. } => live.record.truncated = true,
+            EventKind::Truncated { .. } => live.record.truncated = true,
             // A kind this version cannot read moves nothing: it is
             // ordered and kept, never interpreted.
-            Event::ToolCall { .. } | Event::ToolResult { .. } | Event::Unknown { .. } => {}
+            EventKind::ToolCall { .. }
+            | EventKind::ToolResult { .. }
+            | EventKind::Unknown { .. } => {}
         }
         live.record.events.push(event.clone());
         Some(RunEvent {
@@ -882,37 +1250,24 @@ impl Runs {
     /// Marks a run failed before it ever ran (a refused spawn, an absent
     /// CLI). Answers the bus record.
     pub fn fail(&mut self, run_id: &str, reason: impl Into<String>) -> Option<RunEvent> {
-        let emitted = self.record(
-            run_id,
-            Event::Cancelled {
-                reason: reason.into(),
-            },
-        );
+        let emitted = self
+            .record_all(run_id, [Event::cancelled(reason)])
+            .into_iter()
+            .next();
         if let Some(live) = self.live.get_mut(run_id) {
             live.record.state = RunState::Failed;
         }
         emitted
     }
 
-    /// Accounts `bytes` read for `run_id`. Answers the
-    /// [`Event::Truncated`] the provider must RECORD once the output
-    /// budget is spent — after which it stops reading and kills the child
-    /// — and `None` while the run is still inside its budget.
-    ///
-    /// The event is answered rather than the old bare `true` because the
-    /// cut has to reach the bus: a consumer sees events, and a boolean
-    /// buried in a record it may never fetch is a silent truncation.
-    /// Answered once per run: recording it marks the record, and a
-    /// marked record has already told the story.
-    pub fn read(&mut self, run_id: &str, bytes: u64) -> Option<Event> {
-        let live = self.live.get_mut(run_id)?;
-        live.read_bytes = live.read_bytes.saturating_add(bytes);
-        (live.read_bytes > live.budget.output_bytes && !live.record.truncated).then_some(
-            Event::Truncated {
-                limit_bytes: live.budget.output_bytes,
-                read_bytes: live.read_bytes,
-            },
-        )
+    /// Whether the run's answer was cut by its output budget — what a
+    /// provider checks after emitting, to kill the child it is no longer
+    /// reading.
+    #[must_use]
+    pub fn is_truncated(&self, run_id: &str) -> bool {
+        self.live
+            .get(run_id)
+            .is_some_and(|live| live.record.truncated)
     }
 
     /// Whether `run_id` has outlived its wall budget at `now_ms`.

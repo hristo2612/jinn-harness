@@ -288,12 +288,12 @@ impl Decoder {
         if value.get("subtype").and_then(Value::as_str) != Some("init") {
             return Vec::new();
         }
-        vec![Event::Started {
-            model: value
+        vec![Event::started(
+            value
                 .get("model")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
-        }]
+        )]
     }
 
     /// `assistant` lines: one [`Event::Delta`] per `text` block, one
@@ -307,13 +307,13 @@ impl Decoder {
                 .and_then(Value::as_str)
                 .unwrap_or_default()
             {
-                "text" => events.push(Event::Delta {
-                    text: block
+                "text" => events.push(Event::delta(
+                    block
                         .get("text")
                         .and_then(Value::as_str)
                         .unwrap_or_default()
                         .to_owned(),
-                }),
+                )),
                 "tool_use" => {
                     let name = block
                         .get("name")
@@ -323,10 +323,10 @@ impl Decoder {
                     if let Some(id) = block.get("id").and_then(Value::as_str) {
                         self.remember(id, &name);
                     }
-                    events.push(Event::ToolCall {
+                    events.push(Event::tool_call(
                         name,
-                        input: block.get("input").cloned().unwrap_or(Value::Null),
-                    });
+                        block.get("input").cloned().unwrap_or(Value::Null),
+                    ));
                 }
                 _ => {}
             }
@@ -348,13 +348,13 @@ impl Decoder {
                 .and_then(Value::as_str)
                 .and_then(|id| self.recall(id))
                 .unwrap_or_default();
-            events.push(Event::ToolResult {
+            events.push(Event::tool_result(
                 name,
-                ok: !block
+                !block
                     .get("is_error")
                     .and_then(Value::as_bool)
                     .unwrap_or(false),
-            });
+            ));
         }
         events
     }
@@ -392,12 +392,12 @@ impl Decoder {
             cost_micro_usd: micro_usd(value.get("total_cost_usd").and_then(Value::as_f64)),
             ..Usage::default()
         };
-        vec![Event::TurnEnd {
-            text: value
+        vec![Event::turn_end(
+            value
                 .get("result")
                 .and_then(Value::as_str)
                 .map(str::to_owned),
-        }]
+        )]
     }
 
     /// Correlates one call id with its tool name, bounded by [`TOOL_CAP`].

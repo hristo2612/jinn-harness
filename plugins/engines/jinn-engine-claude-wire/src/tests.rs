@@ -6,6 +6,7 @@
 use jinn_engine::ToolMode;
 
 use super::*;
+use jinn_engine::EventKind;
 
 const INIT: &str = r#"{"type":"system","subtype":"init","cwd":"/work","session_id":"s-1","model":"claude-opus-5","tools":["Bash","Read"],"permissionMode":"default"}"#;
 const HOOK_STARTED: &str = r#"{"type":"system","subtype":"hook_started","hook_id":"h-1","hook_name":"SessionStart:startup"}"#;
@@ -52,9 +53,7 @@ fn decode_all(text: &str) -> Vec<Event> {
 fn an_init_line_starts_the_run_with_the_model_it_names() {
     assert_eq!(
         decode_all(&format!("{INIT}\n")),
-        vec![Event::Started {
-            model: Some("claude-opus-5".to_owned())
-        }]
+        vec![Event::started(Some("claude-opus-5".to_owned()))]
     );
 }
 
@@ -77,7 +76,7 @@ fn noise_is_nothing_never_a_fabricated_event_and_never_a_panic() {
     ] {
         let events = decode_all(&format!("{line}\n"));
         let expected: Vec<Event> = if line == r#"{"type":"system","subtype":"init"}"# {
-            vec![Event::Started { model: None }]
+            vec![Event::started(None)]
         } else {
             Vec::new()
         };
@@ -90,12 +89,8 @@ fn an_assistant_message_yields_one_delta_per_text_block() {
     assert_eq!(
         decode_all(&format!("{ASSISTANT_TWO_TEXTS}\n")),
         vec![
-            Event::Delta {
-                text: "first".to_owned()
-            },
-            Event::Delta {
-                text: " second".to_owned()
-            },
+            Event::delta("first".to_owned()),
+            Event::delta(" second".to_owned()),
         ]
     );
 }
@@ -105,10 +100,10 @@ fn a_thinking_block_is_not_the_answer_and_yields_nothing() {
     let events = decode_all(&format!("{ASSISTANT_THINKING_THEN_TOOL}\n"));
     assert_eq!(
         events,
-        vec![Event::ToolCall {
-            name: "Bash".to_owned(),
-            input: serde_json::json!({ "command": "echo ok" }),
-        }]
+        vec![Event::tool_call(
+            "Bash".to_owned(),
+            serde_json::json!({ "command": "echo ok" })
+        )]
     );
 }
 
@@ -120,14 +115,11 @@ fn a_tool_use_and_its_result_correlate_through_the_tool_use_id() {
     assert_eq!(
         events,
         vec![
-            Event::ToolCall {
-                name: "Bash".to_owned(),
-                input: serde_json::json!({ "command": "echo ok" }),
-            },
-            Event::ToolResult {
-                name: "Bash".to_owned(),
-                ok: true,
-            },
+            Event::tool_call(
+                "Bash".to_owned(),
+                serde_json::json!({ "command": "echo ok" })
+            ),
+            Event::tool_result("Bash".to_owned(), true),
         ]
     );
 }
@@ -137,40 +129,26 @@ fn a_failing_tool_result_is_not_ok() {
     let events = decode_all(&format!(
         "{ASSISTANT_THINKING_THEN_TOOL}\n{TOOL_RESULT_ERR}\n"
     ));
-    assert_eq!(
-        events[1],
-        Event::ToolResult {
-            name: "Bash".to_owned(),
-            ok: false,
-        }
-    );
+    assert_eq!(events[1], Event::tool_result("Bash".to_owned(), false));
 }
 
 #[test]
 fn an_uncorrelated_tool_result_is_honestly_nameless_never_invented() {
     assert_eq!(
         decode_all(&format!("{TOOL_RESULT_STRAY}\n")),
-        vec![Event::ToolResult {
-            name: String::new(),
-            ok: true,
-        }]
+        vec![Event::tool_result(String::new(), true)]
     );
 }
 
 #[test]
 fn the_result_line_ends_the_turn_and_the_codec_never_exits_the_run() {
     let events = decode_all(&stream());
-    assert_eq!(
-        events.last(),
-        Some(&Event::TurnEnd {
-            text: Some("OK".to_owned())
-        })
-    );
+    assert_eq!(events.last(), Some(&Event::turn_end(Some("OK".to_owned()))));
     // The exit belongs to the PROCESS, not the stream: the provider emits
     // it from the real `wait` status.
     assert!(!events
         .iter()
-        .any(|event| matches!(event, Event::Exited { .. })));
+        .any(|event| matches!(event.kind, EventKind::Exited { .. })));
 }
 
 #[test]
@@ -200,12 +178,7 @@ fn the_result_lines_usage_is_the_provider_s_to_attach_cost_rounded_to_micro_usd(
 fn a_failed_result_is_still_a_turn_end_and_the_failure_stays_visible() {
     let mut decoder = Decoder::new();
     let events = decoder.feed(format!("{RESULT_FAILED}\n").as_bytes());
-    assert_eq!(
-        events,
-        vec![Event::TurnEnd {
-            text: Some("turn limit".to_owned())
-        }]
-    );
+    assert_eq!(events, vec![Event::turn_end(Some("turn limit".to_owned()))]);
     assert!(decoder.failed());
     assert_eq!(decoder.result_subtype(), Some("error_max_turns"));
     assert_eq!(decoder.usage().cost_micro_usd, 500_000);
@@ -241,9 +214,7 @@ fn a_partial_line_waits_for_its_newline_and_a_trailing_one_flushes() {
     // No newline ever came (the pipe hit EOF): `flush` is the last word.
     assert_eq!(
         decoder.flush(),
-        vec![Event::Started {
-            model: Some("claude-opus-5".to_owned())
-        }]
+        vec![Event::started(Some("claude-opus-5".to_owned()))]
     );
     assert!(decoder.flush().is_empty());
 }
@@ -256,12 +227,8 @@ fn carriage_returns_and_a_final_line_without_a_newline_are_both_ordinary() {
     assert_eq!(
         events,
         vec![
-            Event::Started {
-                model: Some("claude-opus-5".to_owned())
-            },
-            Event::Delta {
-                text: "OK".to_owned()
-            },
+            Event::started(Some("claude-opus-5".to_owned())),
+            Event::delta("OK".to_owned()),
         ]
     );
 }
@@ -276,9 +243,7 @@ fn a_line_past_the_cap_is_dropped_whole_so_memory_stays_bounded() {
     assert!(decoder.feed(b"more of the same line").is_empty());
     assert_eq!(
         decoder.feed(format!("\n{INIT}\n").as_bytes()),
-        vec![Event::Started {
-            model: Some("claude-opus-5".to_owned())
-        }]
+        vec![Event::started(Some("claude-opus-5".to_owned()))]
     );
 }
 
@@ -288,9 +253,7 @@ fn bytes_that_are_not_utf8_are_not_json_and_yield_nothing() {
     assert!(decoder.feed(&[0xff, 0xfe, b'\n']).is_empty());
     assert_eq!(
         decoder.feed(format!("{INIT}\n").as_bytes()),
-        vec![Event::Started {
-            model: Some("claude-opus-5".to_owned())
-        }]
+        vec![Event::started(Some("claude-opus-5".to_owned()))]
     );
 }
 

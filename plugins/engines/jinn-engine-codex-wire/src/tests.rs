@@ -4,7 +4,7 @@
 //! which are inferred). Thread ids are session identifiers: every fixture
 //! here carries a synthetic one.
 
-use jinn_engine::{Event, ToolMode, ToolPolicy, Usage};
+use jinn_engine::{Event, EventKind, ToolMode, ToolPolicy, Usage};
 
 use crate::{argv, Decoder};
 
@@ -41,22 +41,14 @@ fn a_captured_run_decodes_to_the_seams_events() {
     assert_eq!(
         events,
         vec![
-            Event::Started { model: None },
-            Event::ToolResult {
-                name: "error".to_owned(),
-                ok: false,
-            },
-            Event::ToolCall {
-                name: "command_execution".to_owned(),
-                input: serde_json::json!({ "command": "/bin/zsh -lc 'echo hello'" }),
-            },
-            Event::ToolResult {
-                name: "command_execution".to_owned(),
-                ok: true,
-            },
-            Event::TurnEnd {
-                text: Some("OK".to_owned()),
-            },
+            Event::started(None),
+            Event::tool_result("error".to_owned(), false),
+            Event::tool_call(
+                "command_execution".to_owned(),
+                serde_json::json!({ "command": "/bin/zsh -lc 'echo hello'" })
+            ),
+            Event::tool_result("command_execution".to_owned(), true),
+            Event::turn_end(Some("OK".to_owned())),
         ]
     );
 }
@@ -73,7 +65,7 @@ fn the_codec_never_emits_an_exit_the_process_owns_it() {
     let (events, _) = decode_all(CAPTURED);
     assert!(!events
         .iter()
-        .any(|event| matches!(event, Event::Exited { .. })));
+        .any(|event| matches!(event.kind, EventKind::Exited { .. })));
 }
 
 #[test]
@@ -110,9 +102,7 @@ fn an_incomplete_tail_yields_nothing_until_its_newline() {
         .is_empty());
     assert_eq!(
         decoder.feed(b"essage\",\"text\":\"OK\"}}\n"),
-        vec![Event::TurnEnd {
-            text: Some("OK".to_owned())
-        }]
+        vec![Event::turn_end(Some("OK".to_owned()))]
     );
 }
 
@@ -148,9 +138,7 @@ fn an_unterminated_final_line_decodes_on_flush_never_before() {
         .is_empty());
     assert_eq!(
         decoder.flush(),
-        vec![Event::TurnEnd {
-            text: Some("OK".to_owned())
-        }]
+        vec![Event::turn_end(Some("OK".to_owned()))]
     );
     assert!(decoder.flush().is_empty(), "flush is not repeatable");
 }
@@ -196,13 +184,7 @@ fn an_error_item_is_surfaced_as_a_failed_result_and_kept_for_the_provider() {
     let events = decoder.feed(
         b"{\"type\":\"item.completed\",\"item\":{\"id\":\"item_0\",\"type\":\"error\",\"message\":\"boom\"}}\n",
     );
-    assert_eq!(
-        events,
-        vec![Event::ToolResult {
-            name: "error".to_owned(),
-            ok: false,
-        }]
-    );
+    assert_eq!(events, vec![Event::tool_result("error".to_owned(), false)]);
     assert_eq!(decoder.errors(), ["boom".to_owned()]);
 }
 
@@ -215,14 +197,11 @@ fn a_tool_item_that_never_started_still_gets_its_call() {
     assert_eq!(
         events,
         vec![
-            Event::ToolCall {
-                name: "command_execution".to_owned(),
-                input: serde_json::json!({ "command": "ls" }),
-            },
-            Event::ToolResult {
-                name: "command_execution".to_owned(),
-                ok: false,
-            },
+            Event::tool_call(
+                "command_execution".to_owned(),
+                serde_json::json!({ "command": "ls" })
+            ),
+            Event::tool_result("command_execution".to_owned(), false),
         ]
     );
 }
@@ -256,9 +235,7 @@ fn an_oversized_line_is_dropped_and_the_stream_recovers() {
         decoder.feed(
             b"tail of the dropped line\n{\"type\":\"item.completed\",\"item\":{\"id\":\"i\",\"type\":\"agent_message\",\"text\":\"OK\"}}\n"
         ),
-        vec![Event::TurnEnd {
-            text: Some("OK".to_owned())
-        }]
+        vec![Event::turn_end(Some("OK".to_owned()))]
     );
 }
 

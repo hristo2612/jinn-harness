@@ -175,13 +175,12 @@ fn default_chunk_bytes() -> usize {
 #[derive(Clone, Debug)]
 struct Plan {
     run_id: String,
-    /// The reply the output budget admits, already cut.
+    /// The WHOLE reply. It is not cut here: the output bound lives in the
+    /// definition's `Runs::record_all`, which clips a text event to the
+    /// run's remaining allowance before it reaches the bus. A second copy
+    /// of that arithmetic in this provider is exactly the shape that let
+    /// a budget be checked after the bytes had already moved.
     reply: String,
-    /// Whether the budget cut it.
-    truncated: bool,
-    /// The typed cut the registry answered, replayed onto the run so a
-    /// listener sees it (the definition's [`Event::Truncated`]).
-    truncation: Option<Event>,
     /// The prompt's byte length — the input half of [`Usage`].
     prompt_bytes: u64,
     /// The `now` the finish is due at.
@@ -267,18 +266,13 @@ fn chunks(text: &str, max: usize) -> Vec<&str> {
     pieces
 }
 
-/// The prefix of `reply` the output budget admits, and whether anything
-/// was cut. Character-safe: the cut walks back to a boundary.
-fn budget_cut(reply: &str, output_bytes: u64) -> (&str, bool) {
-    let cap = usize::try_from(output_bytes).unwrap_or(usize::MAX);
-    if reply.len() <= cap {
-        return (reply, false);
-    }
-    let mut end = cap;
-    while end > 0 && !reply.is_char_boundary(end) {
-        end -= 1;
-    }
-    (&reply[..end], true)
+/// Whether the run's answer was cut by its output budget — the
+/// registry's fact, asked rather than tracked a second time here.
+fn truncated_now(run_id: &str) -> bool {
+    RUNS.lock()
+        .unwrap()
+        .as_ref()
+        .is_some_and(|runs| runs.is_truncated(run_id))
 }
 
 /// Puts one bus record on the wire. A refusal is counted, never fatal.
@@ -297,10 +291,7 @@ fn record_and_emit(run_id: &str, events: Vec<Event>) {
     let records: Vec<RunEvent> = {
         let mut held = RUNS.lock().unwrap();
         let runs = held.as_mut().expect("activate holds the registry");
-        events
-            .into_iter()
-            .filter_map(|event| runs.record(run_id, event))
-            .collect()
+        runs.record_all(run_id, events)
     };
     for record in &records {
         emit(record);
@@ -314,10 +305,7 @@ fn record_deferred(run_id: &str, events: Vec<Event>) {
     let records: Vec<RunEvent> = {
         let mut held = RUNS.lock().unwrap();
         let runs = held.as_mut().expect("activate holds the registry");
-        events
-            .into_iter()
-            .filter_map(|event| runs.record(run_id, event))
-            .collect()
+        runs.record_all(run_id, events)
     };
     DEFERRED.lock().unwrap().extend(records);
 }
@@ -424,28 +412,30 @@ fn resolve_secrets(
 /// Settles one planned run: the deltas, the turn end, and the exit with
 /// its usage.
 fn finish(plan: &Plan, chunk_bytes: usize, keep_runs: usize) {
-    // The cut goes on the wire FIRST and typed: a consumer sees events,
-    // and an answer that simply stops reads as a whole one.
-    let mut events: Vec<Event> = plan.truncation.clone().into_iter().collect();
-    events.extend(chunks(&plan.reply, chunk_bytes)
+    // The deltas go out WHOLE; the shared bound clips them and puts the
+    // typed cut on the wire itself. This provider never decides what fits.
+    let events: Vec<Event> = chunks(&plan.reply, chunk_bytes)
         .into_iter()
-        .map(|piece| Event::Delta {
-            text: piece.to_owned(),
-        }));
-    events.push(Event::TurnEnd { text: None });
-    events.push(Event::Exited {
-        status: 0,
-        // An echo has no engine to report a failed turn.
-        error: None,
+        .map(|piece| Event::delta(piece.to_owned()))
+        .collect();
+    record_and_emit(&plan.run_id, events);
+    // Asked AFTER the answer moved: whether the bound cut it is the
+    // registry's fact, not a flag this provider carried in.
+    let truncated = truncated_now(&plan.run_id);
+    let mut events = vec![Event::turn_end(None)];
+    events.push(Event::exited(
+        0,
         // Byte counts standing in for tokens — see the module doc. An
         // echo runs no model, so a token count here would be invented.
-        usage: Usage {
+        Usage {
             input_tokens: plan.prompt_bytes,
             output_tokens: plan.reply.len() as u64,
             ..Usage::default()
         },
-        truncated: plan.truncated,
-    });
+        truncated,
+        // An echo has no engine to report a failed turn.
+        None,
+    ));
     record_and_emit(&plan.run_id, events);
     prune(keep_runs);
 }
@@ -466,9 +456,7 @@ fn kill_and_cancel(run_id: &str, reason: &str) {
     }
     record_and_emit(
         run_id,
-        vec![Event::Cancelled {
-            reason: reason.to_owned(),
-        }],
+        vec![Event::cancelled(reason.to_owned())],
     );
 }
 
@@ -515,7 +503,7 @@ fn spawn_run(
         },
     );
     let model = request.model.clone().or_else(|| default_model(config));
-    record_deferred(run_id, vec![Event::Started { model }]);
+    record_deferred(run_id, vec![Event::started(model)]);
     if let Err(error) = clock::alarm_at(now_ms.saturating_add(config.poll_ms), ALARM_TOKEN) {
         kill_and_cancel(run_id, &format!("no poll alarm: {error:?}"));
         prune(config.keep_runs);
@@ -560,22 +548,18 @@ fn poll_children(config: &EchoConfig, now_ms: u64) -> bool {
         }
         let (text, read) = drain_child(child.handle);
         if !text.is_empty() {
-            record_and_emit(&run_id, vec![Event::Delta { text }]);
+            // Handed over WHOLE: the shared bound clips it to the run's
+            // remaining allowance and emits the typed cut, so what leaves
+            // this provider is already inside the budget.
+            record_and_emit(&run_id, vec![Event::delta(text)]);
         }
-        let cut = {
-            let mut held = RUNS.lock().unwrap();
-            held.as_mut()
-                .expect("activate holds the registry")
-                .read(&run_id, read)
-        };
         CHILDREN
             .lock()
             .unwrap()
             .entry(run_id.clone())
             .and_modify(|held| held.read_bytes = held.read_bytes.saturating_add(read));
-        if let Some(cut) = cut {
-            // The cut on the wire FIRST, then the end it caused.
-            record_and_emit(&run_id, vec![cut]);
+        if truncated_now(&run_id) {
+            // The answer is spent; stop reading this child and end it.
             kill_and_cancel(&run_id, "budget");
             prune(config.keep_runs);
             continue;
@@ -596,31 +580,26 @@ fn poll_children(config: &EchoConfig, now_ms: u64) -> bool {
             Ok(WaitResult::Exited(status)) => {
                 let (tail, tail_read) = drain_child(child.handle);
                 if !tail.is_empty() {
-                    record_and_emit(&run_id, vec![Event::Delta { text: tail }]);
+                    record_and_emit(&run_id, vec![Event::delta(tail)]);
                 }
                 let output = child.read_bytes.saturating_add(read).saturating_add(tail_read);
-                let truncated = RUNS
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .and_then(|runs| runs.get(&run_id).map(|record| record.truncated))
-                    .unwrap_or_default();
+                let truncated = truncated_now(&run_id);
                 record_and_emit(
                     &run_id,
                     vec![
-                        Event::TurnEnd { text: None },
-                        Event::Exited {
+                        Event::turn_end(None),
+                        Event::exited(
                             status,
                             // Byte counts standing in for tokens, as the
                             // answering shape does — never a token guess.
-                            usage: Usage {
+                            Usage {
                                 input_tokens: child.prompt_bytes,
                                 output_tokens: output,
                                 ..Usage::default()
                             },
                             truncated,
-                            error: None,
-                        },
+                            None,
+                        ),
                     ],
                 );
                 forget_child(&run_id);
@@ -705,20 +684,9 @@ fn on_run(payload: &[u8]) -> Answer {
         return Answer::ok(accepted);
     }
     let reply = echo_reply(config.reply.as_deref(), &request.prompt);
-    // The registry does the output accounting (it marks the record
-    // truncated); the cut is what actually goes on the bus.
-    let truncation = {
-        let mut held = RUNS.lock().unwrap();
-        held.as_mut()
-            .expect("activate holds the registry")
-            .read(&run_id, reply.len() as u64)
-    };
-    let (cut, cut_here) = budget_cut(&reply, request.budget.output_bytes);
     let plan = Plan {
         run_id: run_id.clone(),
-        reply: cut.to_owned(),
-        truncated: truncation.is_some() || cut_here,
-        truncation,
+        reply,
         prompt_bytes: request.prompt.len() as u64,
         due_ms: now_ms.saturating_add(config.delay_ms),
     };
@@ -727,10 +695,10 @@ fn on_run(payload: &[u8]) -> Answer {
         // The synchronous shape emits from inside the call by
         // construction; it is only safe for a caller that does NOT listen
         // on the topic (see [`DEFERRED`], and this module's doc).
-        record_and_emit(&run_id, vec![Event::Started { model }]);
+        record_and_emit(&run_id, vec![Event::started(model)]);
         finish(&plan, config.chunk_bytes, config.keep_runs);
     } else {
-        record_deferred(&run_id, vec![Event::Started { model }]);
+        record_deferred(&run_id, vec![Event::started(model)]);
         // The run stays live until the wake: `cancel` has something to
         // kill and `run-get` answers `running`.
         PENDING.lock().unwrap().push(plan);
@@ -866,9 +834,7 @@ impl Guest for Echo {
                 // success.
                 record_and_emit(
                     &plan.run_id,
-                    vec![Event::Cancelled {
-                        reason: "budget".to_owned(),
-                    }],
+                    vec![Event::cancelled("budget".to_owned())],
                 );
                 prune(config.keep_runs);
             } else {

@@ -88,9 +88,7 @@ fn events_are_tagged_by_kind_on_the_wire() {
         engine: "echo".to_owned(),
         run_id: "echo-1".to_owned(),
         seq: 3,
-        event: Event::Delta {
-            text: "OK".to_owned(),
-        },
+        event: Event::delta("OK".to_owned()),
     };
     let wire = serde_json::to_value(&event).expect("encodes");
     assert_eq!(wire["kind"], "delta");
@@ -100,17 +98,17 @@ fn events_are_tagged_by_kind_on_the_wire() {
         serde_json::from_value::<RunEvent>(wire).expect("decodes"),
         event
     );
-    let exited = serde_json::to_value(Event::Exited {
-        status: 0,
-        usage: Usage {
+    let exited = serde_json::to_value(Event::exited(
+        0,
+        Usage {
             input_tokens: 10,
             output_tokens: 3,
             cost_micro_usd: 19_304,
             ..Usage::default()
         },
-        truncated: false,
-        error: None,
-    })
+        false,
+        None,
+    ))
     .expect("encodes");
     assert_eq!(exited["kind"], "exited");
     assert_eq!(exited["usage"]["input-tokens"], 10);
@@ -123,12 +121,12 @@ fn events_are_tagged_by_kind_on_the_wire() {
     .expect("an unknown kind decodes");
     assert_eq!(
         ahead.event,
-        Event::Unknown {
-            kind: "thinking".to_owned(),
-            fields: [("tokens".to_owned(), serde_json::json!(4))]
+        Event::unknown(
+            "thinking",
+            [("tokens".to_owned(), serde_json::json!(4))]
                 .into_iter()
                 .collect(),
-        }
+        )
     );
     assert_eq!(ahead.seq, 9);
 }
@@ -212,12 +210,13 @@ fn an_unknown_event_kind_keeps_its_name_and_its_payload() {
         "kind": "thinking", "text": "hmm", "tokens": 4
     });
     let event: RunEvent = serde_json::from_value(wire.clone()).expect("decodes");
-    let Event::Unknown { kind, fields } = &event.event else {
+    let EventKind::Unknown { kind } = &event.event.kind else {
         panic!("an unheard-of kind is Unknown, not a decode failure: {event:?}");
     };
     assert_eq!(kind, "thinking");
-    assert_eq!(fields["tokens"], 4);
-    assert_eq!(fields["text"], "hmm");
+    // Its whole payload is in the ONE rest map every kind uses.
+    assert_eq!(event.event.extra["tokens"], 4);
+    assert_eq!(event.event.extra["text"], "hmm");
     // Byte-preserving: what a listener forwards is what it was sent.
     assert_eq!(serde_json::to_value(&event).expect("encodes"), wire);
     // It is still ORDERED and COUNTED like any other event — the whole
@@ -226,7 +225,8 @@ fn an_unknown_event_kind_keeps_its_name_and_its_payload() {
     let mut runs = Runs::new("default");
     let accepted = runs.accept(&request("default"), 0);
     let recorded = runs
-        .record(&accepted.run_id, event.event.clone())
+        .record_all(&accepted.run_id, [event.event.clone()])
+        .pop()
         .expect("held");
     assert_eq!(recorded.seq, 0);
     // An unknown kind never moves the run's state: this version cannot
@@ -255,26 +255,73 @@ fn spending_the_output_budget_is_a_typed_event_on_the_wire() {
         0,
     );
     let run_id = accepted.run_id.clone();
-    // Within budget: nothing to say.
-    assert_eq!(runs.read(&run_id, 4), None);
+    // Within budget: the answer goes out whole and nothing is said.
+    let inside = runs.record_all(&run_id, [Event::delta("abcd")]);
+    assert_eq!(inside.len(), 1);
+    assert_eq!(inside[0].event, Event::delta("abcd"));
     assert!(!runs.get(&run_id).expect("held").truncated);
-    // Past it: the event the provider records and emits before it kills
-    // the child.
-    let cut = runs.read(&run_id, 12).expect("the budget is spent");
+
+    // Past it: the bound holds BEFORE the bytes move. The 12-byte delta
+    // reaches the bus as the 4 bytes the allowance still had, and the
+    // typed cut follows it — never the whole payload and an apology.
+    let cut = runs.record_all(&run_id, [Event::delta("0123456789ab")]);
     assert_eq!(
-        cut,
-        Event::Truncated {
-            limit_bytes: 8,
-            read_bytes: 16
-        }
+        cut.iter()
+            .map(|emitted| emitted.event.clone())
+            .collect::<Vec<_>>(),
+        vec![Event::delta("0123"), Event::truncated(8, 16)],
     );
-    let emitted = runs.record(&run_id, cut).expect("held");
-    assert_eq!(
-        serde_json::to_value(&emitted).expect("encodes")["kind"],
-        "truncated"
-    );
-    // Recording it is what marks the record — one source for the fact.
     assert!(runs.get(&run_id).expect("held").truncated);
+    // The record and the wire agree: 8 bytes of answer, the budget.
+    assert_eq!(runs.get(&run_id).expect("held").text, "abcd0123");
+
+    // Spent is spent: a later delta reaches the bus at all, and the cut
+    // is said once.
+    assert!(runs.record_all(&run_id, [Event::delta("more")]).is_empty());
+    // An event that is not answer text is never charged and never cut —
+    // suppressing an exit would lose the run's own outcome.
+    let exited = runs.record_all(&run_id, [Event::exited(0, Usage::default(), true, None)]);
+    assert_eq!(exited.len(), 1);
+}
+
+/// The bound is in BYTES, and a multi-byte character is never split into
+/// a broken one: clipping to a char boundary is what keeps the prefix
+/// both valid UTF-8 and inside the budget (a replacement character is
+/// three bytes and would push it back over).
+#[test]
+fn the_output_bound_clips_on_a_character_boundary() {
+    let mut runs = Runs::new("echo");
+    let mut request = request("echo");
+    request.budget = Budget {
+        output_bytes: 4,
+        ..Budget::default()
+    };
+    let run = runs.accept(&request, 0).run_id;
+    // "é" is two bytes: three of them are six, and four bytes of room
+    // admit two whole characters, not two and a half.
+    let emitted = runs.record_all(&run, [Event::delta("ééé")]);
+    assert_eq!(emitted[0].event, Event::delta("éé"));
+    assert_eq!(emitted[1].event, Event::truncated(4, 6));
+    assert_eq!(runs.get(&run).expect("held").text, "éé");
+    assert!(runs.get(&run).expect("held").text.len() <= 4);
+}
+
+/// A turn end carries the whole answer for a provider that streams no
+/// deltas (codex), so it is answer text too — bounded by the same one
+/// implementation, not by a second copy of it in that provider.
+#[test]
+fn a_turn_ends_answer_is_bounded_by_the_same_path() {
+    let mut runs = Runs::new("codex");
+    let mut request = request("codex");
+    request.budget = Budget {
+        output_bytes: 3,
+        ..Budget::default()
+    };
+    let run = runs.accept(&request, 0).run_id;
+    let emitted = runs.record_all(&run, [Event::turn_end(Some("abcdef".to_owned()))]);
+    assert_eq!(emitted[0].event, Event::turn_end(Some("abc".to_owned())));
+    assert_eq!(emitted[1].event, Event::truncated(3, 6));
+    assert_eq!(runs.get(&run).expect("held").text, "abc");
 }
 
 #[test]
@@ -289,12 +336,11 @@ fn a_run_is_minted_sequenced_and_assembled() {
     assert_eq!(runs.live_ids(), ["echo-1"]);
 
     let started = runs
-        .record(
+        .record_all(
             &accepted.run_id,
-            Event::Started {
-                model: Some("echo-1".to_owned()),
-            },
+            [Event::started(Some("echo-1".to_owned()))],
         )
+        .pop()
         .expect("held");
     assert_eq!(started.seq, 0);
     assert_eq!(
@@ -304,28 +350,25 @@ fn a_run_is_minted_sequenced_and_assembled() {
 
     for (index, chunk) in ["O", "K"].into_iter().enumerate() {
         let emitted = runs
-            .record(
-                &accepted.run_id,
-                Event::Delta {
-                    text: chunk.to_owned(),
-                },
-            )
+            .record_all(&accepted.run_id, [Event::delta(chunk.to_owned())])
+            .pop()
             .expect("held");
         assert_eq!(emitted.seq as usize, index + 1);
     }
-    runs.record(
+    runs.record_all(
         &accepted.run_id,
-        Event::Exited {
-            status: 0,
-            usage: Usage {
+        [Event::exited(
+            0,
+            Usage {
                 input_tokens: 7,
                 output_tokens: 1,
                 ..Usage::default()
             },
-            truncated: false,
-            error: None,
-        },
+            false,
+            None,
+        )],
     )
+    .pop()
     .expect("held");
 
     let record = runs.get(&accepted.run_id).expect("held");
@@ -338,8 +381,8 @@ fn a_run_is_minted_sequenced_and_assembled() {
     assert!(runs.live_ids().is_empty());
     // A provider never emits for a run it does not hold.
     assert!(runs
-        .record("echo-99", Event::TurnEnd { text: None })
-        .is_none());
+        .record_all("echo-99", [Event::turn_end(None)])
+        .is_empty());
 }
 
 #[test]
@@ -348,24 +391,14 @@ fn a_turn_end_only_fills_an_answer_the_deltas_never_gave() {
     // gives deltas AND a final result. Both must land the same answer.
     let mut streamed = Runs::new("claude");
     let run = streamed.accept(&request("claude"), 0).run_id;
-    streamed.record(&run, Event::Delta { text: "O".into() });
-    streamed.record(&run, Event::Delta { text: "K".into() });
-    streamed.record(
-        &run,
-        Event::TurnEnd {
-            text: Some("OK".into()),
-        },
-    );
+    streamed.record_all(&run, [Event::delta("O")]);
+    streamed.record_all(&run, [Event::delta("K")]);
+    streamed.record_all(&run, [Event::turn_end(Some("OK".to_owned()))]);
     assert_eq!(streamed.get(&run).expect("held").text, "OK");
 
     let mut whole = Runs::new("codex");
     let run = whole.accept(&request("codex"), 0).run_id;
-    whole.record(
-        &run,
-        Event::TurnEnd {
-            text: Some("OK".into()),
-        },
-    );
+    whole.record_all(&run, [Event::turn_end(Some("OK".to_owned()))]);
     assert_eq!(whole.get(&run).expect("held").text, "OK");
 }
 
@@ -384,11 +417,12 @@ fn both_budgets_bound_a_run() {
     assert!(runs.over_wall_budget(&run, 1_600));
     assert!(!runs.over_wall_budget("echo-404", u64::MAX));
 
-    assert_eq!(runs.read(&run, 8), None);
+    runs.record_all(&run, [Event::delta("12345678")]);
     assert!(!runs.get(&run).expect("held").truncated);
-    let cut = runs.read(&run, 1).expect("the budget is spent");
-    runs.record(&run, cut).expect("held");
+    assert!(!runs.is_truncated(&run));
+    runs.record_all(&run, [Event::delta("9")]);
     assert!(runs.get(&run).expect("held").truncated);
+    assert!(runs.is_truncated(&run));
 }
 
 #[test]
@@ -400,9 +434,7 @@ fn a_failed_run_is_terminal_and_says_why() {
         .expect("held");
     assert_eq!(
         emitted.event,
-        Event::Cancelled {
-            reason: "the claude CLI is not on this host".to_owned()
-        }
+        Event::cancelled("the claude CLI is not on this host".to_owned())
     );
     let record = runs.get(&run).expect("held");
     assert_eq!(record.state, RunState::Failed);
@@ -415,18 +447,10 @@ fn finished_records_are_bounded_and_live_ones_are_never_dropped() {
     let mut runs = Runs::new("echo");
     for index in 0..5 {
         let run = runs.accept(&request("echo"), index).run_id;
-        runs.record(
-            &run,
-            Event::Exited {
-                status: 0,
-                usage: Usage::default(),
-                truncated: false,
-                error: None,
-            },
-        );
+        runs.record_all(&run, [Event::exited(0, Usage::default(), false, None)]);
     }
     let live = runs.accept(&request("echo"), 9).run_id;
-    runs.record(&live, Event::Started { model: None });
+    runs.record_all(&live, [Event::started(None)]);
 
     runs.retain_recent(2);
     assert_eq!(runs.len(), 3, "two finished records plus the live one");

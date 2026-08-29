@@ -45,7 +45,7 @@ impl Rng {
     fn value(&mut self, depth: u32) -> Value {
         match self.below(if depth == 0 { 5 } else { 7 }) {
             0 => Value::Null,
-            1 => Value::Bool(self.next() % 2 == 0),
+            1 => Value::Bool(self.next().is_multiple_of(2)),
             2 => json!(self.below(1_000_000)),
             3 => json!(format!("v{}", self.below(1_000))),
             4 => json!(-(self.below(1_000) as i64)),
@@ -209,44 +209,89 @@ fn answer_docs() -> Vec<Value> {
 /// — [`the_table_covers_every_wire_type`] holds it to that.
 fn wires() -> Vec<Wire> {
     vec![
-        Wire { name: "ToolPolicy", canonical: || vec![tools_doc()],
-               round_trip: round_trip::<ToolPolicy> },
-        Wire { name: "Budget", canonical: || vec![budget_doc()],
-               round_trip: round_trip::<Budget> },
-        Wire { name: "Usage", canonical: || vec![usage_doc()],
-               round_trip: round_trip::<Usage> },
-        Wire { name: "Capabilities", canonical: || vec![capabilities_doc()],
-               round_trip: round_trip::<Capabilities> },
-        Wire { name: "RunRequest", canonical: request_docs,
-               round_trip: round_trip::<RunRequest> },
-        Wire { name: "RunAccepted",
-               canonical: || vec![json!({ "api-version": API_VERSION,
+        Wire {
+            name: "ToolPolicy",
+            canonical: || vec![tools_doc()],
+            round_trip: round_trip::<ToolPolicy>,
+        },
+        Wire {
+            name: "Budget",
+            canonical: || vec![budget_doc()],
+            round_trip: round_trip::<Budget>,
+        },
+        Wire {
+            name: "Usage",
+            canonical: || vec![usage_doc()],
+            round_trip: round_trip::<Usage>,
+        },
+        Wire {
+            name: "Capabilities",
+            canonical: || vec![capabilities_doc()],
+            round_trip: round_trip::<Capabilities>,
+        },
+        Wire {
+            name: "RunRequest",
+            canonical: request_docs,
+            round_trip: round_trip::<RunRequest>,
+        },
+        Wire {
+            name: "RunAccepted",
+            canonical: || {
+                vec![json!({ "api-version": API_VERSION,
                                           "run-id": "default-1",
-                                          "engine": "default", "model": "m" })],
-               round_trip: round_trip::<RunAccepted> },
-        Wire { name: "CancelRequest",
-               canonical: || vec![json!({ "run-id": "default-1" })],
-               round_trip: round_trip::<CancelRequest> },
-        Wire { name: "Description",
-               canonical: || vec![json!({ "api-version": API_VERSION,
+                                          "engine": "default", "model": "m" })]
+            },
+            round_trip: round_trip::<RunAccepted>,
+        },
+        Wire {
+            name: "CancelRequest",
+            canonical: || vec![json!({ "run-id": "default-1" })],
+            round_trip: round_trip::<CancelRequest>,
+        },
+        Wire {
+            name: "Description",
+            canonical: || {
+                vec![json!({ "api-version": API_VERSION,
                                           "engine": "default", "provider": "p",
                                           "models": ["m"], "default-model": "m",
-                                          "capabilities": capabilities_doc() })],
-               round_trip: round_trip::<Description> },
-        Wire { name: "Event", canonical: event_docs, round_trip: round_trip::<Event> },
-        Wire { name: "RunEvent", canonical: run_event_docs,
-               round_trip: round_trip::<RunEvent> },
-        Wire { name: "RunRecord", canonical: record_docs,
-               round_trip: round_trip::<RunRecord> },
-        Wire { name: "EngineError",
-               canonical: || vec![json!({ "code": "refused", "message": "no" })],
-               round_trip: round_trip::<EngineError> },
-        Wire { name: "Answer", canonical: answer_docs, round_trip: round_trip::<Answer> },
-        Wire { name: "EngineSlot",
-               canonical: || vec![json!({ "engine": "default",
+                                          "capabilities": capabilities_doc() })]
+            },
+            round_trip: round_trip::<Description>,
+        },
+        Wire {
+            name: "Event",
+            canonical: event_docs,
+            round_trip: round_trip::<Event>,
+        },
+        Wire {
+            name: "RunEvent",
+            canonical: run_event_docs,
+            round_trip: round_trip::<RunEvent>,
+        },
+        Wire {
+            name: "RunRecord",
+            canonical: record_docs,
+            round_trip: round_trip::<RunRecord>,
+        },
+        Wire {
+            name: "EngineError",
+            canonical: || vec![json!({ "code": "refused", "message": "no" })],
+            round_trip: round_trip::<EngineError>,
+        },
+        Wire {
+            name: "Answer",
+            canonical: answer_docs,
+            round_trip: round_trip::<Answer>,
+        },
+        Wire {
+            name: "EngineSlot",
+            canonical: || {
+                vec![json!({ "engine": "default",
                                           "contract": "jinn:engine.default",
-                                          "entry": "jinn-engine-echo" })],
-               round_trip: round_trip::<EngineSlot> },
+                                          "entry": "jinn-engine-echo" })]
+            },
+            round_trip: round_trip::<EngineSlot>,
+        },
     ]
 }
 
@@ -294,5 +339,33 @@ fn the_verifiers_own_probe_is_one_sample_of_the_property() {
         "run-id": "default-1", "reasoning-tokens": 7, "seq": 4, "text": "hello"
     });
     let round: Value = round_trip::<RunEvent>(&doc);
-    assert_eq!(round, doc, "known event kinds must preserve additive fields");
+    assert_eq!(
+        round, doc,
+        "known event kinds must preserve additive fields"
+    );
+}
+
+/// The named exception, held to its own promise. A CLOSED VALUE SPACE —
+/// `effort`, `mode`, `state`, `code` — cannot preserve a value this
+/// version cannot name: there is nowhere in an enum to put one, and
+/// guessing which known value a future `effort: "ultra"` meant is the
+/// silent-wrong-answer shape the seam forbids. So it REFUSES, loudly, and
+/// the definition README names the surface. What must never happen is the
+/// third possibility: decoding to a default and dropping the fact.
+#[test]
+fn a_value_a_closed_space_cannot_name_is_refused_and_never_defaulted() {
+    let ahead = json!({
+        "api-version": API_VERSION, "engine": "default", "prompt": "p",
+        "effort": "ultra"
+    });
+    let refused = serde_json::from_value::<RunRequest>(ahead)
+        .expect_err("a value this version cannot name is a decode error");
+    assert!(
+        refused.to_string().contains("ultra"),
+        "the refusal names the value it could not read: {refused}"
+    );
+    // Not silently the nearest known one.
+    let state = json!({ "api-version": API_VERSION, "run-id": "default-1",
+                        "engine": "default", "state": "quiescing" });
+    assert!(serde_json::from_value::<RunRecord>(state).is_err());
 }

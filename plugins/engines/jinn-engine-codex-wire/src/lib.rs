@@ -185,7 +185,7 @@ impl Decoder {
         };
         match value.get("type").and_then(serde_json::Value::as_str) {
             // The thread id is a session identifier and stops here.
-            Some("thread.started") => vec![Event::Started { model: None }],
+            Some("thread.started") => vec![Event::started(None)],
             Some("turn.completed") => {
                 self.usage = usage_of(value.get("usage"));
                 Vec::new()
@@ -215,20 +215,16 @@ impl Decoder {
             return Vec::new();
         };
         match kind {
-            "agent_message" => vec![Event::TurnEnd {
-                text: item
-                    .get("text")
+            "agent_message" => vec![Event::turn_end(
+                item.get("text")
                     .and_then(serde_json::Value::as_str)
                     .map(str::to_owned),
-            }],
+            )],
             "error" => {
                 if let Some(message) = item.get("message").and_then(serde_json::Value::as_str) {
                     self.errors.push(message.to_owned());
                 }
-                vec![Event::ToolResult {
-                    name: "error".to_owned(),
-                    ok: false,
-                }]
+                vec![Event::tool_result("error".to_owned(), false)]
             }
             // Thinking is not the answer: a delta here would be appended
             // to the run record's `text` and corrupt it.
@@ -245,10 +241,7 @@ impl Decoder {
                 if !seen {
                     events.push(tool_call(item, kind));
                 }
-                events.push(Event::ToolResult {
-                    name: kind.to_owned(),
-                    ok: item_ok(item),
-                });
+                events.push(Event::tool_result(kind.to_owned(), item_ok(item)));
                 events
             }
             _ => Vec::new(),
@@ -276,14 +269,14 @@ fn tool_call(item: &serde_json::Map<String, serde_json::Value>, kind: &str) -> E
         .filter(|(key, _)| !RESULT_FIELDS.contains(&key.as_str()))
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect();
-    Event::ToolCall {
-        name: kind.to_owned(),
-        input: if input.is_empty() {
+    Event::tool_call(
+        kind,
+        if input.is_empty() {
             serde_json::Value::Null
         } else {
             serde_json::Value::Object(input)
         },
-    }
+    )
 }
 
 /// Whether a completed tool item succeeded: its `exit_code` when it has
