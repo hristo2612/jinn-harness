@@ -1269,23 +1269,47 @@ loader's in-flight work. The operator sees only an HTTP request that
 never answers, and the plugin author sees a call that works on one code
 path and hangs on the other with no signal distinguishing them.
 
-**Workaround shipped:** the settings provider chooses its dispatch mode
-from the layer it just patched — `Serial` on the hot path (the owner
-absorbs the overlay in place, so the answer legitimately waits for it),
-`Emit` on the restart path (the owner re-declares on its own wake, so the
-notice needs no reply). That is correct here only because the provider
-happens to KNOW which layer it wrote. A consumer patching an entry it
-does not own has no such knowledge and no way to acquire it.
+**Workaround attempted, and INSUFFICIENT.** The settings provider chooses
+its dispatch mode from the layer it just patched — `Serial` on the hot
+path (the owner absorbs the overlay in place, so the answer legitimately
+waits for it), `Emit` on the restart path (the owner re-declares on its
+own wake, so the notice needs no reply). That change is correct on its
+own merits and is kept: a notice aimed at an incarnation being replaced
+has no one to answer it, and the successor re-declares regardless. It
+does NOT close the gap. A round-2 report claimed it made
+`the_shadowed_refusals_recovery_lands_when_executed` pass; that claim was
+false, and the test fails at the same head both under `cargo test
+--workspace` and in isolation. Correcting that claim is the point of this
+re-grading.
 
-**Evidence:** `tests/composition/tests/settings.rs`
-`the_shadowed_refusals_recovery_lands_when_executed` — the shadowed
-refusal's recovery is an ENTRY-layer patch, so it takes the restart path.
-With the serial notice the operator's `PATCH /v1/settings/cron` never
-answers and the request dies on the suite's 45 s bound
-(`api.rs:68`, `WouldBlock`); with the notice fire-and-forget on that path
-the same call answers in well under a second and the test passes. Both
-observed at pin `3fd7b05` on the real daemon, isolated (a single daemon,
-no load contention), reproduced on every run of each variant.
+Two reasons the workaround cannot be the fix. It is only available to a
+provider that KNOWS which layer it wrote — a consumer patching an entry
+it does not own has no such knowledge and no way to acquire it. And it
+only moves the guest's own notice off the restart path; it does nothing
+about the operator's call chain, which still contains a serial dispatch
+that lands on a fiber the loader is replacing. The stall is a property of
+the kernel's dispatch, not of who sends the notice.
+
+**Evidence (final, at pin `3fd7b05`).** `tests/composition/tests/settings.rs`
+`the_shadowed_refusals_recovery_lands_when_executed`: the recovery the
+shadowed refusal names is an ENTRY-layer patch, so it takes the restart
+path, and its `PATCH /v1/settings/cron` never answers — the request dies
+on the suite's 45 s bound (`tests/composition/src/api.rs:68`,
+`WouldBlock`). The ledger trace is seq **224** `patch-entry`, **228**
+`ProfilePatched`, **230** `guest exceeded its call deadline`: the profile
+amendment lands, the restart is scheduled, and the call that follows it
+waits out the deadline. Reproduced independently twice by the verifier at
+head `7557533` — once under `cargo test --workspace` (`FAILED. 4 passed;
+1 failed`) and once isolated (`FAILED. 0 passed; 1 failed`).
+
+**Status: BLOCKED on the kernel, tracked.** The test is marked
+`#[ignore]` with a reason string naming this entry and its kernel packet
+— not deleted, not skipped silently, and with no assertion weakened. The
+kernel fix is **jinnd M2-K9** (`d95cffd`, tracked as **PLA-318**): a
+serial dispatch to a fiber with a pending restart REFUSES, typed and
+ledgered, with the pending-restart state readable through
+`jinn:introspect`. PLA-318's acceptance removes the `#[ignore]` and
+closes this entry.
 
 **Packet-card shape:** make the restart visible or make the dispatch
 survive it. Either (a) a serial dispatch to a fiber with a pending
@@ -1295,8 +1319,12 @@ behaviour; or (b) it is refused typed (`Restarting`), so the caller can
 choose to retry, drop, or downgrade to an emit; or at minimum (c)
 `jinn:introspect` exposes pending-restart state so a guest can pick its
 dispatch mode from the kernel's knowledge instead of reconstructing it
-from its own. (a) and (b) are contract changes; (c) is additive.
+from its own. (a) and (b) are contract changes; (c) is additive. M2-K9
+takes (b) with (c) beside it.
 
-*Evidence grade:* packet-card-ready — reproducible in both directions on
-the pinned daemon, with the exact call, the exact deadline, and the
-one-line change that flips it.
+*Evidence grade:* packet-card-ready, and AUTHORED — the card exists as
+jinnd M2-K9 / PLA-318. Reproducible at pin `3fd7b05` on the real daemon
+with the exact call, the exact deadline and the exact ledger sequence;
+independently reproduced by the verifier. The harness has no remaining
+move here: this entry stays open, with its proof ignored and named, until
+the kernel packet lands.
