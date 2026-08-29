@@ -897,10 +897,97 @@ fn the_output_budget_cuts_the_answer_and_says_so_on_the_wire() {
         .iter()
         .position(|kind| *kind == "exited" || *kind == "cancelled");
     assert!(at < ended, "{kinds:?}");
-    // The answer really is the prefix the budget admits.
+    // The answer really is the prefix the budget admits — on the WIRE,
+    // not only in the record a consumer may never fetch.
     assert!(
         record["text"].as_str().unwrap_or_default().len() <= 32,
         "{record}"
     );
+    assert!(answer_bytes_on_the_wire(events) <= 32, "{record}");
+    daemon.interrupt();
+}
+
+/// Every answer byte this run put on the bus: the payload of each
+/// text-bearing event, which is what a listener actually receives.
+fn answer_bytes_on_the_wire(events: &[serde_json::Value]) -> usize {
+    events
+        .iter()
+        .filter(|event| event["kind"] == "delta" || event["kind"] == "turn-end")
+        .filter_map(|event| event["text"].as_str())
+        .map(str::len)
+        .sum()
+}
+
+/// THE BOUND HOLDS BEFORE THE BYTES MOVE — proven against a REAL child
+/// through the pinned daemon, not against the synthetic answering shape.
+///
+/// The seam shipped this backwards once: the provider emitted the whole
+/// delta and accounted for it afterwards, so a run declaring
+/// `output-bytes: 32` put 746 bytes on the bus and then said it had been
+/// truncated. A budget checked after the bytes have moved bounds nothing
+/// — the flood already reached the bus and the consumer. So the assertion
+/// is on what a LISTENER received, and the child is one that writes far
+/// past its allowance: the environment reporter, whose output is orders
+/// of magnitude over the 32 bytes this run declares.
+#[test]
+fn a_child_writing_far_past_its_budget_puts_at_most_the_budget_on_the_wire() {
+    let Some((daemon, port, root)) = booted("engines-output-bound") else {
+        return;
+    };
+    let Some(witness) = witness(&root) else {
+        daemon.interrupt();
+        return;
+    };
+    let printenv = witness["env-command"]
+        .as_str()
+        .expect("the witness names an environment reporter")
+        .to_owned();
+    daemon.edit_profile_restarting(SPAWN_ID, |document| {
+        let data = &mut entry_mut(document, SPAWN_ID)["config"]["data"];
+        data["command"] = serde_json::json!(printenv);
+        data["args"] = serde_json::json!([]);
+    });
+    daemon.eventually("the environment reporter to answer", || {
+        listed(port).contains(&SPAWN_ENGINE.to_owned())
+    });
+
+    const BUDGET: usize = 32;
+    let body = serde_json::json!({
+        "prompt": "say everything you can",
+        "budget": { "wall-ms": 60_000, "output-bytes": BUDGET } });
+    let run = start(port, SPAWN_ENGINE, &body);
+    let record = settled(&daemon, port, SPAWN_ENGINE, &run);
+    let events = record["events"].as_array().expect("events");
+
+    // The load-bearing assertion: what reached the bus is inside the
+    // bound. A child that wrote hundreds of bytes does not get to spend
+    // them just because it wrote them.
+    let on_the_wire = answer_bytes_on_the_wire(events);
+    assert!(
+        on_the_wire <= BUDGET,
+        "a child writing far past its budget put {on_the_wire} bytes on the wire: {record}"
+    );
+    assert!(
+        record["text"].as_str().unwrap_or_default().len() <= BUDGET,
+        "{record}"
+    );
+    // And the cut is SAID, typed, with the honest count of what there was
+    // — the bound is not silence.
+    assert_eq!(record["truncated"], true, "{record}");
+    let cut = events
+        .iter()
+        .find(|event| event["kind"] == "truncated")
+        .unwrap_or_else(|| panic!("the cut is its own event: {record}"));
+    assert_eq!(cut["limit-bytes"], BUDGET, "{record}");
+    assert!(
+        cut["read-bytes"].as_u64().unwrap_or_default() > BUDGET as u64,
+        "the cut reports how much answer there really was: {record}"
+    );
+    // The child is not left running once its answer is spent.
+    daemon.eventually("the over-budget child to be gone", || {
+        spawned_pids(&daemon.ledger_rows(), SPAWN_ID)
+            .last()
+            .is_none_or(|pid| !alive(*pid))
+    });
     daemon.interrupt();
 }

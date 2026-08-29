@@ -44,8 +44,13 @@ cannot carry the run (no CLI, no authentication). A run is never faked.
 
 `engine` is the ROUTE: it names the contract. `tools` is **default-deny** —
 an absent policy admits no tool, never "whatever the CLI defaults to".
-`budget` bounds both wall clock and read bytes, and the provider enforces
-both (R9). `secrets` maps a child environment variable to a keystore KEY
+`budget` bounds wall clock and ANSWER BYTES, and both are enforced in one
+place — `Runs::record_all`, the single path from a provider's events to
+the bus. A text event is charged against the run's remaining allowance and
+**clipped to it before it is emitted**, so `output-bytes` is a bound on
+what reaches the bus and the consumer, not a count taken afterwards. Past
+it the answer is a prefix, the cut is a `truncated` event, and the
+provider stops reading and kills the child (R9). `secrets` maps a child environment variable to a keystore KEY
 NAME — the settings seam's typed `{"$secret": ...}` shape, reused, so
 secret references have one home. Secret material never appears in a
 request, a profile document, a ledger payload, or this repo.
@@ -57,11 +62,11 @@ seam, never in argv: argv is world-readable in the host's process table.
 
 One `RunEvent` per bus message: `{ "api-version", "engine", "run-id",
 "seq", "kind", ... }`, where `seq` counts from 0 per run — a listener
-orders and de-duplicates on it, never on arrival. The envelope carries no
-extension map, because `kind` is an internally tagged enum and a second
-flattened map would swallow its own fields on the way back in. Forward
-compatibility lives in the kinds instead: a `kind` this version does not
-know decodes as `unknown` and is counted, never dropped and never guessed.
+orders and de-duplicates on it, never on arrival. The envelope declares no
+rest map of its own because the flattened event already is one (see
+[Additivity](#additivity)); a `kind` this version does not know decodes as
+`unknown`, keeps its tag and its whole payload, and is counted — never
+dropped and never guessed.
 
 | `kind` | Fields |
 |---|---|
@@ -70,12 +75,39 @@ know decodes as `unknown` and is counted, never dropped and never guessed.
 | `tool-call` | `name`, `input` |
 | `tool-result` | `name`, `ok` |
 | `turn-end` | `text` — the whole answer, for engines that report one instead of deltas |
-| `exited` | `status` (negated signal number for a signal death, the `jinn:process` convention), `usage`, `truncated` |
+| `exited` | `status` (negated signal number for a signal death, the `jinn:process` convention), `usage`, `truncated`, `error` |
 | `cancelled` | `reason` — `cancel`, `budget`, or the provider's own |
+| `truncated` | `limit-bytes`, `read-bytes` — the output budget is spent and the answer is a prefix |
 
 `exited` comes from the process's real `wait` status, never from the
 stream: a codec reports what an engine SAID, the kernel reports what the
 child DID.
+
+## Additivity
+
+**The law.** For every type and every variant here, known or unknown, at
+every nesting depth, decode-then-encode is lossless for content this
+schema does not know. A field a newer peer sends rides through an older
+hop untouched.
+
+**The mechanism, implemented once.** Every wire type carries a rest map
+named `extra` holding verbatim whatever its version did not read. Derived
+types get it from serde's `flatten`; `Event` and `Answer`, whose tags
+forbid a derive, get it from the shared `decode_with_rest` /
+`encode_with_rest` pair — the same law written out, not a second
+algorithm. `Event` is therefore a struct of an `EventKind` and ONE rest
+map rather than a rest map per variant, so a kind added later cannot be
+the next place that forgets. The `Additive` trait reaches every type's
+rest map uniformly, and the property test plants unknown keys at random
+depths through the whole inventory rather than checking a table of
+examples.
+
+**The named non-additive surfaces.** Two, deliberately, and nothing else:
+
+| Surface | Why it is closed | What happens instead |
+|---|---|---|
+| `{"$secret": "<key>"}` | The settings seam's own shape, whose gate refuses an object with a second key — a reference carrying extras is not a reference. One home per fact: it is not this seam's to widen. | Extra keys make it fail `is_secret_ref`, so the request is refused rather than half-read. |
+| The closed value spaces — `effort`, `tools.mode`, `state`, `code` | An enum has nowhere to put a value it cannot name, and guessing which known value a future `effort: "ultra"` meant is the silent-wrong-answer shape this seam forbids. | A LOUD decode error naming the value. Never a default, never a drop. |
 
 ## `Runs` — the shared registry
 
