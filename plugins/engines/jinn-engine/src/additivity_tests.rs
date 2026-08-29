@@ -369,3 +369,118 @@ fn a_value_a_closed_space_cannot_name_is_refused_and_never_defaulted() {
                         "engine": "default", "state": "quiescing" });
     assert!(serde_json::from_value::<RunRecord>(state).is_err());
 }
+
+/// The OTHER named exception, held to the same promise — and this is the
+/// one that shipped wrong. A `{"$secret"}` reference is closed, and a
+/// closed surface that quietly DISCARDS what it cannot name is the same
+/// silent-wrong-answer defect as one that guesses, wearing a README entry
+/// as a disguise. Inside a secret reference it is also a security
+/// property: an unknown key must never ride along beside a credential
+/// name, so preservation is the wrong answer here and refusal is the
+/// right one.
+///
+/// This is the verifier's own hostile probe (PLA-316 round 4): before the
+/// fix, decode→encode lost `future-scope` and answered a well-formed
+/// reference.
+#[test]
+fn a_secret_reference_carrying_a_sibling_is_refused_naming_the_surface() {
+    let hostile = json!({
+        "api-version": API_VERSION, "engine": "default", "prompt": "ok",
+        "secrets": { "ENGINE_API_KEY": {
+            "$secret": "engines/vendor", "future-scope": "region/eu" } }
+    });
+    let refused = serde_json::from_value::<RunRequest>(hostile)
+        .expect_err("a closed surface refuses what it cannot name");
+    let said = refused.to_string();
+    assert!(
+        said.contains(SECRET_REF_KEY),
+        "the refusal names the SURFACE that refused: {said}"
+    );
+    assert!(
+        said.contains("future-scope"),
+        "the refusal names the content it refused: {said}"
+    );
+    // And the well-formed reference still decodes, so the refusal is a
+    // bound on the unknown and not on the shape itself.
+    let good = json!({
+        "api-version": API_VERSION, "engine": "default", "prompt": "ok",
+        "secrets": { "ENGINE_API_KEY": { "$secret": "engines/vendor" } }
+    });
+    assert_eq!(round_trip::<RunRequest>(&good), good);
+}
+
+/// Every closed surface refuses through ONE path, so the message always
+/// names which surface refused — an operator reading a refusal learns
+/// what would have to be widened, and a fifth closed surface cannot be
+/// added with a fifth spelling of the refusal.
+#[test]
+fn every_closed_surface_names_itself_when_it_refuses() {
+    let refusals = [
+        (
+            "effort",
+            serde_json::from_value::<Effort>(json!("ultra")).unwrap_err(),
+        ),
+        (
+            "tools.mode",
+            serde_json::from_value::<ToolMode>(json!("audit")).unwrap_err(),
+        ),
+        (
+            "state",
+            serde_json::from_value::<RunState>(json!("quiescing")).unwrap_err(),
+        ),
+        (
+            "code",
+            serde_json::from_value::<ErrorCode>(json!("throttled")).unwrap_err(),
+        ),
+        (
+            SECRET_REF_KEY,
+            serde_json::from_value::<SecretRef>(json!({ "$secret": "k", "x": 1 })).unwrap_err(),
+        ),
+    ];
+    for (surface, refused) in refusals {
+        let said = refused.to_string();
+        assert!(
+            said.contains(surface),
+            "a refusal must name its surface {surface:?}: {said}"
+        );
+        assert!(
+            said.contains("closed"),
+            "a refusal must say the surface is closed: {said}"
+        );
+    }
+}
+
+/// The hand-written decoders' one hazard: a variant name that disagrees
+/// with what `Serialize` emits would make a value this seam itself wrote
+/// undecodable. Every variant of every closed space round-trips, so the
+/// two halves cannot drift.
+#[test]
+fn every_closed_variant_round_trips_through_its_own_encoding() {
+    fn both<T: Serialize + DeserializeOwned + PartialEq + std::fmt::Debug>(values: &[T]) {
+        for value in values {
+            let encoded = serde_json::to_value(value).expect("encodes");
+            let back: T = serde_json::from_value(encoded.clone())
+                .unwrap_or_else(|error| panic!("{encoded} decodes back: {error}"));
+            assert_eq!(&back, value);
+        }
+    }
+    both(&[Effort::Low, Effort::Medium, Effort::High]);
+    both(&[ToolMode::Denied, ToolMode::Allowlist]);
+    both(&[
+        RunState::Starting,
+        RunState::Running,
+        RunState::Exited,
+        RunState::Cancelled,
+        RunState::Failed,
+    ]);
+    both(&[
+        ErrorCode::Invalid,
+        ErrorCode::NotFound,
+        ErrorCode::Refused,
+        ErrorCode::Unavailable,
+        ErrorCode::Failed,
+    ]);
+    both(&[SecretRef {
+        secret: "engines/vendor".to_owned(),
+    }]);
+}
