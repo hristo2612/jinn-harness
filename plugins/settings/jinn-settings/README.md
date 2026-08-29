@@ -45,12 +45,32 @@ seam's.
 
 ## Layers
 
-`resolve(layers) = defaults ⊕ entry ⊕ overlay` (RFC 7396 merge, bottom
-to top: a higher layer's key wins, objects merge recursively, `null`
-removes). The entry layer is the owner's `config.data` as activated; the
-overlay lives in the store entry's `config.data.overlays[namespace]`.
-Both are in the profile document, which stays the single source of
-truth; the provider caches neither.
+**Precedence:** `resolve(layers) = defaults ⊕ entry ⊕ overlay` (RFC 7396
+merge, bottom to top: a higher layer's key wins, objects merge
+recursively, `null` removes) — the overlay outranks the entry, the entry
+outranks the defaults, always. The entry layer is the owner's
+`config.data` as activated; the overlay lives in the store entry's
+`config.data.overlays[namespace]`. Both are in the profile document,
+which stays the single source of truth; the provider caches neither.
+
+### The consistency guarantee
+
+A patch is atomic and consistent across layers: **the settings a `patch`
+answers and emits in `changed` are exactly the settings the next `get`
+resolves.** A patch lands in ONE layer (§The patch law), and the plan's
+reported settings are computed from the layers as they stand after that
+write — never from "resolved ⊕ patch". If the two would differ — a key
+the patch sets would still resolve from a layer above the landing layer
+(a mixed hot+cold patch lands in the entry while the overlay holds one
+of its hot keys), or a key the patch removes would resolve from a layer
+below — the WHOLE patch is refused before anything applies: `invalid`
+with a typed `shadowed { key, layer }` naming the first such key and the
+layer its value resolves from. There is no partial apply and no event
+that says one thing while the document resolves another. The recovery is
+the operator's: patch the shadowed key on its own (it then lands in the
+layer that resolves it) or clear it there first. Refusal rather than a
+two-layer write is deliberate — the kernel patches one entry per call
+(FINDINGS.md #28), so two layers could never be written atomically.
 
 ## The patch law
 
@@ -58,8 +78,10 @@ truth; the provider caches neither.
 
 1. The patch must be an object. The RESULT of laying it over the resolved
    settings is validated against the declared schema BEFORE anything
-   applies; a refusal is typed (`invalid`), answered, and emitted on the
-   refused topic — nothing was written.
+   applies, and the landing layer must resolve to exactly that result
+   (§The consistency guarantee); a refusal is typed (`invalid`, with
+   `shadowed { key, layer }` in the consistency case), answered, and
+   emitted on the refused topic — nothing was written.
 2. A patch whose every top-level key is a hot key lands in the OVERLAY:
    the provider patches the store entry through `jinn:profile`
    (`{ data: { overlays: { ns: <patch> } } }`), the store's trivial
@@ -87,4 +109,7 @@ events without calling back (the payload carries the resolved settings).
 
 ## Changes
 
-- **0.1.0 (2026-08-29, kernel pin `57360cc`):** first edition.
+- **0.1.0 (2026-08-29, kernel pin `57360cc`):** first edition. Same
+  day, additive: the consistency guarantee and the typed `shadowed`
+  field on an `invalid` refusal (a 0.1.0 reader without it still
+  decodes).

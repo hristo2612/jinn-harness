@@ -182,3 +182,116 @@ fn the_envelope_and_schemas_round_trip_additively() {
     assert_eq!(changed.applied, Some(Applied::Hot));
     assert_eq!(changed.extra["more"], json!([]));
 }
+
+#[test]
+fn a_plan_reports_exactly_what_the_layers_resolve_to_afterwards() {
+    // The consistency law: `resolved` is computed FROM the post-state
+    // layers, never from "resolved ⊕ patch" — so a `null` in a hot patch
+    // that a lower layer still defines is caught, not reported as gone.
+    let declaration = declaration();
+    let mut layers = layers();
+    layers.entry = json!({ "tick-ms": 500, "jobs": [{ "id": "a" }],
+                           "notify-token": { "$secret": "entry" } });
+    layers.overlay = json!({ "notify-token": { "$secret": "overlay" } });
+    let removal = plan_patch(&declaration, &layers, &json!({ "notify-token": null })).unwrap_err();
+    assert_eq!(removal.code, ErrorCode::Invalid, "{removal:?}");
+    assert_eq!(
+        removal.shadowed,
+        Some(Shadowed {
+            key: "notify-token".into(),
+            layer: LayerName::Entry,
+        }),
+        "{removal:?}"
+    );
+    let hot = plan_patch(&declaration, &layers, &json!({ "jobs": [{ "id": "b" }] })).expect("hot");
+    assert_eq!(
+        hot.resolved,
+        resolve(&Layers {
+            overlay: hot.layer.clone(),
+            ..layers.clone()
+        }),
+        "the reported settings ARE the post-state resolution"
+    );
+}
+
+#[test]
+fn a_mixed_patch_over_an_existing_overlay_is_refused_whole_as_shadowed() {
+    // The verifier's probe (PLA-314 round 1): an overlay holds `jobs`;
+    // a mixed hot+cold patch would land whole in the entry, where the
+    // overlay's `jobs` shadows it on the next resolve. Refused whole,
+    // typed: nothing to apply, the event never lies.
+    let declaration = declaration();
+    let mut layers = layers();
+    layers.overlay = json!({ "jobs": [{ "id": "overlay" }] });
+    let refused = plan_patch(
+        &declaration,
+        &layers,
+        &json!({ "jobs": [{ "id": "requested" }], "tick-ms": 250 }),
+    )
+    .unwrap_err();
+    assert_eq!(refused.code, ErrorCode::Invalid, "{refused:?}");
+    assert_eq!(
+        refused.shadowed,
+        Some(Shadowed {
+            key: "jobs".into(),
+            layer: LayerName::Overlay,
+        }),
+        "{refused:?}"
+    );
+    assert!(refused.detail.contains("shadowed"), "{refused:?}");
+    let wire = serde_json::to_value(&refused).expect("encodes");
+    assert_eq!(
+        wire["shadowed"],
+        json!({ "key": "jobs", "layer": "overlay" })
+    );
+    assert_eq!(
+        serde_json::from_value::<SettingsError>(wire).expect("decodes"),
+        refused
+    );
+    // A cold-only patch beside the overlay is fine: nothing it touches is
+    // shadowed, and it reports the overlay's `jobs` — what GET resolves.
+    let cold = plan_patch(&declaration, &layers, &json!({ "tick-ms": 250 })).expect("cold");
+    assert_eq!(cold.applied, Applied::Restart);
+    assert_eq!(cold.resolved["jobs"], json!([{ "id": "overlay" }]));
+    assert_eq!(cold.resolved["tick-ms"], 250);
+    // A shadowed error without the field still decodes (additive).
+    let bare: SettingsError =
+        serde_json::from_value(json!({ "code": "invalid", "detail": "x" })).expect("decodes");
+    assert_eq!(bare.shadowed, None);
+}
+
+#[test]
+fn the_inverse_order_is_consistent_without_a_refusal() {
+    // Mixed patch FIRST (no overlay yet): lands whole in the entry, and
+    // the report equals the post-state resolution. A hot patch after it
+    // lands in the overlay and the report equals that resolution too.
+    let declaration = declaration();
+    let layers = layers();
+    let mixed = plan_patch(
+        &declaration,
+        &layers,
+        &json!({ "jobs": [{ "id": "requested" }], "tick-ms": 250 }),
+    )
+    .expect("mixed, no overlay");
+    assert_eq!(mixed.applied, Applied::Restart);
+    let after_mixed = Layers {
+        entry: mixed.layer.clone(),
+        ..layers
+    };
+    assert_eq!(mixed.resolved, resolve(&after_mixed));
+    assert_eq!(mixed.resolved["jobs"], json!([{ "id": "requested" }]));
+    let hot = plan_patch(
+        &declaration,
+        &after_mixed,
+        &json!({ "jobs": [{ "id": "hot" }] }),
+    )
+    .expect("hot after mixed");
+    assert_eq!(hot.applied, Applied::Hot);
+    let after_hot = Layers {
+        overlay: hot.layer.clone(),
+        ..after_mixed
+    };
+    assert_eq!(hot.resolved, resolve(&after_hot));
+    assert_eq!(hot.resolved["jobs"], json!([{ "id": "hot" }]));
+    assert_eq!(hot.resolved["tick-ms"], 250);
+}

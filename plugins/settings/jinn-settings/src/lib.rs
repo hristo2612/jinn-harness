@@ -140,6 +140,25 @@ pub enum Applied {
     Restart,
 }
 
+/// One of the three layers, by name — the layer a `shadowed` refusal
+/// points at.
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum LayerName {
+    Defaults,
+    Entry,
+    Overlay,
+}
+
+/// Why a patch was refused as inconsistent: after landing in its layer,
+/// `key` would resolve from `layer` instead of to the requested value.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Shadowed {
+    pub key: String,
+    pub layer: LayerName,
+}
+
 /// The typed error class of a refused or failed operation.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -157,6 +176,10 @@ pub enum ErrorCode {
 pub struct SettingsError {
     pub code: ErrorCode,
     pub detail: String,
+    /// Present on an `invalid` refusal of a patch the layers could not
+    /// apply consistently (§The consistency guarantee in the README).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shadowed: Option<Shadowed>,
     #[serde(flatten)]
     pub extra: Extensions,
 }
@@ -167,14 +190,16 @@ impl SettingsError {
         Self {
             code,
             detail: detail.into(),
+            shadowed: None,
             extra: Extensions::new(),
         }
     }
 }
 
-/// The plan for one patch: the resolved result (validated), the layer it
-/// lands in, and the merge patch to hand the kernel for that layer's
-/// entry.
+/// The plan for one patch: the layer it lands in, that layer's new
+/// value, and the settings the layers resolve to AFTER it lands —
+/// computed from the post-state layers, so what a provider reports and
+/// emits is by construction what the next `get` resolves.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PatchPlan {
     pub applied: Applied,
@@ -183,14 +208,19 @@ pub struct PatchPlan {
     pub layer: serde_json::Value,
 }
 
-/// Plans one patch: the patch must be an object; the RESULT of laying it
-/// over the resolved settings must validate against the schema; a patch
-/// whose every top-level key is a hot key lands in the overlay, any other
-/// lands in the entry. Nothing is applied here.
+/// Plans one patch: the patch must be an object; the RESULT the caller
+/// asks for (the resolved settings with the patch laid over them) must
+/// validate against the schema; a patch whose every top-level key is a
+/// hot key lands in the overlay, any other lands in the entry; and the
+/// layers must resolve to exactly the asked-for result once that layer
+/// is written — otherwise the patch is refused WHOLE as `shadowed`
+/// (which key, which layer). Nothing is applied here.
 ///
 /// # Errors
 ///
-/// `invalid` for a non-object patch or a result the schema refuses.
+/// `invalid` for a non-object patch, a result the schema refuses, or a
+/// result a layer above (or, for a removal, below) the landing layer
+/// would shadow.
 pub fn plan_patch(
     declaration: &Declaration,
     layers: &Layers,
@@ -202,9 +232,9 @@ pub fn plan_patch(
             "a settings patch is a JSON object (RFC 7396 merge patch)",
         ));
     };
-    let mut resolved = resolve(layers);
-    merge_patch(&mut resolved, patch);
-    validate(&declaration.schema, &resolved).map_err(|detail| {
+    let mut intended = resolve(layers);
+    merge_patch(&mut intended, patch);
+    validate(&declaration.schema, &intended).map_err(|detail| {
         SettingsError::new(
             ErrorCode::Invalid,
             format!("schema refused the result: {detail}"),
@@ -225,11 +255,61 @@ pub fn plan_patch(
         serde_json::Value::Object(serde_json::Map::new())
     };
     merge_patch(&mut layer, patch);
+    let after = match applied {
+        Applied::Hot => Layers {
+            overlay: layer.clone(),
+            ..layers.clone()
+        },
+        Applied::Restart => Layers {
+            entry: layer.clone(),
+            ..layers.clone()
+        },
+    };
+    let resolved = resolve(&after);
+    if resolved != intended {
+        return Err(shadowed(&intended, &resolved, &after));
+    }
     Ok(PatchPlan {
         applied,
         resolved,
         layer,
     })
+}
+
+/// Names the first top-level key whose post-state value differs from the
+/// asked-for one, and the layer that value resolves from.
+fn shadowed(
+    intended: &serde_json::Value,
+    resolved: &serde_json::Value,
+    after: &Layers,
+) -> SettingsError {
+    let empty = serde_json::Map::new();
+    let intended_keys = intended.as_object().unwrap_or(&empty);
+    let resolved_keys = resolved.as_object().unwrap_or(&empty);
+    let key = intended_keys
+        .keys()
+        .chain(resolved_keys.keys())
+        .find(|key| intended_keys.get(*key) != resolved_keys.get(*key))
+        .cloned()
+        .unwrap_or_default();
+    let holds = |layer: &serde_json::Value| layer.get(&key).is_some();
+    let layer = if holds(&after.overlay) {
+        LayerName::Overlay
+    } else if holds(&after.entry) {
+        LayerName::Entry
+    } else {
+        LayerName::Defaults
+    };
+    let mut refused = SettingsError::new(
+        ErrorCode::Invalid,
+        format!(
+            "{key:?} is shadowed by the {layer:?} layer: the patch would not resolve to the \
+             requested value, so nothing was applied — patch {key:?} on its own (it lands in \
+             the layer that resolves it) or clear it there first"
+        ),
+    );
+    refused.shadowed = Some(Shadowed { key, layer });
+    refused
 }
 
 /// The `declare` request: the declaration and the owner's CURRENT entry

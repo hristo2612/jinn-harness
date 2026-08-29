@@ -89,3 +89,22 @@ proof measures both paths on the one consumer. `notify-token` exists to
 prove the typed secret reference on a real namespace (a reserved key for
 the outbound-request edition the `jinn:net` bundle already admits); the
 scheduler carries it and ignores it.
+
+## Why a shadowed patch is refused whole, not applied to two layers
+
+Round 1's verifier probed: an overlay holds `jobs`; a mixed `{jobs,
+tick-ms}` patch landed whole in the entry, the answer and the `changed`
+event carried the requested `jobs`, and the next `get` resolved the
+overlay's. The COO ruled the law (a patch's report equals the next
+resolve; apply both layers or refuse whole, never a partial apply that
+lies) and left the choice. Refusal won because the kernel writes one
+entry per `patch-entry` (FINDINGS.md #28): the entry and the overlay are
+two entries, so "apply both" is two calls, and a second call refused
+after a first applied is exactly the partial state the law forbids —
+with the extra cost that the first call has already restarted the
+owner. A refusal costs nothing, is typed to the key and the layer, and
+leaves the operator a one-step recovery. The plan now computes its
+reported settings FROM the post-state layers (`resolve(after)`) and
+refuses when that differs from what was asked, which also catches the
+removal case (a hot `null` that a lower layer still defines) the probe
+did not reach.

@@ -28,7 +28,8 @@ shape frictions with source evidence. Entries 19, 20, 21 and 23 are
 **closed** as of the `57360cc` pin bump (jinnd M2-K7; phase 2.2), which
 also closes 22's profile case; entry 25 was hit adopting that pin (the
 document of record is readable by a guest only under the data root) and
-entries 26–27 were hit building the settings seam on it.
+entries 26–27 were hit building the settings seam on it, and entry 28
+closing its round-1 consistency blocker.
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -956,6 +957,36 @@ place and must restart.
 *Evidence grade:* measured — every row above is on the pinned run's
 ledger, the suite re-prints the transcript on every run; the soak
 carries the same seam on the 15-minute cadence (SOAK.md, sixth bump).
+
+## 28. `jinn:profile` patches one entry per call — two layers of one namespace cannot be written atomically
+
+Hit closing PLA-314's round-1 blocker. A settings namespace has two
+homes in the document (the owner entry's `config.data`, the store
+entry's `config.data.overlays[ns]`, `plugins/settings/README.md`). A
+mixed hot+cold patch under an existing overlay must either land in both
+(the cold keys in the entry, the hot keys in the overlay) or be refused
+whole, or its report lies (the round-1 probe: answered `jobs:
+[requested]`, resolved `jobs: [overlay]`). `patch-entry` takes ONE entry
+id and ONE merge patch and awaits that entry's reconcile before
+answering (`kernel-pin/contracts/`, entry 26): landing in both is two
+calls with an observable state between them, and a refusal of the second
+after the first applied — and restarted the owner — is a partial apply.
+
+**Shape shipped:** refusal. The definition computes a plan's reported
+settings from the post-state layers and refuses `invalid` +
+`shadowed { key, layer }` when they differ from the request; the
+operator patches the key on its own.
+
+**Packet-card shape (only if C6 is ever revisited):** a multi-entry
+`patch-entries` — one call, N `(entry, merge)` pairs, applied under one
+reconcile or none, one `ProfilePatched` per entry on the ledger. With
+C6 decided against kernel-side layering (PLA-314 round-1 steering), the
+harness has no present need; logged so the choice of refusal over
+apply-both is traceable to the contract and not to taste.
+
+*Evidence grade:* source-confirmed (the `patch-entry` shape in the pinned
+contracts); the refusal is pinned by the settings composition suite
+(`a_patch_reports_exactly_what_the_next_get_resolves_in_both_orders`).
 
 ---
 

@@ -447,3 +447,130 @@ fn swapping_the_settings_provider_by_profile_edit_leaves_the_consumers_untouched
     );
     daemon.interrupt();
 }
+
+/// The consistency law (PLA-314 round 2): the settings a `patch` reports
+/// and emits are the settings the next `get` resolves — in BOTH orders.
+/// Inverse order first: a mixed hot+cold patch with no overlay lands
+/// whole in the entry; a hot patch after it lands in the overlay; each
+/// report equals the next GET. Then the verifier's probe: with that
+/// overlay in place, a mixed patch is refused WHOLE, typed `shadowed
+/// { key, layer }`, nothing written, the revision unmoved, the refusal
+/// on the record — and the next GET still equals the last report.
+#[test]
+fn a_patch_reports_exactly_what_the_next_get_resolves_in_both_orders() {
+    let Some((daemon, port)) = booted("settings-consistency") else {
+        return;
+    };
+    let rows = daemon.ledger_rows();
+    let scheduler = fiber_of(&rows, SCHEDULER);
+    let requested = serde_json::json!([
+        { "id": "health", "every-ms": JOB_PERIOD_MS, "topic": "cron:health" },
+        { "id": "requested", "every-ms": JOB_PERIOD_MS, "topic": "cron:health" } ]);
+
+    // Inverse order, step 1: mixed hot+cold with an empty overlay.
+    let mixed = patch(
+        port,
+        "/v1/settings/cron",
+        &serde_json::json!({ "patch": { "jobs": requested, "tick-ms": TICK_MS / 2 } }),
+    );
+    assert_eq!(mixed.status, 200, "{}", mixed.raw);
+    assert_eq!(mixed.body["applied"], "restart", "{}", mixed.raw);
+    assert_eq!(mixed.body["settings"]["jobs"], requested, "{}", mixed.raw);
+    daemon.eventually("the restarted scheduler to re-declare", || {
+        get(port, "/v1/settings/cron").body["layers"]["entry"]["tick-ms"] == TICK_MS / 2
+    });
+    let next = get(port, "/v1/settings/cron");
+    assert_eq!(
+        next.body["settings"], mixed.body["settings"],
+        "PATCH must report the state the configured layers resolve to: {}",
+        next.raw
+    );
+    assert_eq!(daemon.config_restarts(scheduler), 1);
+
+    // Inverse order, step 2: a hot patch over it lands in the overlay.
+    let overlay = serde_json::json!([
+        { "id": "overlay", "every-ms": JOB_PERIOD_MS, "topic": "cron:health" } ]);
+    let hot = patch(
+        port,
+        "/v1/settings/cron",
+        &serde_json::json!({ "patch": { "jobs": overlay } }),
+    );
+    assert_eq!(hot.status, 200, "{}", hot.raw);
+    assert_eq!(hot.body["applied"], "hot", "{}", hot.raw);
+    let next = get(port, "/v1/settings/cron");
+    assert_eq!(next.body["settings"], hot.body["settings"], "{}", next.raw);
+    assert_eq!(next.body["settings"]["jobs"], overlay, "{}", next.raw);
+    assert_eq!(
+        next.body["layers"]["overlay"]["jobs"], overlay,
+        "{}",
+        next.raw
+    );
+    let revision = next.body["revision"].clone();
+
+    // The verifier's probe: existing hot overlay → mixed hot+cold patch.
+    let before = daemon.ledger_rows().last().map_or(0, |row| row.seq);
+    let shadowed = patch(
+        port,
+        "/v1/settings/cron",
+        &serde_json::json!({ "patch": { "jobs": requested, "tick-ms": TICK_MS / 4 } }),
+    );
+    assert_eq!(
+        shadowed.status, 422,
+        "a mixed patch under an overlay is refused whole: {}",
+        shadowed.raw
+    );
+    assert_eq!(
+        shadowed.body["error"]["code"], "invalid",
+        "{}",
+        shadowed.raw
+    );
+    assert_eq!(
+        shadowed.body["error"]["shadowed"],
+        serde_json::json!({ "key": "jobs", "layer": "overlay" }),
+        "typed: which key, which layer: {}",
+        shadowed.raw
+    );
+    let next = get(port, "/v1/settings/cron");
+    assert_eq!(
+        next.body["settings"], hot.body["settings"],
+        "nothing moved: the next GET still resolves the last applied report: {}",
+        next.raw
+    );
+    assert_eq!(
+        next.body["settings"]["tick-ms"],
+        TICK_MS / 2,
+        "{}",
+        next.raw
+    );
+    assert_eq!(next.body["revision"], revision, "{}", next.raw);
+    daemon.eventually("the refusal to land on the record", || {
+        daemon
+            .ledger_rows()
+            .iter()
+            .any(|row| row.seq > before && row.kind.contains(r#""topic":"jinn:settings/refused""#))
+    });
+    let rows = daemon.ledger_rows();
+    assert!(
+        !rows
+            .iter()
+            .any(|row| row.seq > before && row.kind.contains("ProfilePatched")),
+        "nothing written for a refused patch: {rows:?}"
+    );
+    assert_eq!(
+        daemon.config_restarts(scheduler),
+        1,
+        "the owner did not cycle"
+    );
+    let mut doc = document(&daemon);
+    assert_eq!(
+        entry_config(&mut doc, SCHEDULER)["data"]["tick-ms"],
+        TICK_MS / 2,
+        "the owner entry is as the last applied patch left it"
+    );
+    assert_eq!(
+        entry_config(&mut doc, STORE)["data"]["overlays"]["cron"]["jobs"],
+        overlay,
+        "the overlay is as the last applied patch left it"
+    );
+    daemon.interrupt();
+}
