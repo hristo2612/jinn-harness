@@ -197,15 +197,15 @@ pub struct Recovery {
     pub layer: PatchLayer,
 }
 
-/// Why a patch was refused as inconsistent: after landing in its layer,
-/// the LEAF at `path` would resolve from `layer` instead of to the
-/// requested value. Shadowing is resolved at leaf-path granularity (RFC
-/// 7396: objects merge recursively, so a nested key is its own fact):
-/// `key` is the leaf path dot-joined (`group.changed`; a top-level key
-/// is itself), `path` its segments. `recovery` is the call that clears
-/// exactly that leaf from `layer` — a `null` at the nested path deletes
-/// that path alone and preserves every sibling — absent when `layer` is
-/// the defaults (a declared default cannot be removed, only set).
+/// Why a patch was refused as inconsistent: a leaf the patch asks for
+/// would resolve from `layer` instead of to the requested value, and
+/// `path` is the NODE that layer resolves it with — the leaf itself, or
+/// an atomic ancestor of it (README §The shadowing law). `key` is `path`
+/// dot-joined (`group.inner`; a top-level key is itself). `recovery` is
+/// the call that removes exactly the shadowing node(s) from `layer` — a
+/// `null` at that path deletes it alone and preserves every sibling —
+/// absent when `layer` is the defaults (a declared default cannot be
+/// removed, only set).
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Shadowed {
@@ -315,10 +315,12 @@ pub fn plan_patch_in(
     let is_hot = |key: &String| declaration.hot_keys.iter().any(|hot| hot == key);
     let applied = match layer {
         Some(PatchLayer::Overlay) => {
-            if let Some(cold) = keys
+            // A cold key is refused only when a leaf under it is SET; a
+            // removal anywhere below it (a nested recovery) clears.
+            if let Some(cold) = asked_leaves(patch, &[])
                 .iter()
-                .find(|(key, value)| !value.is_null() && !is_hot(key))
-                .map(|(key, _)| key)
+                .find(|(path, wanted)| wanted.is_some() && !is_hot(&path[0]))
+                .map(|(path, _)| path[0].clone())
             {
                 return Err(SettingsError::new(
                     ErrorCode::Invalid,
@@ -370,22 +372,41 @@ pub fn plan_patch_in(
             format!("schema refused the result: {detail}"),
         )
     })?;
-    // The keys choosing: the whole post-state must be what was asked.
-    // An explicit layer: every LEAF the patch sets must resolve as
-    // asked; a leaf it removes is the operator clearing that layer.
-    let divergence = match layer {
-        None => first_divergence(&intended, &resolved, &[]),
-        Some(_) => set_leaves(patch, &[]).into_iter().find_map(|path| {
-            let asked = value_at(&intended, &path);
-            let got = value_at(&resolved, &path);
-            (asked != got).then(|| match (asked, got) {
-                (Some(asked), Some(got)) => first_divergence(asked, got, &path).unwrap_or(path),
-                _ => path,
-            })
-        }),
+    // The formal definition of shadowing (README §The shadowing law),
+    // implemented once: for every leaf path P the patch asks for, the
+    // post-state resolution must be the asked-for value (a set) or absent
+    // (a keys-chosen removal; an explicit-layer removal is the operator
+    // clearing that layer and asks for nothing). Where it is not, the
+    // layer resolving P — the first in precedence holding P itself or an
+    // ATOMIC value at a strict prefix of P — is the shadowing layer, and
+    // the node it holds there is the shadowing node.
+    let target = match applied {
+        Applied::Hot => LayerName::Overlay,
+        Applied::Restart => LayerName::Entry,
     };
-    if let Some(path) = divergence {
-        return Err(shadowed(&declaration.namespace, path, &after));
+    let mut shadowing: Vec<(LayerName, Vec<String>)> = Vec::new();
+    for (path, wanted) in asked_leaves(patch, &[]) {
+        let got = value_at(&resolved, &path);
+        let consistent = match &wanted {
+            Some(wanted) => got == Some(wanted),
+            None if layer.is_some() => true,
+            None => got.is_none(),
+        };
+        if consistent {
+            continue;
+        }
+        let node = match resolver(&after, &path) {
+            Some((holder, node)) if holder != target => (holder, node),
+            // Unreachable by the resolution law (a leaf that diverges is
+            // held by another layer); named honestly if it ever were.
+            _ => (target, path),
+        };
+        if !shadowing.contains(&node) {
+            shadowing.push(node);
+        }
+    }
+    if !shadowing.is_empty() {
+        return Err(shadowed(&declaration.namespace, shadowing));
     }
     Ok(PatchPlan {
         applied,
@@ -399,79 +420,116 @@ fn value_at<'a>(value: &'a serde_json::Value, path: &[String]) -> Option<&'a ser
     path.iter().try_fold(value, |value, key| value.get(key))
 }
 
-/// The first leaf path where `asked` and `got` differ, descending while
-/// both sides are objects (RFC 7396 granularity): a difference between
-/// two objects is a difference at some key inside them, never the
-/// objects themselves.
-fn first_divergence(
-    asked: &serde_json::Value,
-    got: &serde_json::Value,
+/// The leaf paths a merge patch asks for, in patch order: `Some(value)`
+/// for a set (a non-object value — an array is atomic under RFC 7396),
+/// `None` for a removal. An object recurses; an empty object asks for
+/// nothing.
+fn asked_leaves(
+    patch: &serde_json::Value,
     prefix: &[String],
-) -> Option<Vec<String>> {
-    let (Some(asked), Some(got)) = (asked.as_object(), got.as_object()) else {
-        return (asked != got).then(|| prefix.to_vec());
-    };
-    asked
-        .keys()
-        .chain(got.keys().filter(|key| !asked.contains_key(*key)))
-        .find_map(|key| {
-            let (a, g) = (asked.get(key), got.get(key));
-            if a == g {
-                return None;
-            }
-            let path = [prefix, std::slice::from_ref(key)].concat();
-            match (a, g) {
-                (Some(a), Some(g)) => Some(first_divergence(a, g, &path).unwrap_or(path)),
-                _ => Some(path),
-            }
-        })
-}
-
-/// The leaf paths a merge patch SETS (a non-null, non-object value; an
-/// empty object counts as a leaf): the paths whose resolution the
-/// caller asked for. A `null` is a removal and is not listed.
-fn set_leaves(patch: &serde_json::Value, prefix: &[String]) -> Vec<Vec<String>> {
+) -> Vec<(Vec<String>, Option<serde_json::Value>)> {
     let Some(fields) = patch.as_object() else {
-        return vec![prefix.to_vec()];
+        return Vec::new();
     };
-    if fields.is_empty() && !prefix.is_empty() {
-        return vec![prefix.to_vec()];
-    }
     fields
         .iter()
-        .filter(|(_, value)| !value.is_null())
         .flat_map(|(key, value)| {
             let path = [prefix, std::slice::from_ref(key)].concat();
-            set_leaves(value, &path)
+            match value {
+                serde_json::Value::Null => vec![(path, None)],
+                serde_json::Value::Object(_) => asked_leaves(value, &path),
+                _ => vec![(path, Some(value.clone()))],
+            }
         })
         .collect()
 }
 
-/// The merge patch that removes exactly the leaf at `path` (RFC 7396: a
-/// `null` at a nested path deletes that path alone; siblings survive).
-fn removal_of(path: &[String]) -> serde_json::Value {
-    path.iter().rev().fold(
-        serde_json::Value::Null,
-        |inner, key| serde_json::json!({ key.clone(): inner }),
-    )
+/// The layer that resolves `path`, and the node it resolves it with: the
+/// layers walked in precedence (overlay, entry, defaults); the first
+/// holding `path` itself, or an ATOMIC (non-object; `null` included)
+/// value at a strict prefix of it, resolves it — the atomic ancestor
+/// leaves nothing below it. One refinement the merge law forces: an
+/// atomic a HIGHER layer already replaced with an object at that same
+/// prefix resolves nothing (it still wiped every layer below it, so the
+/// answer is then absent: `None`). `None` also when no layer holds it.
+fn resolver(layers: &Layers, path: &[String]) -> Option<(LayerName, Vec<String>)> {
+    // The deepest prefix depth at which a higher layer held an object.
+    let mut floor = 0;
+    let precedence = [
+        (LayerName::Overlay, &layers.overlay),
+        (LayerName::Entry, &layers.entry),
+        (LayerName::Defaults, &layers.defaults),
+    ];
+    for (name, layer) in precedence {
+        if !layer.is_object() {
+            continue;
+        }
+        let mut node = layer;
+        for depth in 1..=path.len() {
+            match node.get(&path[depth - 1]) {
+                None => {
+                    floor = floor.max(depth - 1);
+                    break;
+                }
+                Some(child) if child.is_object() && depth < path.len() => node = child,
+                Some(child) if child.is_object() => return Some((name, path.to_vec())),
+                Some(_) if depth <= floor => return None,
+                Some(_) => return Some((name, path[..depth].to_vec())),
+            }
+        }
+    }
+    None
 }
 
-/// Names the leaf `path` whose post-state value differs from the
-/// asked-for one, the layer that value resolves from, and — unless that
-/// layer is the defaults — the exact call that clears that leaf alone.
-fn shadowed(namespace: &str, path: Vec<String>, after: &Layers) -> SettingsError {
+/// The merge patch that removes exactly the nodes at `paths` (RFC 7396:
+/// a `null` at a nested path deletes that path alone; siblings survive).
+/// The nodes are never nested in one another (an atomic has nothing
+/// below it), so no `null` overwrites another.
+fn removal_of(paths: &[Vec<String>]) -> serde_json::Value {
+    let mut patch = serde_json::Value::Object(serde_json::Map::new());
+    for path in paths {
+        let mut node = &mut patch;
+        for key in &path[..path.len() - 1] {
+            node = node
+                .as_object_mut()
+                .expect("an object")
+                .entry(key.clone())
+                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+        }
+        node.as_object_mut()
+            .expect("an object")
+            .insert(path[path.len() - 1].clone(), serde_json::Value::Null);
+    }
+    patch
+}
+
+/// Names the shadowing nodes: `key`/`path` is the first, `layer` the
+/// layer holding it, and — unless that layer is the defaults — the
+/// recovery is the one call removing every shadowing node in that layer
+/// (all of a patch's recoverable nodes lie in one layer: the overlay
+/// shadows the entry's sets, the entry or overlay a removal from the
+/// other). A node the defaults hold cannot be removed, only set, and is
+/// named first when present, with no recovery.
+fn shadowed(namespace: &str, nodes: Vec<(LayerName, Vec<String>)>) -> SettingsError {
+    let (layer, path) = nodes
+        .iter()
+        .find(|(layer, _)| *layer == LayerName::Defaults)
+        .unwrap_or(&nodes[0])
+        .clone();
     let key = path.join(".");
-    let holds = |layer: &serde_json::Value| value_at(layer, &path).is_some();
-    let clears = if holds(&after.overlay) {
-        Some(PatchLayer::Overlay)
-    } else if holds(&after.entry) {
-        Some(PatchLayer::Entry)
-    } else {
-        None
+    let clears = match layer {
+        LayerName::Overlay => Some(PatchLayer::Overlay),
+        LayerName::Entry => Some(PatchLayer::Entry),
+        LayerName::Defaults => None,
     };
-    let (layer, detail, recovery) = match clears {
+    let (detail, recovery) = match clears {
         Some(clears) => {
-            let patch = removal_of(&path);
+            let removed: Vec<Vec<String>> = nodes
+                .iter()
+                .filter(|(holder, _)| *holder == layer)
+                .map(|(_, node)| node.clone())
+                .collect();
+            let patch = removal_of(&removed);
             let detail = format!(
                 "{key:?} is shadowed by the {} layer: the patch would not resolve to the \
                  requested value, so nothing was applied. Recovery: patch({namespace:?}, \
@@ -484,10 +542,9 @@ fn shadowed(namespace: &str, path: Vec<String>, after: &Layers) -> SettingsError
                 patch,
                 layer: clears,
             };
-            (clears.name(), detail, Some(Box::new(recovery)))
+            (detail, Some(Box::new(recovery)))
         }
         None => (
-            LayerName::Defaults,
             format!(
                 "{key:?} is a declared default and cannot be removed, so nothing was applied: \
                  set it to the value wanted instead"

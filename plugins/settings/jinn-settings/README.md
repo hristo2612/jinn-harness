@@ -59,67 +59,74 @@ A patch is atomic and consistent across layers: **the settings a `patch`
 answers and emits in `changed` are exactly the settings the next `get`
 resolves.** A patch lands in ONE layer (§The patch law), and the plan's
 reported settings are computed from the layers as they stand after that
-write — never from "resolved ⊕ patch". If the two would differ — a key
-the patch sets would still resolve from a layer above the landing layer
-(a mixed hot+cold patch lands in the entry while the overlay holds one
-of its hot keys), or a key the patch removes would resolve from a layer
-below — the WHOLE patch is refused before anything applies: `invalid`
-with a typed `shadowed { key, path, layer, recovery }` naming the first
-such LEAF (§The recovery — the leaf-path rule), the layer its value
-resolves from, and the recovery. There is no
-partial apply and no event that says one thing while the document
-resolves another. Refusal rather than a two-layer write is deliberate —
-the kernel patches one entry per call (FINDINGS.md #28), so two layers
-could never be written atomically.
+write — never from "resolved ⊕ patch". If a leaf the patch asks for
+would not resolve as asked, the WHOLE patch is refused before anything
+applies: `invalid` with a typed `shadowed { key, path, layer, recovery }`
+naming the shadowing node, its layer, and the recovery (§The shadowing
+law). There is no partial apply and no event that says one thing while
+the document resolves another. Refusal rather than a two-layer write is
+deliberate — the kernel patches one entry per call (FINDINGS.md #28), so
+two layers could never be written atomically.
 
-### The recovery
+### The shadowing law
 
-The refusal names the exact call that will succeed, and that call is
-executable through this seam as it stands: `recovery { namespace,
-patch: <removal of the shadowed leaf>, layer }` — clear the shadowing
-LEAF from the shadowing layer by addressing that layer explicitly (§The
-layer selector), then retry the refused patch as it was. The `detail`
-spells it: `patch("cron", {"notify-token":null}, layer: entry), then
-retry this patch`.
+Shadowing has one definition, implemented once (`plan_patch_in`,
+`resolver`), and it is stated in terms of the merge law above.
 
-**The leaf-path rule.** Shadowing is resolved at leaf-path granularity,
-never at the top-level key. A merge patch is walked per RFC 7396 —
-objects merge recursively, so a nested key is its own fact — and the
-first LEAF whose post-state value differs from the asked-for one is the
-shadowed one: `key` is its path dot-joined (`group.changed`; a
-top-level key is itself), `path` its segments (`["group", "changed"]`).
-The recovery removes exactly that leaf: a `null` at the nested path
-(`{"group": {"changed": null}}`) deletes that path alone and preserves
-every sibling in that layer (`group.untouched` stays). Executing it,
-then retrying, resolves the requested value. A recovery that nulled the
-top-level key would erase untouched siblings — data loss, refused by
-construction. A leaf the patch REMOVES is exempt from the explicit-layer
-consistency check (a removal in an explicit layer clears that layer;
-§The layer selector), so a nested recovery is never itself refused as
-shadowed by the layer below. Worked, for the shapes the seam has met:
+**What a patch asks for.** A merge patch is walked per RFC 7396: an
+object recurses, so its leaves are the paths that matter. Every leaf
+path P it holds asks for one thing: a non-object value (a string, a
+number, a bool, an ARRAY — arrays are atomic under RFC 7396) asks that
+P resolve to exactly that value; a `null` asks that P resolve absent.
+An empty object asks for nothing. With an explicit `layer`, a `null`
+asks for nothing either: it is the operator clearing that layer at P
+(§The layer selector).
 
-- The entry and the overlay both hold a hot key and the operator patches
-  `{ key: null }`: it lands in the overlay, the entry would still resolve
-  the key → `shadowed { key, layer: entry, recovery: { patch: { key:
-  null }, layer: entry } }`. `patch(ns, { key: null }, layer: entry)`
-  clears the entry (the owner restarts; the answer honestly reports the
-  overlay's value still resolving), the retry clears the overlay, and
-  the next `get` resolves the key gone.
-- The overlay holds a hot key and the operator sends a mixed hot+cold
-  patch: it lands in the entry, the overlay would still resolve the hot
-  key → `recovery: { patch: { key: null }, layer: overlay }`. Clearing
-  the overlay, then retrying, lands the mixed patch whole in the entry.
+**The target layer T** is the layer the patch lands in (§The patch law:
+the explicit `layer`, else the keys choose).
 
-- The overlay holds `group: { changed, untouched }` and a mixed patch
-  sets `group.changed` (with a cold key): it lands in the entry, the
-  overlay would still resolve the leaf → `shadowed { key:
-  "group.changed", path: ["group", "changed"], layer: overlay, recovery:
-  { patch: { group: { changed: null } }, layer: overlay } }`. The
-  recovery leaves the overlay `{ group: { untouched } }`; the retry lands
-  whole in the entry and `group.untouched` still resolves the overlay's.
+**The resolving layer.** For a path P, walk the layers in resolution
+precedence — overlay, entry, defaults. The first layer L that holds P
+itself, or an ATOMIC (non-object) value at any strict prefix Q of P, is
+the resolving layer for P, and the node it holds there (Q or P) is the
+resolving node: an atomic ancestor leaves nothing below it, so it
+resolves every path beneath it to absent. One refinement the merge law
+forces: an atomic that a HIGHER layer has already replaced with an
+object at that same prefix resolves nothing — it still wiped every
+layer below it, so the path is absent and no layer resolves it.
 
-The one shape without a recovery: removing a key only the defaults
-define (`layer: defaults`, no `recovery`) — a declared default cannot be
+**The law.** After the write, every leaf P the patch asks for must
+resolve as asked. Where one does not, its resolving layer L ≠ T, and
+the patch is refused `shadowed { path: <the resolving node, Q or P>,
+layer: L }` — the node named is the actual shadowing node (an atomic
+ancestor names the ancestor, never a leaf below it), `key` is that path
+dot-joined (`group.inner`; a top-level key is itself), and `path` its
+segments. The recovery is the path-precise RFC 7396 removal of exactly
+that node in L: `recovery { namespace, patch: <a null at that path>,
+layer: L }`. Removing a node cannot lose settings beside it — a `null`
+at a nested path deletes that path alone and preserves every sibling —
+and an atomic has nothing below it. When several asked-for leaves are
+shadowed, the recovery removes every shadowing node at once (they all
+lie in one layer by construction: the overlay shadows the entry's sets;
+a removal from one of the two is shadowed by the other); `key`/`path`
+name the first. The `detail` spells the call: `patch("cron",
+{"notify-token":null}, layer: entry), then retry this patch`.
+
+**The guarantee, as proven.** The definition is pinned by a property
+test over random two-layer trees, random merge patches and a random
+target layer (`shadowing_is_one_definition_over_random_two_layer_trees`,
+ten thousand cases from a fixed seed): refused ⇒ executing the
+advertised recovery, then retrying the patch as it was, lands and the
+next `get` resolves what the patch asked for; not refused ⇒ the next
+`get` resolves what the patch asked for; and every path neither the
+patch nor the recovery addressed is byte-identical in both layers
+afterwards. The three probes that found the earlier, case-by-case
+detection wanting are kept as named cases — a key held in both layers
+removed (`notify-token`), a nested leaf beside an untouched sibling
+(`group.changed`), and a leaf below an atomic ancestor (`group.inner`).
+
+The one shape without a recovery: a path only the defaults resolve
+(`layer: defaults`, no `recovery`) — a declared default cannot be
 removed, only set. Two calls, each honest, are the floor here (#28).
 
 ### The layer selector
@@ -143,9 +150,9 @@ what resolves now. The defaults are not addressable.
 1. The patch must be an object. The RESULT of laying it over the resolved
    settings (with an explicit `layer`: the post-state resolution) is
    validated against the declared schema BEFORE anything applies, and
-   the landing layer must resolve to exactly that result (§The
-   consistency guarantee); a refusal is typed (`invalid`, with `shadowed
-   { key, layer, recovery }` in the consistency case), answered, and
+   every leaf the patch asks for must resolve as asked once it lands
+   (§The shadowing law); a refusal is typed (`invalid`, with `shadowed
+   { key, path, layer, recovery }` in the shadowing case), answered, and
    emitted on the refused topic — nothing was written.
 2. With `layer` given, the patch lands there (§The layer selector).
    Otherwise a patch whose every top-level key is a hot key lands in the
@@ -182,5 +189,8 @@ events without calling back (the payload carries the resolved settings).
   decodes). Same day, additive: the `layer` selector on `patch` and the
   executable `recovery` inside `shadowed` (§The recovery). Same day,
   additive: shadowing resolved at leaf-path granularity — `path` on
-  `shadowed`, `key` the dot-joined leaf path, the recovery a
-  path-precise removal (§The recovery — the leaf-path rule).
+  `shadowed`, `key` the dot-joined path, the recovery a path-precise
+  removal. Same day, additive: the shadowing law stated as one
+  definition — the resolving layer and node, an atomic ancestor named
+  as the node, one recovery for every shadowing node in the layer —
+  and pinned by a property test (§The shadowing law).

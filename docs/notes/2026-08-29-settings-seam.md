@@ -152,6 +152,46 @@ its top-level keys, since a nested removal in an explicit layer is the
 operator clearing that layer at that leaf and must not be refused as
 shadowed by the layer below (else the nested recovery would loop like
 round 2's advice); and a removal of a key only the defaults define keeps
-its no-recovery answer, now for a nested leaf too. Top-level keys are
-unchanged: their path is themselves, so every round-2/3 case answers
-byte-for-byte what it did.
+its no-recovery answer, now for a nested leaf too. Top-level keys keep
+their meaning — their path is themselves — and the wire grows one
+additive field (`path`, present whenever non-empty), which a round-2/3
+reader ignores.
+
+## Why shadowing is one definition, and how it is proven
+
+Rounds 2–4 each fixed the case a probe had found and each exposed the
+next: a top-level key, then a nested leaf, then a leaf below an ATOMIC
+ancestor (the overlay holding `group.inner: 5`, an entry patch setting
+`group.inner.changed`) — where round 4's leaf comparison descended
+below the shadowing boundary, blamed the entry, and advised a recovery
+that returned the same refusal. Detection was case-by-case where it
+needed a definition. Round 5 states one and implements it once (README
+§The shadowing law): for every leaf a patch asks for, the resolving
+layer is the first in precedence holding the path or an atomic at a
+strict prefix of it; a leaf that does not resolve as asked is shadowed
+by that layer at that NODE (the atomic ancestor, never a leaf below it),
+and the recovery removes exactly that node there. `resolver` is that
+walk; `asked_leaves` is the one reading of a merge patch the plan, the
+overlay's cold-key rule and the refusal all share. The one refinement
+the merge law forces on the stated walk: an atomic a higher layer has
+already replaced with an object at the same prefix resolves nothing
+(RFC 7396 replaces a non-object with the object above it) but still
+wiped the layers below, so the path is simply absent — a lower-layer
+atomic must not be blamed for a value the overlay's object already
+removed.
+
+Proof is a property test, not another probe: ten thousand random
+two-layer trees, merge patches and target layers from a fixed xorshift
+seed (no dev-dependency, reproducible from the case number printed on
+failure), asserting (a) refused ⇒ recovery then retry lands and resolves
+what was asked, (b) not refused ⇒ it resolves what was asked, (c) every
+unaddressed path is byte-identical in both layers afterwards. Its first
+run found a defect no probe had: a nested recovery addressed to the
+overlay (`{ c: { a: null } }` under a cold `c`) was refused by the
+overlay's cold-key rule, which judged the top-level value rather than
+whether any leaf under the key was SET — a recovery the seam itself
+advertised and then refused. The rule now reads the same asked-for
+leaves the plan does. The three probes stay as named cases beside the
+property. Two-layer trees are the property's domain because the
+defaults are not addressable — a path only the defaults resolve keeps
+its honest no-recovery refusal and is tested by name.

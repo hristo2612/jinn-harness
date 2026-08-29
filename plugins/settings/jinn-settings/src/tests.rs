@@ -639,3 +639,307 @@ fn a_two_level_deep_shadowed_leaf_is_named_and_cleared_exactly() {
                            "untouched": "overlay" } })
     );
 }
+
+#[test]
+fn an_atomic_ancestor_names_the_ancestor_and_its_layer() {
+    // The verifier's probe (PLA-314 round 4): the overlay holds an ATOMIC
+    // at `group.inner` beside an untouched sibling; an explicit entry
+    // patch sets the leaf `group.inner.changed` below it. The overlay's
+    // atomic ancestor is what resolves that leaf (absent), so the refusal
+    // names the ANCESTOR in the OVERLAY — never the leaf, never the entry
+    // — and its recovery removes exactly that node; the retry lands.
+    let declaration = nested_declaration();
+    let layers = Layers {
+        defaults: json!({}),
+        entry: json!({ "cold": false, "group": { "untouched": "entry" } }),
+        overlay: json!({ "group": { "inner": 5, "untouched": "overlay" } }),
+        extra: Extensions::new(),
+    };
+    let patch = json!({ "group": { "inner": { "changed": 9 } } });
+    let refused =
+        plan_patch_in(&declaration, &layers, &patch, Some(PatchLayer::Entry)).unwrap_err();
+    let shadowed = refused.shadowed.clone().expect("typed");
+    assert_eq!(
+        shadowed.key, "group.inner",
+        "the atomic ancestor, not the leaf"
+    );
+    assert_eq!(shadowed.path, vec!["group", "inner"]);
+    assert_eq!(shadowed.layer, LayerName::Overlay, "{refused:?}");
+    let recovery = shadowed.recovery.expect("recovery");
+    assert_eq!(recovery.layer, PatchLayer::Overlay);
+    assert_eq!(recovery.patch, json!({ "group": { "inner": null } }));
+    let cleared = plan_patch_in(&declaration, &layers, &recovery.patch, Some(recovery.layer))
+        .expect("the advised recovery succeeds");
+    assert_eq!(
+        cleared.layer,
+        json!({ "group": { "untouched": "overlay" } })
+    );
+    let after = Layers {
+        overlay: cleared.layer.clone(),
+        ..layers
+    };
+    let retried = plan_patch_in(&declaration, &after, &patch, Some(PatchLayer::Entry))
+        .expect("the advertised recovery must make the retry land");
+    assert_eq!(
+        retried.resolved,
+        json!({ "cold": false,
+                "group": { "inner": { "changed": 9 }, "untouched": "overlay" } })
+    );
+}
+
+/// A tiny deterministic generator (xorshift64*) so the property run is
+/// reproducible from its seed and depends on nothing but this crate.
+struct Rng(u64);
+
+impl Rng {
+    fn next(&mut self) -> u64 {
+        self.0 ^= self.0 >> 12;
+        self.0 ^= self.0 << 25;
+        self.0 ^= self.0 >> 27;
+        self.0.wrapping_mul(0x2545_F491_4F6C_DD1D)
+    }
+
+    fn below(&mut self, n: u64) -> u64 {
+        self.next() % n
+    }
+
+    fn key(&mut self) -> String {
+        ["a", "b", "c", "d"][self.below(4) as usize].to_owned()
+    }
+
+    fn atomic(&mut self) -> serde_json::Value {
+        match self.below(4) {
+            0 => json!(self.below(100)),
+            1 => json!(format!("s{}", self.below(100))),
+            2 => json!([self.below(10)]),
+            _ => json!(self.below(2) == 1),
+        }
+    }
+
+    /// A random object tree, depth ≤ 3, atomics at leaves.
+    fn tree(&mut self, depth: u32) -> serde_json::Value {
+        let mut object = serde_json::Map::new();
+        for _ in 0..self.below(4) {
+            let value = if depth < 3 && self.below(3) == 0 {
+                self.tree(depth + 1)
+            } else {
+                self.atomic()
+            };
+            object.insert(self.key(), value);
+        }
+        serde_json::Value::Object(object)
+    }
+
+    /// A random merge patch: sets, removals (`null`), nested objects.
+    fn patch(&mut self, depth: u32) -> serde_json::Value {
+        let mut object = serde_json::Map::new();
+        for _ in 0..1 + self.below(3) {
+            let value = match self.below(4) {
+                0 if depth < 3 => self.patch(depth + 1),
+                1 => serde_json::Value::Null,
+                _ => self.atomic(),
+            };
+            object.insert(self.key(), value);
+        }
+        serde_json::Value::Object(object)
+    }
+}
+
+/// Every leaf path of a tree (an atomic, or an empty object).
+fn leaf_paths(value: &serde_json::Value, prefix: &[String], out: &mut Vec<Vec<String>>) {
+    match value.as_object() {
+        Some(fields) if !fields.is_empty() => {
+            for (key, value) in fields {
+                leaf_paths(value, &[prefix, std::slice::from_ref(key)].concat(), out);
+            }
+        }
+        _ => out.push(prefix.to_vec()),
+    }
+}
+
+/// The (path, wanted) pairs a merge patch asks for: `Some(v)` a set,
+/// `None` a removal; an empty object names nothing.
+fn asks(
+    patch: &serde_json::Value,
+    prefix: &[String],
+    out: &mut Vec<(Vec<String>, Option<serde_json::Value>)>,
+) {
+    for (key, value) in patch.as_object().expect("an object") {
+        let path = [prefix, std::slice::from_ref(key)].concat();
+        match value {
+            serde_json::Value::Null => out.push((path, None)),
+            serde_json::Value::Object(fields) if fields.is_empty() => {}
+            serde_json::Value::Object(_) => asks(value, &path, out),
+            _ => out.push((path, Some(value.clone()))),
+        }
+    }
+}
+
+fn related(a: &[String], b: &[String]) -> bool {
+    a.starts_with(b) || b.starts_with(a)
+}
+
+/// (b): the resolution after `plan` is what the patch asked for.
+fn assert_asked(plan: &PatchPlan, patch: &serde_json::Value, explicit: bool, case: &str) {
+    let mut wanted = Vec::new();
+    asks(patch, &[], &mut wanted);
+    for (path, want) in wanted {
+        let got = value_at(&plan.resolved, &path);
+        match want {
+            Some(want) => assert_eq!(
+                got,
+                Some(&want),
+                "set {path:?} must resolve as asked\n{case}"
+            ),
+            None if explicit => {}
+            None => assert_eq!(got, None, "removed {path:?} must resolve absent\n{case}"),
+        }
+    }
+}
+
+/// (c): every path neither the patch nor the recovery addressed is
+/// byte-identical in `before` and `after`.
+fn assert_untouched(
+    before: &serde_json::Value,
+    after: &serde_json::Value,
+    addressed: &[Vec<String>],
+    case: &str,
+) {
+    let mut paths = Vec::new();
+    leaf_paths(before, &[], &mut paths);
+    leaf_paths(after, &[], &mut paths);
+    for path in paths {
+        if addressed.iter().any(|node| related(node, &path)) {
+            continue;
+        }
+        assert_eq!(
+            value_at(before, &path),
+            value_at(after, &path),
+            "unaddressed {path:?} changed\n{case}"
+        );
+    }
+}
+
+fn apply(layers: &Layers, plan: &PatchPlan) -> Layers {
+    match plan.applied {
+        Applied::Hot => Layers {
+            overlay: plan.layer.clone(),
+            ..layers.clone()
+        },
+        Applied::Restart => Layers {
+            entry: plan.layer.clone(),
+            ..layers.clone()
+        },
+    }
+}
+
+#[test]
+fn shadowing_is_one_definition_over_random_two_layer_trees() {
+    // The formal definition (PLA-314 round 5), proven as a property over
+    // random two-layer trees, random merge patches and a random target
+    // layer: (a) refused ⇒ the advertised recovery, then the retry, lands
+    // and resolves what was asked; (b) not refused ⇒ it resolves what was
+    // asked; (c) every path neither the patch nor the recovery addressed
+    // is byte-identical in both layers afterwards.
+    let open = Schema {
+        properties: Default::default(),
+        additional: true,
+        extra: Extensions::new(),
+    };
+    let mut rng = Rng(0x9E37_79B9_7F4A_7C15);
+    let (mut landed, mut recovered) = (0, 0);
+    for case_no in 0..10_000 {
+        let hot_keys: Vec<String> = ["a", "b", "c", "d"]
+            .iter()
+            .filter(|_| rng.below(2) == 1)
+            .map(|k| (*k).to_owned())
+            .collect();
+        let declaration = Declaration {
+            namespace: "prop".into(),
+            entry: "owner".into(),
+            schema: open.clone(),
+            defaults: json!({}),
+            hot_keys,
+            extra: Extensions::new(),
+        };
+        let layers = Layers {
+            defaults: json!({}),
+            entry: rng.tree(1),
+            overlay: rng.tree(1),
+            extra: Extensions::new(),
+        };
+        let patch = rng.patch(1);
+        let target = match rng.below(3) {
+            0 => None,
+            1 => Some(PatchLayer::Entry),
+            _ => Some(PatchLayer::Overlay),
+        };
+        let case = format!(
+            "case {case_no}: hot={:?} entry={} overlay={} patch={patch} target={target:?}",
+            declaration.hot_keys, layers.entry, layers.overlay
+        );
+        let mut addressed = Vec::new();
+        let mut asked = Vec::new();
+        asks(&patch, &[], &mut asked);
+        addressed.extend(asked.into_iter().map(|(path, _)| path));
+        let (state, plan) = match plan_patch_in(&declaration, &layers, &patch, target) {
+            Ok(plan) => {
+                landed += 1;
+                (layers.clone(), plan)
+            }
+            Err(refused) => {
+                let Some(shadowed) = refused.shadowed.clone() else {
+                    assert!(refused.detail.contains("not a hot key"), "only the overlay's cold-key rule may refuse otherwise\n{case}\n{refused:?}");
+                    continue;
+                };
+                let recovery = shadowed.recovery.clone().unwrap_or_else(|| {
+                    panic!("two layers, no defaults: every refusal recovers\n{case}\n{refused:?}")
+                });
+                let mut nodes = Vec::new();
+                asks(&recovery.patch, &[], &mut nodes);
+                assert!(
+                    nodes.iter().all(|(_, want)| want.is_none()),
+                    "a recovery only removes\n{case}\n{refused:?}"
+                );
+                assert!(
+                    nodes.iter().any(|(node, _)| *node == shadowed.path),
+                    "the named node is in the recovery\n{case}\n{refused:?}"
+                );
+                assert_eq!(shadowed.layer, recovery.layer.name(), "{case}\n{refused:?}");
+                let cleared =
+                    plan_patch_in(&declaration, &layers, &recovery.patch, Some(recovery.layer))
+                        .unwrap_or_else(|error| {
+                            panic!(
+                                "the advertised recovery executes\n{case}\n{refused:?}\n{error:?}"
+                            )
+                        });
+                assert_eq!(
+                    cleared.resolved,
+                    resolve(&apply(&layers, &cleared)),
+                    "{case}"
+                );
+                let state = apply(&layers, &cleared);
+                let retried =
+                    plan_patch_in(&declaration, &state, &patch, target).unwrap_or_else(|error| {
+                        panic!("the retry lands after the recovery\n{case}\n{refused:?}\n{error:?}")
+                    });
+                addressed.extend(nodes.into_iter().map(|(node, _)| node));
+                recovered += 1;
+                (state, retried)
+            }
+        };
+        let after = apply(&state, &plan);
+        assert_eq!(
+            plan.resolved,
+            resolve(&after),
+            "the report is the post-state resolution\n{case}"
+        );
+        assert_asked(&plan, &patch, target.is_some(), &case);
+        assert_untouched(&layers.entry, &after.entry, &addressed, &case);
+        assert_untouched(&layers.overlay, &after.overlay, &addressed, &case);
+    }
+    assert!(
+        landed > 500 && recovered > 500,
+        "the generator must exercise both outcomes: landed={landed} recovered={recovered}"
+    );
+}
