@@ -9,3 +9,4 @@ evidence for every plugin (AGENTS.md standing order 3).
 |---|---|
 | `cron/` | The cron seam alone — the soak's duty tree. |
 | `operator-api/` | The api trio beside the cron seam, in the operator layout (`--data <root>`). |
+| `engines/` | The engine providers and the probe beside the api trio, the settings pair and the cron seam. |

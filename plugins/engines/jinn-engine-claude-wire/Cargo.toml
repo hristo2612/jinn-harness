@@ -1,0 +1,19 @@
+# The `claude` provider's own two things (jinn-engine's crate doc): the
+# CLI's argv and its stream codec — the `--output-format stream-json
+# --verbose` NDJSON decoded into the seam's `Event`s. Pure functions and
+# one buffering decoder, unit-tested natively, compiled into the
+# `jinn-engine-claude` guest. Transport is the provider's business, so
+# this crate belongs to the provider, not the definition (the
+# `jinn-api-http-wire` precedent).
+[package]
+name = "jinn-engine-claude-wire"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+jinn-engine = { path = "../jinn-engine" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

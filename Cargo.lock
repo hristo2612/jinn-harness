@@ -115,6 +115,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine-kit"
+version = "0.1.0"
+dependencies = [
+ "api-kit",
+ "cron-kit",
+ "jinn-api",
+ "jinn-cron",
+ "jinn-engine",
+ "serde_json",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -250,6 +262,7 @@ checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 name = "jinn-api"
 version = "0.1.0"
 dependencies = [
+ "jinn-engine",
  "serde",
  "serde_json",
 ]
@@ -259,6 +272,7 @@ name = "jinn-api-http-wire"
 version = "0.1.0"
 dependencies = [
  "jinn-api",
+ "jinn-engine",
  "serde_json",
 ]
 
@@ -267,6 +281,33 @@ name = "jinn-cron"
 version = "0.1.0"
 dependencies = [
  "jinn-settings",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jinn-engine"
+version = "0.1.0"
+dependencies = [
+ "jinn-settings",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jinn-engine-claude-wire"
+version = "0.1.0"
+dependencies = [
+ "jinn-engine",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jinn-engine-codex-wire"
+version = "0.1.0"
+dependencies = [
+ "jinn-engine",
  "serde",
  "serde_json",
 ]

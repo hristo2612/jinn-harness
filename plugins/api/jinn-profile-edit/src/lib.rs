@@ -1,6 +1,12 @@
 //! The `jinn:api-profile` consumer: the operator edit lane (FINDINGS.md
-//! #9). `get` answers the profile document of record (through the
-//! granted `jinn:fs` scope; #25 names where that read cannot reach);
+//! #9). `get` answers the profile document of record and `patch-entry`
+//! reads it to apply the entry-patch law locally first — both through the
+//! kernel's own `jinn:profile` `document` read since pin `3fd7b05` (jinnd
+//! M2-K8), so neither depends on where the document sits (#25 closed) and
+//! this entry needs no `jinn:fs` authority over it at all (#24). Its
+//! grant's operation class is the editor's — the reads AND the write,
+//! unlike the status viewer's read-only one (`tools/api-kit`).
+//!
 //! `patch-entry` applies the definition's entry-patch law to ONE entry
 //! through the kernel's own `jinn:profile` `patch-entry` since pin
 //! `57360cc` (jinnd M2-K7): the LOADER validates, writes the document
@@ -8,21 +14,23 @@
 //! `ProfilePatched` — operator intent with NO fs inverse and NO fiber
 //! journal entry, so disposing this entry never touches the document
 //! (#21 closed; the torn-write window of #22 closed for the profile). The
-//! profile is never bypassed as the source of truth.
+//! profile is never bypassed as the source of truth. Since pin `3fd7b05`
+//! (`jinn:profile` 0.2.0, #26) the answer is `accepted(seq)` and the
+//! restart is SCHEDULED, not awaited: the answer carries `patched-seq`,
+//! the `ProfilePatched` row the restart's transitions land after, so an
+//! operator can follow the restart through `jinn:ledger` instead of
+//! inferring it from a call that blocked until it finished.
 //!
 //! A patch that changes nothing is answered without a kernel call; a
 //! kernel refusal (scope, validation, the loader's retryable conflict,
 //! an entry patching itself) is a typed `refused` answer, on the record.
 
-use std::sync::Mutex;
-
 use jinn_api::{
-    decode_profile_answer, kernel_merge_patch, patch_entry, profile_patch_payload,
-    refusal_is_retryable, Answer, ApiError, ErrorCode, PatchEntryRequest, ProfileDocument,
-    API_VERSION, FINDING_NO_DOCUMENT_READ, KERNEL_PROFILE_CONTRACT, OP_KERNEL_PATCH_ENTRY,
-    OP_PATCH_ENTRY, OP_PROFILE_GET, PROFILE_CONTRACT,
+    decode_profile_answer, decode_profile_document, kernel_merge_patch, patch_entry,
+    profile_patch_payload, refusal_is_retryable, Answer, ApiError, ErrorCode, PatchEntryRequest,
+    ProfileDocument, API_VERSION, FINDING_NO_DOCUMENT_READ, KERNEL_PROFILE_CONTRACT,
+    OP_KERNEL_DOCUMENT, OP_KERNEL_PATCH_ENTRY, OP_PATCH_ENTRY, OP_PROFILE_GET, PROFILE_CONTRACT,
 };
-use serde::Deserialize;
 
 wit_bindgen::generate!({
     path: "../../../kernel-pin/wit",
@@ -30,54 +38,48 @@ wit_bindgen::generate!({
 });
 
 use exports::jinn::plugin::lifecycle::{Guest, GuestFault};
-use jinn::plugin::{effects, fs, services};
+use jinn::plugin::{effects, services};
 
 const EFFECT_TOKEN: u64 = 1;
-
-#[derive(Clone, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-struct EditConfig {
-    /// The profile document, under the granted `jinn:fs` scope.
-    #[serde(default = "default_profile_path")]
-    profile_path: String,
-}
-
-fn default_profile_path() -> String {
-    "profile.json".into()
-}
-
-static PATH: Mutex<String> = Mutex::new(String::new());
 
 fn fault(context: &str, error: impl std::fmt::Debug) -> GuestFault {
     GuestFault::Failed(format!("{context}: {error:?}"))
 }
 
-/// The document of record, typed.
-fn read_profile(path: &str) -> Result<serde_json::Value, ApiError> {
-    match fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|error| ApiError::new(ErrorCode::Invalid, format!("profile: {error}"))),
-        Err(fs::FsError::NotFound) => Err(ApiError::unavailable(
+/// The document of record through the kernel's own `jinn:profile`
+/// `document` read (pin `3fd7b05`): the entries this entry's scope
+/// admits, wherever the document sits. A grant this entry does not hold,
+/// or one whose scope or `ops` refuse the read, is the typed
+/// `unavailable` answer — the lane says no without faulting its fiber.
+fn read_profile() -> Result<serde_json::Value, ApiError> {
+    let handle = services::resolve(KERNEL_PROFILE_CONTRACT).map_err(|error| {
+        ApiError::unavailable(
             FINDING_NO_DOCUMENT_READ,
-            format!("profile document {path:?} is not under the granted jinn:fs scope"),
-        )),
-        Err(refused) => Err(ApiError::new(
-            ErrorCode::Refused,
-            format!("profile read refused: {refused:?}"),
-        )),
-    }
+            format!("{KERNEL_PROFILE_CONTRACT} is not resolvable from this entry: {error:?}"),
+        )
+    })?;
+    let bytes = services::call(handle, OP_KERNEL_DOCUMENT, &[]).map_err(|error| {
+        ApiError::unavailable(
+            FINDING_NO_DOCUMENT_READ,
+            format!("{KERNEL_PROFILE_CONTRACT}/{OP_KERNEL_DOCUMENT} refused: {error:?}"),
+        )
+    })?;
+    decode_profile_document(&bytes)
+        .map_err(|error| ApiError::new(ErrorCode::Invalid, format!("profile: {error}")))
 }
 
-fn get(path: &str) -> Result<ProfileDocument, ApiError> {
+fn get() -> Result<ProfileDocument, ApiError> {
     Ok(ProfileDocument {
         api_version: API_VERSION.to_owned(),
-        profile: read_profile(path)?,
+        profile: read_profile()?,
         extra: jinn_api::Extensions::new(),
     })
 }
 
-/// The kernel applies the patch: one granted `jinn:profile` call.
-fn kernel_patch(id: &str, merge: &serde_json::Value) -> Result<(), ApiError> {
+/// The kernel applies the patch: one granted `jinn:profile` call. The
+/// accepted patch's `ProfilePatched` ledger sequence, when the pinned
+/// 0.2.0 provider answers one.
+fn kernel_patch(id: &str, merge: &serde_json::Value) -> Result<Option<u64>, ApiError> {
     let handle = services::resolve(KERNEL_PROFILE_CONTRACT).map_err(|error| {
         ApiError::new(
             ErrorCode::Refused,
@@ -95,17 +97,22 @@ fn kernel_patch(id: &str, merge: &serde_json::Value) -> Result<(), ApiError> {
     })
 }
 
-fn patch(path: &str, payload: &[u8]) -> Result<jinn_api::PatchEntryAnswer, ApiError> {
+fn patch(payload: &[u8]) -> Result<jinn_api::PatchEntryAnswer, ApiError> {
     let request: PatchEntryRequest = serde_json::from_slice(payload)
         .map_err(|error| ApiError::new(ErrorCode::Invalid, format!("patch-entry: {error}")))?;
     // The law, applied locally first: unknown ids and no-op patches are
     // answered without a kernel call.
-    let mut document = read_profile(path)?;
+    let mut document = read_profile()?;
     let answer = patch_entry(&mut document, &request)?;
     if !answer.changed {
         return Ok(answer);
     }
-    kernel_patch(&request.id, &kernel_merge_patch(&request.config))?;
+    let mut answer = answer;
+    if let Some(sequence) = kernel_patch(&request.id, &kernel_merge_patch(&request.config))? {
+        answer
+            .extra
+            .insert("patched-seq".into(), serde_json::json!(sequence));
+    }
     Ok(answer)
 }
 
@@ -119,10 +126,7 @@ fn answer<T: serde::Serialize>(result: Result<T, ApiError>) -> Answer {
 struct Edit;
 
 impl Guest for Edit {
-    fn activate(config: Vec<u8>) -> Result<(), GuestFault> {
-        let parsed: EditConfig = serde_json::from_slice(&config)
-            .map_err(|error| GuestFault::Failed(format!("malformed config: {error}")))?;
-        *PATH.lock().unwrap() = parsed.profile_path;
+    fn activate(_config: Vec<u8>) -> Result<(), GuestFault> {
         effects::register("jinn-profile-edit on duty", EFFECT_TOKEN)
             .map_err(|error| fault("effect", error))?;
         services::provide(PROFILE_CONTRACT).map_err(|error| fault("provide", error))?;
@@ -150,10 +154,9 @@ impl Guest for Edit {
         operation: String,
         payload: Vec<u8>,
     ) -> Result<Vec<u8>, GuestFault> {
-        let path = PATH.lock().unwrap().clone();
         let answered = match operation.as_str() {
-            OP_PROFILE_GET => answer(get(&path)),
-            OP_PATCH_ENTRY => answer(patch(&path, &payload)),
+            OP_PROFILE_GET => answer(get()),
+            OP_PATCH_ENTRY => answer(patch(&payload)),
             other => Answer::error(ApiError::new(
                 ErrorCode::NotFound,
                 format!("unknown operation {other:?}"),

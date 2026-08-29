@@ -1,0 +1,19 @@
+# The codex provider's stream codec and argv: `codex exec --json` JSONL
+# decoded into the engines seam's `Event`s, and the argv a run is spawned
+# with. Pure functions, unit-tested natively, compiled into the
+# `jinn-engine-codex` guest — whose own tests cannot run, since it builds
+# for wasm32 only. A provider's wire format is the provider's business,
+# so this crate belongs to the provider, not the definition
+# (`jinn-api-http-wire` is the same shape).
+[package]
+name = "jinn-engine-codex-wire"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+jinn-engine = { path = "../jinn-engine" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

@@ -7,9 +7,13 @@ use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
-/// How long one request may take end to end (the provider polls its
-/// listener at the kit's 250 ms cadence; a patch reconciles in between).
-pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long one request may take end to end. Sized for a LOADED machine,
+/// not for an idle one: the suite runs every profile's roots in parallel
+/// — the engines profile alone is eleven wasm components per daemon,
+/// eight daemons at once, against a debug-built runtime — and a request
+/// whose answer is merely slow is not a broken API. A genuinely stuck
+/// provider still fails this bound; it just fails it later.
+pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 
 /// One response: status code and the JSON body (`Null` if not JSON).
 #[derive(Clone, Debug)]
@@ -83,4 +87,14 @@ pub fn get(port: u16, target: &str) -> Response {
 /// `PATCH target` with a JSON body.
 pub fn patch(port: u16, target: &str, body: &serde_json::Value) -> Response {
     request(port, "PATCH", target, Some(&body.to_string()))
+}
+
+/// `POST target` with a JSON body — starting an engine run.
+pub fn post(port: u16, target: &str, body: &serde_json::Value) -> Response {
+    request(port, "POST", target, Some(&body.to_string()))
+}
+
+/// `DELETE target` — cancelling an engine run.
+pub fn delete(port: u16, target: &str) -> Response {
+    request(port, "DELETE", target, None)
 }

@@ -1,4 +1,4 @@
-# `jinn-api` 0.2.0 — the operator-API contracts
+# `jinn-api` 0.3.0 — the operator-API contracts
 
 The service definition of the operator-API seam. This document is the
 contracts' prose law; the types in `src/` are their schema. Designed to
@@ -14,6 +14,7 @@ precedent).
 |---|---|---|
 | Status contract | `jinn:api-status` | Provided by `jinn-status`; operations `status`, `health`, `ledger-tail`. |
 | Profile contract | `jinn:api-profile` | Provided by `jinn-profile-edit`; operations `get`, `patch-entry`. |
+| Engine contracts | `jinn:engine.<engine-id>` | One provider slot per engine; routed to directly, like the settings seam. The contract, its operations and its types have ONE home: `plugins/engines/jinn-engine/README.md`. |
 | Provider grants | `jinn:net` (scoped to one loopback port), both contracts above | The HTTP provider's authority: transport + the right to call the consumers. No clock: it serves from the kernel's readiness wakes. |
 | Consumer grants | the contract each provides; `jinn:fs` scoped to the profile document (read); `jinn:introspect`, `jinn:ledger`, `jinn:cron` (status); `jinn:profile` scoped `["*"]` (editor) | Authority is the profile side's — requests are not grants. |
 
@@ -39,6 +40,11 @@ provider exposes ONE surface:
 | `GET` | `/v1/settings` | `jinn:settings` / `namespaces` | — |
 | `GET` | `/v1/settings/{ns}` | `jinn:settings` / `get` | `{namespace}` from the path |
 | `PATCH` | `/v1/settings/{ns}` | `jinn:settings` / `patch` | the JSON body (`{patch}`) + `namespace` from the path |
+| `GET` | `/v1/engines` | one `jinn:engine.<id>` / `describe` per routable engine | — |
+| `GET` | `/v1/engines/{engine}` | `jinn:engine.{engine}` / `describe` | — |
+| `POST` | `/v1/engines/{engine}/runs` | `jinn:engine.{engine}` / `run` | the JSON body (a `RunRequest` minus `engine`) + `engine` from the path |
+| `GET` | `/v1/engines/{engine}/runs/{run-id}` | `jinn:engine.{engine}` / `run-get` | `{run-id}` from the path |
+| `DELETE` | `/v1/engines/{engine}/runs/{run-id}` | `jinn:engine.{engine}` / `cancel` | `{run-id}` from the path |
 
 The settings rows (0.2.0) route to the settings seam's provider directly:
 its envelope is this seam's envelope (`plugins/settings/jinn-settings/README.md`),
@@ -49,6 +55,31 @@ whether the payload is the body or the query (`body`).
 HTTP status mapping of the typed error codes is the provider's
 (`jinn-api-http-wire`): `not-found` 404, `invalid` 422, `unavailable`
 503, `refused` 502; a route miss is 404/405.
+
+## The engines routes (0.3.0)
+
+The engines rows carry TWO path parameters and name a DIFFERENT contract
+per engine, so they are their own small table (`engines.rs`) rather than
+rows of the static one. `GET /v1/engines/{engine}` is one engine's own
+`describe`, verbatim — the row `GET /v1/engines` carries for it. Three rules, all of them answers:
+
+1. **Which engines.** The engines an API may route to are its entry's
+   `config.data.engines`, written by the profile from the same source as
+   its `jinn:engine.<id>` grants. The GRANT is the authority the kernel
+   enforces; the setting is that same fact told to the provider, so an
+   engine id outside it is `not-found` **without a kernel call**.
+2. **An unmounted engine is an ordinary answer.** A `resolve` that fails
+   because no entry provides that contract is typed `unavailable` naming
+   the engine — never a fault, never a 500. A composition may simply not
+   hold that engine.
+3. **The engines seam's error class survives.** `EngineError.code` maps
+   onto this seam's: `invalid` → `invalid` (422), `not-found` →
+   `not-found` (404), `refused` → `refused` (502), `unavailable` →
+   `unavailable` (**503**), `failed` → `refused` (502). The seam's own
+   code rides along additively as `error.engine-code`, so `failed` is
+   never read as `refused`, and `unavailable` — the honest environment
+   gate: the provider is mounted and correct, this host cannot carry the
+   run — keeps a status of its own.
 
 ## Schemas
 
@@ -73,6 +104,11 @@ HTTP status mapping of the typed error codes is the provider's
   call), `live` iff both succeed, the answer or the kernel's refusal
   verbatim. `kernel` is the 0.1.0 list of fields no guest could answer,
   now EMPTY (`unavailable: []`, `finding: 19` kept as its vocabulary).
+  `engines` (0.3.0) is every engine the composition holds — `{engine,
+  contract, entry}` per `jinn:engine.<id>` an entry PROVIDES, read off
+  the kernel's own `provisions` (`jinn_engine::engines_in`), sorted by
+  engine id. It is not a table the status plugin keeps: an engine is
+  there because its entry is mounted, and gone when the entry is.
 - **`health`** → `HealthReport { api-version, ok, profile-readable,
   entries, probes-live, probes-total }`; `ok` iff the kernel lists every
   entry `active` and every probe is live (`profile-readable` reports the
@@ -87,6 +123,19 @@ HTTP status mapping of the typed error codes is the provider's
   exist; `unavailable` carries the typed reason when the `jinn:ledger`
   read was refused. Every page is receipted on the ledger under the
   status entry (`LedgerConsumed`).
+- **`GET /v1/engines`** → `EngineList { api-version, engines:
+  [EngineEntry] }`, one row per routable engine, sorted by engine id:
+  `{ engine, contract, describe?, error? }` — `describe` is that
+  provider's own `Description` verbatim (the engines seam's schema), and
+  `error` the typed reason it could not answer. Exactly one of the two.
+- **`GET /v1/engines/{engine}`** → that provider's `Description`
+  verbatim, or the typed refusal — the one row of the list, unwrapped.
+- **`POST /v1/engines/{engine}/runs`** ← a `RunRequest` minus `engine`
+  (the path supplies it; a body naming another engine is not a second
+  opinion) → the provider's `RunAccepted`. **`GET …/runs/{run-id}`** →
+  its `RunRecord`; **`DELETE …/runs/{run-id}`** cancels it and answers
+  the record. All three schemas belong to the engines seam and are
+  documented there — this seam passes them through verbatim.
 - **`get`** → `ProfileDocument { api-version, profile }` — the document
   verbatim; typed `unavailable { finding: 25 }` beside the data root.
 - **`patch-entry`** ← `PatchEntryRequest { id, config: { data?,
@@ -147,6 +196,10 @@ HTTP status mapping of the typed error codes is the provider's
 
 ## Changes
 
+- **0.3.0 (2026-08-29):** additive. The engines surface: five routes onto
+  `jinn:engine.<id>` (list, describe, run, run-get, cancel), the list's
+  schema, the engines-seam error mapping, and `engines` on the status
+  report. No existing route, schema or status code changed.
 - **0.2.0 (2026-08-29, kernel pin `57360cc`):** additive. Entries carry
   the kernel's view (`fiber`, `state`, `incarnation`, `provisions`,
   `registrations`); `status` gains `readiness`, `last-ledger-seq`,

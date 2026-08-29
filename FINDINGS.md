@@ -179,6 +179,29 @@ loopback under a port-scoped grant; refusals for an out-of-range port and
 a non-loopback host proven on the record). What remains of this entry:
 `jinn:keystore` is still declared and unprovided.
 
+**Fully closed 2026-08-29 — retired by pin 3fd7b05 (jinnd M2-K8).** The
+daemon registers the fourth and last base provider: `jinn:keystore@0.1.0`
+(`get`, `put`, `delete`, `list`) behind the same broker choke point, under
+a `key-prefix` scope that admits NO key on a bare grant and an `ops`
+attenuation, with values sealed at rest under a master key that is never
+under the data root and a ledger record that carries the key NAME and the
+value's digest, never the value. Harness side: the engines seam is its
+first consumer — a run request carries `{"$secret": "<key>"}` references
+and each provider resolves them through `jinn:keystore` `get` at spawn
+time (`plugins/engines/jinn-engine/src/lib.rs` documents the shape;
+`jinn-engine-claude`, `jinn-engine-codex` and `jinn-engine-echo` do the
+resolving), under the grant `tools/engine-kit/src/lib.rs` writes:
+`{ contract: "jinn:keystore", scope: ["engines/"], ops: ["get"] }` — a
+prefix, read-only, so a provider reads secret values and can never write,
+delete, or enumerate them. Nothing in this repo, its profiles, or its
+ledgers holds secret material; only key names. One operational note the
+suite had to absorb: a macOS daemon with no passphrase configured falls to
+the platform keychain, whose ACL can put an OS prompt in front of the
+first mutation, so every daemon the composition suite boots sets
+`JINND_KEYSTORE_PASSPHRASE` (`tests/composition/src/kit.rs`) — the
+kernel's own packet record calls the keychain backend compiled-but-untested
+and names the passphrase as the headless choice, so this is adoption, not
+a friction.
 
 ## 6. No transactional pairing of related effects
 
@@ -1101,3 +1124,119 @@ contracts); the refusal is pinned by the settings composition suite
 - **Guest provisions and every broker crossing recorded:** the fire-run
   ledger is a complete causal story, emits included since the
   `DispatchTrace` tap landed (finding 2).
+
+## 28. A contract has one provider slot and no notion of an instance — N engines coexisting means N contract names
+
+Hit building the engines seam on `3fd7b05` (phase 2.3). The broker holds
+`providers: contract -> provider`, and `provide` refuses a second peer for
+an occupied slot with `DuplicateProvision` — deliberately, "replacement is
+never silent" (R9). `services.resolve(contract)` mints a handle against
+whoever holds the slot. There is no qualified resolve, no provider
+selection, and no per-instance grant. So a capability whose whole point is
+that SEVERAL implementations are live at once — engines, and later
+connectors, model providers, storage backends — cannot be one contract.
+
+The harness encodes the instance in the NAME: a provider serves
+`jinn:engine.<engine-id>`, the id read from its own entry's
+`config.data.engine` and written nowhere else
+(`plugins/engines/jinn-engine/src/lib.rs`, `engine_contract`). That buys
+the malleability properties cleanly — a switch is a `package`/`hash` edit
+on one entry, coexistence is a second entry, extension is a third — and it
+keeps per-engine authority where the kernel enforces it, since a grant
+names a contract and therefore an engine. But the kernel cannot see the
+structure: `jinn:engine.codex` is an opaque string to the broker, so
+nothing checks that two entries do not claim the same engine id (the slot
+refusal catches it, but reports a duplicate PROVISION, not a duplicate
+engine), a consumer's `jinn:introspect` view must parse provisions to find
+engines, and the whole convention lives in guest code where a typo is a
+`missing-dependency` at resolve rather than a profile-load refusal.
+
+**Packet-card shape:** instance-qualified provision and resolve —
+`services.provide(contract, instance)` / `resolve(contract, instance)`
+with the instance carried in the handle and in the grant scope (a
+`instances` scope beside `path-prefix` and `key-prefix`, same fail-closed
+admission), so a contract may be provided AT a name. The ledger's
+`ServiceProvided` gains the instance; `jinn:introspect` reports it
+structurally; the loader can refuse two entries claiming one instance at
+LOAD time rather than at first `provide`. This is the same class as entry
+27's C6 note: the harness is emulating a kernel concept in guest
+convention, and the emulation is what should be retired.
+
+*Evidence grade:* source-confirmed (`crates/jinnd-wasm/src/broker.rs`
+`provide`/`resolve` at the pin — the slot map and the `DuplicateProvision`
+refusal); the encoding and its three proofs are pinned by the engines
+composition suite (`tests/composition/tests/engines.rs`).
+
+## 29. `services.provide` has no staging path — a provision made in `activate` binds the STAGING instance, and one call before the swap commit kills the contract for good
+
+Hit building the engines seam on `3fd7b05` (phase 2.3), and it is the
+sharpest entry in this file: a live composition can permanently lose a
+contract with no fault, no refusal, and no log line.
+
+`events.listen` knows about staging. Its host surface checks
+`self.seat.staging` and RECORDS the registration to be committed at swap
+commit "against the new instance's own delivery face", with the comment
+"Recorded, not routed (R8)". `broker.provide` has no such path: it takes
+`peer` — the STAGING peer, because `activate` runs in staging — checks the
+grant, bumps the generation, and inserts that peer into the contract's
+single provider slot. When the swap commits, the staging instance is
+discarded. The slot still points at it.
+
+Every provider in this repo before now got away with it, because nothing
+ever called their contract before the boot reconcile finished. The engines
+seam is the first composition with a CONSUMER whose own wake can land
+inside the reconcile, and it fails immediately and permanently:
+
+```
+38 jinn-engine-default  8  ServiceProvided   jinn:engine.default        <- staging instance
+39 jinn-engine-default  8  EffectRegistered  "jinn-engine-echo on duty"
+44 jinn-engine-probe   11  EffectRegistered  "alarm at <now>"
+51 jinn-engine-probe   11  AlarmWake         alarm 1                    <- inside the reconcile
+52 jinn-engine-probe   11  ContractResolved  jinn:engine.default
+53 jinn-engine-probe   11  ContractCall      jinn:engine.default/run    <- served by staging
+54 jinn-engine-default  8  ContractCall      jinn:clock/now
+65 jinn-engine-default  8  FiberTransition   Pending -> Loading  (InitialLoad)
+66 jinn-engine-default  8  FiberTransition   Loading -> Active   (InitialLoad)
+```
+
+From seq 66 on, every call on that contract answers
+`KernelError::ProviderFailed("the instance is gone")` — the operator API's
+`describe` at 108 and its `run` at 214 both do, while
+`jinn:engine.claude` and `jinn:engine.codex`, which nobody called during
+the reconcile, answer normally from the same boot. The entry reports
+`state=Active`, the reconcile reports `faults=[]`, and the daemon log says
+nothing. The contract is dead until the entry restarts (patching it back
+to life is what made the seam's cancel proof pass while its run proof did
+not).
+
+Two things make this worse than an ordering nuisance. It is SILENT — Law 2
+records the provision and the calls, and nothing records the loss. And it
+is not recoverable by the consumer: a retry resolves the same dead slot,
+so a probe that "records a missing provider and moves on" never heals.
+
+**Packet-card shape:** give `provide` the staging path `listen` already
+has — record the provision on the staging outcome and commit it at swap
+against the committed instance's face, as
+`crate::handle::Registration::Listen` is committed today. Two smaller
+hardenings are worth the same card: a call that lands on a staging
+provider should answer a typed retryable refusal rather than be served by
+an instance about to be discarded (R9: a refusal is better than a silent
+wrong answer); and `ProviderFailed("the instance is gone")` should be a
+ledger event, not only a wire error, so a composition that loses a
+contract says so.
+
+**Harness-side handling shipped:** `jinn-engine-probe` no longer arms a
+one-shot at `now` — its first wake is one period out
+(`plugins/engines/jinn-engine-probe/src/lib.rs`), which is what a schedule
+means anyway and which keeps the first call out of the boot reconcile.
+That narrows the window; it does not close it, because nothing a guest can
+declare orders its activation against another entry's swap (entry 7) — on
+a loaded host a slow reconcile can still overlap a period.
+
+*Evidence grade:* packet-card-ready. Transcript above is run root
+`eng2` at pin `3fd7b05` (ledger seq 38-66, 107-108, 213-214), reproduced
+from the engines composition suite's `engines-run` root; source-confirmed
+in `crates/jinnd-wasm/src/surfaces.rs` (`listen` stages, `provide` does
+not) and `crates/jinnd-wasm/src/broker.rs` (`provide` inserts `peer` into
+the slot directly).
+

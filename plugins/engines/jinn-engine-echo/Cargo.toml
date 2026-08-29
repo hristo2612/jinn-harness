@@ -1,0 +1,26 @@
+# The engines seam's SELF-CONTAINED provider: it serves a
+# `jinn:engine.<id>` contract with no external CLI and no child process —
+# the answer is made from the prompt itself. Two jobs: it is the seam's
+# EXTENSION proof (a third engine joins a live composition by a profile
+# entry and a grant, no change to the definition), and it is the proof
+# vehicle for run → events → exited, cancel, and run-get anywhere the
+# vendor CLIs are absent or unauthenticated, CI included. Compiles for
+# wasm32-unknown-unknown ONLY and is deliberately NOT a workspace member
+# (see the workspace manifest's note).
+[package]
+name = "jinn-engine-echo"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-engine = { path = "../jinn-engine" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+wit-bindgen = "0.43.0"
+
+[workspace]

@@ -20,8 +20,12 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use jinn_api::{route, Answer, ApiError, ErrorCode, Outcome};
+use jinn_api::{
+    decode_engine_answer, engine_list, engine_routable, engine_route, is_engines_path, route,
+    run_id_payload, run_payload, Answer, ApiError, EngineRoute, ErrorCode, Outcome, ENGINE_METHODS,
+};
 use jinn_api_http_wire::{error_answer_response, error_response, parse, response, Parse};
+use jinn_engine::{engine_contract, OP_DESCRIBE};
 use serde::Deserialize;
 
 wit_bindgen::generate!({
@@ -51,6 +55,13 @@ struct HttpConfig {
     port: u16,
     #[serde(default = "default_host")]
     host: String,
+    /// The engines this API may route to, written by the profile from
+    /// the SAME source as this entry's `jinn:engine.<id>` grants: the
+    /// GRANT is the authority the kernel enforces, this list is that
+    /// fact told to the provider so an unroutable id is answered without
+    /// spending a kernel call.
+    #[serde(default)]
+    engines: Vec<String>,
 }
 
 fn default_host() -> String {
@@ -65,41 +76,146 @@ struct Conn {
 
 static LISTENER: AtomicU64 = AtomicU64::new(0);
 static CONNS: Mutex<Vec<Conn>> = Mutex::new(Vec::new());
+static ENGINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 fn fault(context: &str, error: impl std::fmt::Debug) -> GuestFault {
     GuestFault::Failed(format!("{context}: {error:?}"))
 }
 
+/// The request body as a JSON object; anything else is typed `invalid`.
+fn json_object(body: &[u8]) -> Result<serde_json::Value, ApiError> {
+    match serde_json::from_slice(body) {
+        Ok(serde_json::Value::Object(object)) => Ok(serde_json::Value::Object(object)),
+        Ok(_) => Err(ApiError::new(
+            ErrorCode::Invalid,
+            "body must be a JSON object",
+        )),
+        Err(error) => Err(ApiError::new(ErrorCode::Invalid, format!("body: {error}"))),
+    }
+}
+
+/// One answer as a response: `ok` is the value under 200, `error` the
+/// envelope verbatim under its mapped status.
+fn answered(answer: &Answer) -> Vec<u8> {
+    match &answer.outcome {
+        Outcome::Ok(value) => response(200, &serde_json::to_vec(value).expect("encodes")),
+        Outcome::Error(_) => error_answer_response(answer),
+    }
+}
+
+/// A route miss on a surface: 405 when the path is one this surface
+/// shapes under another method, 404 otherwise. Typed either way.
+fn route_miss(known_path: bool) -> Vec<u8> {
+    let (status, detail) = if known_path {
+        (405, "method not allowed on this path")
+    } else {
+        (404, "no such route")
+    };
+    response(
+        status,
+        &Answer::error(ApiError::new(ErrorCode::NotFound, detail)).encode(),
+    )
+}
+
+/// One granted engine call: resolve `jinn:engine.<id>`, call it, decode
+/// its answer into this seam's outcome. An engine with no provider
+/// mounted is an ordinary typed answer naming it — never a fault, never
+/// a 500: a composition simply may not hold that engine.
+fn engine_call(
+    contract: &str,
+    operation: &str,
+    payload: &[u8],
+) -> Result<serde_json::Value, ApiError> {
+    let handle = services::resolve(contract).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Unavailable,
+            format!("{contract} is not resolvable: {error:?}"),
+        )
+    })?;
+    let bytes = services::call(handle, operation, payload).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Refused,
+            format!("{contract}/{operation} refused: {error:?}"),
+        )
+    })?;
+    decode_engine_answer(&bytes)
+}
+
+/// The engines surface: the engines this API may route to, and one run's
+/// life on one of them. Every route is exactly one granted contract call
+/// per engine addressed — `list` is one per configured engine.
+fn dispatch_engines(method: &str, path: &str, body: &[u8]) -> Vec<u8> {
+    let Some(engines_route) = engine_route(method, path) else {
+        return route_miss(
+            ENGINE_METHODS
+                .iter()
+                .any(|candidate| engine_route(candidate, path).is_some()),
+        );
+    };
+    let engines = ENGINES.lock().unwrap().clone();
+    let outcome = match &engines_route {
+        // The list is the kernel's answer per engine: each provider's
+        // own `describe`, or the typed reason it could not answer.
+        EngineRoute::List => Ok(
+            serde_json::to_value(engine_list(engines.iter().map(|engine| {
+                (
+                    engine.clone(),
+                    engine_call(&engine_contract(engine), OP_DESCRIBE, &[]),
+                )
+            })))
+            .expect("encodes"),
+        ),
+        _ => {
+            let engine = engines_route
+                .engine()
+                .expect("a call route names its engine");
+            let operation = engines_route
+                .operation()
+                .expect("a call route names its operation");
+            engine_routable(&engines, engine).and_then(|contract| {
+                let payload = match &engines_route {
+                    // `describe` takes no request.
+                    EngineRoute::Describe { .. } => Vec::new(),
+                    EngineRoute::Run { .. } => {
+                        serde_json::to_vec(&run_payload(engine, json_object(body)?))
+                            .expect("encodes")
+                    }
+                    EngineRoute::RunGet { run, .. } | EngineRoute::Cancel { run, .. } => {
+                        serde_json::to_vec(&run_id_payload(run)).expect("encodes")
+                    }
+                    EngineRoute::List => unreachable!("the list is answered above"),
+                };
+                engine_call(&contract, operation, &payload)
+            })
+        }
+    };
+    answered(&match outcome {
+        Ok(value) => Answer::ok(value),
+        Err(error) => Answer::error(error),
+    })
+}
+
 /// One request → one contract call → one response.
 fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> Vec<u8> {
+    // The engines surface is routed first: its paths carry two
+    // parameters and a per-engine contract, which the static table
+    // (one parameter, one contract) cannot shape.
+    if is_engines_path(path) {
+        return dispatch_engines(method, path, body);
+    }
     let Some((route, id)) = route(method, path) else {
-        let known_path = jinn_api::ROUTES
-            .iter()
-            .any(|candidate| candidate.path == path || route(candidate.method, path).is_some());
-        let (status, detail) = if known_path {
-            (405, "method not allowed on this path")
-        } else {
-            (404, "no such route")
-        };
-        return response(
-            status,
-            &Answer::error(ApiError::new(ErrorCode::NotFound, detail)).encode(),
+        return route_miss(
+            jinn_api::ROUTES
+                .iter()
+                .any(|candidate| candidate.path == path || route(candidate.method, path).is_some()),
         );
     };
     // The request payload: the query for reads, the JSON body for a
     // patch; the path parameter lands in the route's named field.
     let mut payload = if route.body {
-        match serde_json::from_slice(body) {
-            Ok(serde_json::Value::Object(object)) => serde_json::Value::Object(object),
-            Ok(_) => {
-                return error_response(&ApiError::new(
-                    ErrorCode::Invalid,
-                    "body must be a JSON object",
-                ))
-            }
-            Err(error) => {
-                return error_response(&ApiError::new(ErrorCode::Invalid, format!("body: {error}")))
-            }
+        match json_object(body) {
+            Ok(payload) => payload,
+            Err(error) => return error_response(&error),
         }
     } else {
         query
@@ -127,10 +243,7 @@ fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> 
             format!("{}/{} refused: {error:?}", route.contract, route.operation),
         )),
     };
-    match &answer.outcome {
-        Outcome::Ok(value) => response(200, &serde_json::to_vec(value).expect("encodes")),
-        Outcome::Error(_) => error_answer_response(&answer),
-    }
+    answered(&answer)
 }
 
 /// Writes the whole response (re-offering what the socket did not take,
@@ -235,6 +348,7 @@ impl Guest for Http {
             net::listen(&addr).map_err(|error| fault(&format!("listen {addr}"), error))?;
         LISTENER.store(listener, Ordering::SeqCst);
         CONNS.lock().unwrap().clear();
+        *ENGINES.lock().unwrap() = config.engines;
         Ok(())
     }
 

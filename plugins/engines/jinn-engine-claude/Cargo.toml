@@ -1,0 +1,27 @@
+# The engines seam's `claude` provider guest: provides
+# `jinn:engine.<config.data.engine>`, spawns the CLI named by
+# `config.data.command` through its granted `jinn:process`, feeds its
+# stdout to the `jinn-engine-claude-wire` codec, and emits the seam's run
+# events. Holds a `jinn:clock` one-shot alarm ONLY while a run is live —
+# an idle provider costs zero ledger rows. Compiles for
+# wasm32-unknown-unknown ONLY and is deliberately NOT a workspace member
+# (see the workspace manifest's note); the seam's kit builds and encodes it.
+[package]
+name = "jinn-engine-claude"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-engine = { path = "../jinn-engine" }
+jinn-engine-claude-wire = { path = "../jinn-engine-claude-wire" }
+serde = "1.0"
+serde_json = "1.0"
+# Guest-side bindings of the pinned plugin world (kernel-pin/wit).
+wit-bindgen = "0.43.0"
+
+[workspace]

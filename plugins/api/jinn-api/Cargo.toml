@@ -3,7 +3,8 @@
 # typed error, the entry-patch law (RFC 7396 merge on one entry's config),
 # and the status/health shapes built from the profile document. Compiled
 # natively (unit tests, tools) and into the wasm guests; it therefore
-# depends on nothing but serde.
+# depends on nothing but serde and the seam definitions whose vocabulary
+# its routes borrow rather than copy (one home per fact).
 [package]
 name = "jinn-api"
 version = "0.1.0"
@@ -13,5 +14,8 @@ license = "MIT"
 publish = false
 
 [dependencies]
+# The engines seam's contract names and error vocabulary have one home
+# there; the operator surface borrows them for its engines routes.
+jinn-engine = { path = "../../engines/jinn-engine" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

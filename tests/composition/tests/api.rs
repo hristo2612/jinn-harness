@@ -757,16 +757,17 @@ fn disposing_the_editor_leaves_the_operators_edit_in_place_finding_21_closed() {
     daemon.interrupt();
 }
 
-/// FINDINGS.md #25: the same api trio booted in the CRON layout (the
-/// profile beside the data root, `<root>/data` as `jinn:fs`'s surface —
-/// the soak's layout) cannot read the document of record through any
-/// granted surface. The answer is typed: `document.readable: false`
-/// with the finding, the entries still listed from the kernel's own
-/// view (authority fields empty, never guessed), `get` the same typed
-/// `unavailable`, and a patch still applies through `jinn:profile`
-/// (the write side needs no document read).
+/// FINDINGS.md #25 CLOSED (pin `3fd7b05`, jinnd M2-K8): the same api trio
+/// booted in the CRON layout — the profile beside the data root,
+/// `<root>/data` as `jinn:fs`'s surface, the soak's layout — now reads the
+/// document of record IN FULL. The read is the kernel's own `jinn:profile`
+/// `document`, not a file read, so where the document sits stopped
+/// mattering: every entry carries its authority fields (`package`,
+/// `hash`, `grants`) and `get` answers the document. This test is the
+/// inverse of what it asserted at the previous pin, where the same layout
+/// could only answer the typed `unavailable`.
 #[test]
-fn the_operator_api_serves_a_profile_beside_the_data_root_finding_25() {
+fn the_operator_api_reads_the_document_beside_the_data_root_finding_25_closed() {
     let Some(binary) = gate() else {
         return;
     };
@@ -776,35 +777,248 @@ fn the_operator_api_serves_a_profile_beside_the_data_root_finding_25() {
     let health = get(port, "/v1/health");
     assert_eq!(health.status, 200, "{}", health.raw);
     assert_eq!(health.body["ok"], true, "{}", health.raw);
-    assert_eq!(health.body["profile-readable"], false, "{}", health.raw);
+    assert_eq!(
+        health.body["profile-readable"], true,
+        "the document is readable beside the data root: {}",
+        health.raw
+    );
     assert_eq!(health.body["entries"], ALL.len(), "{}", health.raw);
+
+    // `status`: the document was read, nothing is typed unavailable, and
+    // every entry carries the authority fields only the document holds.
     let status = get(port, "/v1/status");
     let report = &status.body;
-    assert_eq!(report["document"]["readable"], false, "{report}");
-    assert_eq!(
-        report["document"]["unavailable"]["finding"],
-        jinn_api::FINDING_NO_DOCUMENT_READ,
-        "{report}"
+    assert_eq!(report["document"]["readable"], true, "{report}");
+    assert!(
+        report["document"]["unavailable"].is_null(),
+        "no typed unavailable is left: {report}"
     );
     let entries = report["entries"].as_array().expect("entries");
     assert_eq!(entries.len(), ALL.len(), "{report}");
+    for entry in entries {
+        assert!(
+            entry["package"].as_str().is_some_and(|p| !p.is_empty()),
+            "the pinned package is the document's, never guessed: {entry}"
+        );
+        assert!(
+            entry["hash"].as_str().is_some_and(|hash| hash.len() == 64),
+            "the content hash is the document's (kernel Law 5): {entry}"
+        );
+        assert!(
+            entry["grants"].as_array().is_some_and(|g| !g.is_empty()),
+            "the grants as written: {entry}"
+        );
+        assert_eq!(entry["state"], "active", "{entry}");
+    }
     let scheduler = entries
         .iter()
         .find(|entry| entry["id"] == "cron-scheduler")
-        .expect("listed by the kernel");
-    assert_eq!(scheduler["state"], "active", "{scheduler}");
-    assert_eq!(
-        scheduler["hash"], "",
-        "no authority field is guessed: {scheduler}"
+        .expect("the scheduler entry");
+    assert_eq!(scheduler["package"], "cron/cron-scheduler", "{scheduler}");
+    assert!(
+        scheduler["grants"]
+            .as_array()
+            .is_some_and(|grants| grants.contains(&serde_json::json!("jinn:clock"))),
+        "{scheduler}"
     );
     assert_eq!(report["readiness"]["boot-reconciled"], true, "{report}");
+
+    // `get` answers the document of record in the same layout.
     let document = get(port, "/v1/profile");
-    assert_eq!(document.status, 503, "{}", document.raw);
+    assert_eq!(document.status, 200, "{}", document.raw);
+    let listed = document.body["profile"]["entries"]
+        .as_array()
+        .expect("entries");
+    assert_eq!(listed.len(), ALL.len(), "{}", document.raw);
+    let ids: BTreeSet<&str> = listed
+        .iter()
+        .filter_map(|entry| entry["id"].as_str())
+        .collect();
+    assert_eq!(ids, ALL.iter().copied().collect(), "{}", document.raw);
+
+    // Law 2: the read is a granted `jinn:profile` crossing attributed to
+    // each reader's ENTRY — and no `jinn:fs` read of the document exists
+    // any more, because neither consumer holds one.
+    // Wait per READER, not on a total: two rows could both be one
+    // reader's, and then the assertions below race the other's first
+    // read rather than proving it.
+    let read_by = |reader: &str| {
+        daemon.ledger_rows().iter().any(|row| {
+            row.entry.as_deref() == Some(reader)
+                && row.kind
+                    == r#"{"ContractCall":{"contract":"jinn:profile","operation":"document"}}"#
+        })
+    };
+    for reader in [STATUS, EDITOR] {
+        daemon.eventually(
+            &format!("{reader}'s document read to land on the ledger"),
+            || read_by(reader),
+        );
+    }
+    let rows = daemon.ledger_rows();
+    for reader in [STATUS, EDITOR] {
+        assert!(
+            rows.iter().any(|row| {
+                row.entry.as_deref() == Some(reader)
+                    && row.kind
+                        == r#"{"ContractCall":{"contract":"jinn:profile","operation":"document"}}"#
+            }),
+            "{reader} reads the document through jinn:profile: {rows:?}"
+        );
+    }
+    // Neither reader holds any `jinn:fs` authority over the document any
+    // more — the coupling #25 named is gone from the authority side too.
+    for reader in [STATUS, EDITOR] {
+        let grants = listed
+            .iter()
+            .find(|entry| entry["id"] == reader)
+            .expect("the reader entry")["grants"]
+            .to_string();
+        assert!(
+            !grants.contains("jinn:fs"),
+            "{reader} reads the document with no fs authority: {grants}"
+        );
+    }
+    daemon.interrupt();
+}
+
+/// FINDINGS.md #24 CLOSED (pin `3fd7b05`, jinnd M2-K8): a grant carries an
+/// operation class, so authority can be exactly as wide as its use. The
+/// status viewer ships with `jinn:profile` attenuated to
+/// `ops: ["entry", "document"]` — it reads the document of record and
+/// holds NO patch authority — while the editor holds the reads AND
+/// `patch-entry`.
+///
+/// What this proves: the shipped classes are what the document of record
+/// says they are; the kernel enforces the class PER OPERATION at dispatch,
+/// on the record — with the editor's own grant narrowed to the viewer's
+/// read-only class, its `patch-entry` is refused with a ledgered
+/// `GrantRefused` naming the operation, the document is left unwritten,
+/// and its `document` read keeps working (a class, not a contract, was
+/// withdrawn). What it does NOT prove: that `jinn-status`'s own fiber is
+/// refused a patch — that plugin never calls `patch-entry`, and driving
+/// one from it would take a plugin whose only purpose is to misuse its
+/// grant. The enforcement point is the same broker check for both.
+#[test]
+fn a_read_only_profile_grant_holds_no_patch_authority_finding_24_closed() {
+    let Some((daemon, port)) = booted("api-attenuated") else {
+        return;
+    };
+    // The shipped authority, from the document of record itself.
+    let document = get(port, "/v1/profile");
+    assert_eq!(document.status, 200, "{}", document.raw);
+    let profile_ops = |id: &str| -> Vec<String> {
+        document.body["profile"]["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .find(|entry| entry["id"] == id)
+            .unwrap_or_else(|| panic!("the {id} entry"))["grants"]
+            .as_array()
+            .expect("grants")
+            .iter()
+            .find(|grant| grant["contract"] == jinn_api::KERNEL_PROFILE_CONTRACT)
+            .unwrap_or_else(|| panic!("{id} holds a jinn:profile grant"))["ops"]
+            .as_array()
+            .expect("an operation class is written out")
+            .iter()
+            .filter_map(|op| op.as_str().map(str::to_owned))
+            .collect()
+    };
     assert_eq!(
-        document.body["error"]["finding"],
-        jinn_api::FINDING_NO_DOCUMENT_READ,
-        "{}",
+        profile_ops(STATUS),
+        jinn_api::KERNEL_PROFILE_READ_OPS,
+        "the status viewer is read-only: {}",
         document.raw
+    );
+    assert!(
+        !profile_ops(STATUS).contains(&jinn_api::OP_KERNEL_PATCH_ENTRY.to_owned()),
+        "a viewer holds no write authority over the document it reads"
+    );
+    assert_eq!(
+        profile_ops(EDITOR),
+        jinn_api::KERNEL_PROFILE_EDIT_OPS,
+        "the editor holds the reads AND the write: {}",
+        document.raw
+    );
+
+    // The editor's class admits `patch-entry`: a PATCH goes end to end.
+    let editor = provider_fiber(&daemon.ledger_rows(), "jinn:api-profile");
+    let scheduler = provider_fiber(&daemon.ledger_rows(), "jinn:cron");
+    let bumped = composition::kit::TICK_MS + 30;
+    let accepted = patch(
+        port,
+        "/v1/profile/entries/cron-scheduler",
+        &serde_json::json!({ "config": { "data": { "tick-ms": bumped } } }),
+    );
+    assert_eq!(accepted.status, 200, "{}", accepted.raw);
+    assert_eq!(accepted.body["changed"], true, "{}", accepted.raw);
+    daemon.eventually("the patch to land as operator intent", || {
+        daemon.ledger_count(r#"ProfilePatched":{"entry":"cron-scheduler""#) == 1
+    });
+    daemon.eventually("the scheduler to restart on the patch", || {
+        daemon.config_restarts(scheduler) == 1
+    });
+
+    // The operator now narrows the EDITOR's own grant to the viewer's
+    // read-only class — a direct edit of the document, the way authority
+    // is withdrawn — and the entry restarts under it.
+    let refusals_before = daemon.ledger_count(r#"GrantRefused":{"contract":"jinn:profile""#);
+    daemon.edit_profile_restarting(EDITOR, |document| {
+        let grants = entry_config(document, EDITOR)["grants"]
+            .as_array_mut()
+            .expect("the editor's grants");
+        for grant in grants.iter_mut() {
+            if grant["contract"] == jinn_api::KERNEL_PROFILE_CONTRACT {
+                grant["ops"] = serde_json::json!(jinn_api::KERNEL_PROFILE_READ_OPS);
+            }
+        }
+    });
+
+    // The same patch is now REFUSED at the broker, on the record.
+    let refused = patch(
+        port,
+        "/v1/profile/entries/cron-scheduler",
+        &serde_json::json!({ "config": { "data": { "tick-ms": bumped + 30 } } }),
+    );
+    assert_eq!(refused.status, 502, "{}", refused.raw);
+    assert_eq!(refused.body["error"]["code"], "refused", "{}", refused.raw);
+    daemon.eventually("the operation refusal to land on the ledger", || {
+        daemon.ledger_count(r#"GrantRefused":{"contract":"jinn:profile""#) > refusals_before
+    });
+    let rows = daemon.ledger_rows();
+    let refusal = rows
+        .iter()
+        .find(|row| {
+            row.kind
+                .contains(r#""GrantRefused":{"contract":"jinn:profile""#)
+                && row
+                    .kind
+                    .contains("patch-entry is outside the granted operation class")
+        })
+        .expect("the refused operation is named on the ledger");
+    assert_eq!(
+        refusal.fiber,
+        Some(editor),
+        "attributed to the attenuated caller: {refusal:?}"
+    );
+    // The class was narrowed, not the contract withdrawn: the reads live.
+    let still_readable = get(port, "/v1/profile");
+    assert_eq!(still_readable.status, 200, "{}", still_readable.raw);
+    // And nothing was written: exactly one `ProfilePatched` ever, the
+    // accepted one, and the document still carries only that value.
+    assert_eq!(
+        daemon.ledger_count("ProfilePatched"),
+        1,
+        "the refused patch wrote nothing"
+    );
+    let mut on_disk: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(daemon.root.join("profile.json")).expect("profile"))
+            .expect("parses");
+    assert_eq!(
+        entry_config(&mut on_disk, "cron-scheduler")["data"]["tick-ms"],
+        bumped,
+        "the document of record is unchanged by the refusal"
     );
     daemon.interrupt();
 }

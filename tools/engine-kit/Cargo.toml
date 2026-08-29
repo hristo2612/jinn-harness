@@ -1,0 +1,26 @@
+# The engines seam's kit builder:
+#   engine-kit kit <root> --port N [--claude-bin PATH] [--codex-bin PATH]
+#       [--probe-every-ms N] [--echo-delay-ms N] [--every-ms N] [--tick-ms N]
+#   — compiles the engine guests beside the api trio, the settings pair and
+#   the cron pair, encodes components, and writes the pinned engines
+#   profile. A vendor CLI's ABSOLUTE PATH is machine state: it is taken
+#   from the flag or resolved on this host at kit time and written into the
+#   generated profile ONLY — never into a tracked file (AGENTS.md §Repo
+#   hygiene). A provider whose CLI is not on this host is simply not
+#   mounted; the echo provider carries the seam either way.
+# Boot the result with `--data <root>` (the operator layout).
+[package]
+name = "engine-kit"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+api-kit = { path = "../api-kit" }
+cron-kit = { path = "../cron-kit" }
+jinn-api = { path = "../../plugins/api/jinn-api" }
+jinn-cron = { path = "../../plugins/cron/jinn-cron" }
+jinn-engine = { path = "../../plugins/engines/jinn-engine" }
+serde_json = "1.0"

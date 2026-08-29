@@ -287,4 +287,46 @@ mod tests {
         assert_eq!(status_for(ErrorCode::Invalid), 422);
         assert_eq!(status_for(ErrorCode::Refused), 502);
     }
+
+    /// The whole chain an operator sees for an engine refusal: the
+    /// engines seam's own code, this seam's code, the status line. The
+    /// environment gate (`unavailable`) must arrive as its own status —
+    /// the composition suite gates on it and cannot read a flattened 502.
+    #[test]
+    fn an_engine_refusal_reaches_the_operator_under_its_own_status() {
+        use jinn_api::engine_api_error;
+        use jinn_engine::{EngineError, ErrorCode as EngineErrorCode};
+
+        let chain = |code: EngineErrorCode| {
+            let mapped = engine_api_error(&EngineError::new(code, "why"));
+            let wire = String::from_utf8(error_response(&mapped)).expect("ascii");
+            let status: u16 = wire
+                .split(' ')
+                .nth(1)
+                .and_then(|status| status.parse().ok())
+                .expect("a status line");
+            let body: serde_json::Value =
+                serde_json::from_str(wire.split("\r\n\r\n").nth(1).expect("body"))
+                    .expect("json body");
+            (status, body)
+        };
+        for (code, status, name) in [
+            (EngineErrorCode::Invalid, 422, "invalid"),
+            (EngineErrorCode::NotFound, 404, "not-found"),
+            (EngineErrorCode::Refused, 502, "refused"),
+            (EngineErrorCode::Unavailable, 503, "unavailable"),
+            (EngineErrorCode::Failed, 502, "failed"),
+        ] {
+            let (seen, body) = chain(code);
+            assert_eq!(seen, status, "{name}");
+            assert_eq!(body["error"]["engine-code"], name, "{name} stays itself");
+            assert_eq!(body["api-version"], jinn_api::API_VERSION);
+        }
+        let (unavailable, _) = chain(EngineErrorCode::Unavailable);
+        let (failed, _) = chain(EngineErrorCode::Failed);
+        assert_ne!(
+            unavailable, failed,
+            "the environment gate is not flattened into a generic failure"
+        );
+    }
 }

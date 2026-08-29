@@ -1,14 +1,23 @@
 //! The `jinn:api-status` consumer. Answers `status`, `health`, and
-//! `ledger-tail` from the kernel's own knowledge since pin `57360cc`
-//! (jinnd M2-K7): the composition through the granted `jinn:introspect`
-//! (every entry's fiber, state, incarnation, provisions, registrations,
-//! and the daemon's readiness — FINDINGS.md #19 closed), the ledger
-//! through the granted `jinn:ledger` reader (paged, receipted — #20
-//! closed), the document of record's authority fields through the
-//! scoped `jinn:fs` read where the document sits under the data root
-//! (elsewhere the report says so by number, #25), and provider probes
-//! through granted contracts (a `resolve` + one read call). Each is a
-//! ledgered crossing (Law 2); nothing is guessed.
+//! `ledger-tail` from the kernel's own knowledge: the composition through
+//! the granted `jinn:introspect` (every entry's fiber, state,
+//! incarnation, provisions, registrations, and the daemon's readiness —
+//! FINDINGS.md #19 closed), the ledger through the granted `jinn:ledger`
+//! reader (paged, receipted — #20 closed), the document of record's
+//! authority fields through the granted `jinn:profile` `document` read,
+//! provider probes through granted contracts (a `resolve` + one read
+//! call), and the engines the composition holds — read off the kernel's
+//! own `provisions`, never a table this plugin keeps. Each is a ledgered
+//! crossing (Law 2); nothing is guessed.
+//!
+//! Since pin `3fd7b05` (jinnd M2-K8) that document read is `jinn:profile`
+//! `document` under an `ops = ["document"]` READ-ONLY grant, not a
+//! `jinn:fs` read of the file: the entry holds no path scope on the
+//! document and no write authority over it at all. That retires both the
+//! data-root coupling (#25 — the document is now readable wherever it
+//! sits) and the excess write authority every viewer used to carry (#24).
+//! A viewer mounted without the grant still ANSWERS: the read is typed
+//! `unavailable`, never a fault.
 //!
 //! Probes and kernel reads happen inside `handle-call` (the caller is
 //! the HTTP provider, a third instance; the kernel providers never call
@@ -18,13 +27,13 @@
 use std::sync::Mutex;
 
 use jinn_api::{
-    decode_last_seq, entries_status, ledger_read_range_payload, merge_introspection,
-    normalize_tail, Answer, ApiError, DocumentStatus, EntryStatus, ErrorCode, HealthReport,
-    IntrospectEntry, KernelIntrospection, LedgerPage, LedgerTail, LedgerTailRequest,
-    ProbeReport, ProbeSpec, Readiness, StatusReport, API_VERSION, FINDING_NO_DOCUMENT_READ,
-    INTROSPECT_CONTRACT, LEDGER_CONTRACT, OP_HEALTH, OP_INTROSPECT_ENTRIES,
-    OP_INTROSPECT_READINESS, OP_LEDGER_LAST_SEQ, OP_LEDGER_READ_RANGE, OP_LEDGER_TAIL,
-    OP_STATUS, STATUS_CONTRACT,
+    decode_last_seq, decode_profile_document, entries_status, ledger_read_range_payload,
+    merge_introspection, normalize_tail, Answer, ApiError, DocumentStatus, EngineSlot, EntryStatus,
+    ErrorCode, HealthReport, IntrospectEntry, KernelIntrospection, LedgerPage, LedgerTail,
+    LedgerTailRequest, ProbeReport, ProbeSpec, Readiness, StatusReport, API_VERSION,
+    FINDING_NO_DOCUMENT_READ, INTROSPECT_CONTRACT, KERNEL_PROFILE_CONTRACT, LEDGER_CONTRACT,
+    OP_HEALTH, OP_INTROSPECT_ENTRIES, OP_INTROSPECT_READINESS, OP_KERNEL_DOCUMENT,
+    OP_LEDGER_LAST_SEQ, OP_LEDGER_READ_RANGE, OP_LEDGER_TAIL, OP_STATUS, STATUS_CONTRACT,
 };
 use serde::Deserialize;
 
@@ -34,23 +43,16 @@ wit_bindgen::generate!({
 });
 
 use exports::jinn::plugin::lifecycle::{Guest, GuestFault};
-use jinn::plugin::{effects, fs, services};
+use jinn::plugin::{effects, services};
 
 const EFFECT_TOKEN: u64 = 1;
 
 #[derive(Clone, Default, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 struct StatusConfig {
-    /// The profile document, under the granted `jinn:fs` scope.
-    #[serde(default = "default_profile_path")]
-    profile_path: String,
     /// Provider probes to run on every `status`/`health`.
     #[serde(default)]
     probes: Vec<ProbeSpec>,
-}
-
-fn default_profile_path() -> String {
-    "profile.json".into()
 }
 
 static CONFIG: Mutex<Option<StatusConfig>> = Mutex::new(None);
@@ -85,22 +87,28 @@ fn kernel_read<T: serde::de::DeserializeOwned>(
     })
 }
 
-/// The profile document of record, typed: absent (the document sits
-/// outside the data root — FINDINGS.md #25) and refused are distinct
-/// answers, never a folded message.
-fn profile(path: &str) -> Result<serde_json::Value, ApiError> {
-    match fs::read(path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)
-            .map_err(|error| ApiError::new(ErrorCode::Invalid, format!("profile: {error}"))),
-        Err(fs::FsError::NotFound) => Err(ApiError::unavailable(
+/// The document of record through the kernel's own `jinn:profile`
+/// `document` read — the entries this entry's scope admits, wherever the
+/// document sits (FINDINGS.md #25 closed). A grant this entry does not
+/// hold, or one whose scope or `ops` refuse the read, is the typed
+/// `unavailable` answer: a status consumer mounted without the read still
+/// reports the kernel's view, with the authority fields empty and the
+/// reason stated. A malformed answer is `invalid` — a distinct thing.
+fn profile_document() -> Result<serde_json::Value, ApiError> {
+    let handle = services::resolve(KERNEL_PROFILE_CONTRACT).map_err(|error| {
+        ApiError::unavailable(
             FINDING_NO_DOCUMENT_READ,
-            format!("profile document {path:?} is not under the granted jinn:fs scope"),
-        )),
-        Err(refused) => Err(ApiError::new(
-            ErrorCode::Refused,
-            format!("profile read refused: {refused:?}"),
-        )),
-    }
+            format!("{KERNEL_PROFILE_CONTRACT} is not resolvable from this entry: {error:?}"),
+        )
+    })?;
+    let bytes = services::call(handle, OP_KERNEL_DOCUMENT, &[]).map_err(|error| {
+        ApiError::unavailable(
+            FINDING_NO_DOCUMENT_READ,
+            format!("{KERNEL_PROFILE_CONTRACT}/{OP_KERNEL_DOCUMENT} refused: {error:?}"),
+        )
+    })?;
+    decode_profile_document(&bytes)
+        .map_err(|error| ApiError::new(ErrorCode::Invalid, format!("profile: {error}")))
 }
 
 /// One probe: resolve the granted contract, then the optional read call.
@@ -134,23 +142,46 @@ fn probe(spec: &ProbeSpec) -> ProbeReport {
 }
 
 /// The entries: the document's authority fields where the document is
-/// readable, with the kernel's view laid over them by id.
-fn entries(config: &StatusConfig) -> (Vec<EntryStatus>, DocumentStatus) {
-    let (mut entries, document) = match profile(&config.profile_path).and_then(|document| entries_status(&document)) {
-        Ok(entries) => (entries, DocumentStatus { readable: true, ..DocumentStatus::default() }),
-        Err(error) => (
-            Vec::new(),
-            DocumentStatus {
-                readable: false,
-                unavailable: Some(error),
-                extra: jinn_api::Extensions::new(),
-            },
-        ),
-    };
-    if let Ok(kernel) = kernel_read::<Vec<IntrospectEntry>>(INTROSPECT_CONTRACT, OP_INTROSPECT_ENTRIES, &[]) {
+/// readable, with the kernel's view laid over them by id — and, from
+/// that same view, the engines this composition holds. An engine is in
+/// the list because an ENTRY PROVIDES its `jinn:engine.<id>` contract
+/// (`jinn_engine::engines_in`), so it appears when the entry is mounted
+/// and is gone when the entry is: the coexistence and extension proofs
+/// are observable through the API without this plugin keeping a table of
+/// its own. The contract's one home is
+/// `plugins/engines/jinn-engine/README.md`.
+fn entries() -> (Vec<EntryStatus>, DocumentStatus, Vec<EngineSlot>) {
+    let (mut entries, document) =
+        match profile_document().and_then(|document| entries_status(&document)) {
+            Ok(entries) => (
+                entries,
+                DocumentStatus {
+                    readable: true,
+                    ..DocumentStatus::default()
+                },
+            ),
+            Err(error) => (
+                Vec::new(),
+                DocumentStatus {
+                    readable: false,
+                    unavailable: Some(error),
+                    extra: jinn_api::Extensions::new(),
+                },
+            ),
+        };
+    let mut engines = Vec::new();
+    if let Ok(kernel) =
+        kernel_read::<Vec<IntrospectEntry>>(INTROSPECT_CONTRACT, OP_INTROSPECT_ENTRIES, &[])
+    {
+        engines = jinn_engine::engines_in(kernel.iter().map(|entry| {
+            (
+                entry.id.as_str(),
+                entry.provisions.iter().map(String::as_str),
+            )
+        }));
         merge_introspection(&mut entries, &kernel);
     }
-    (entries, document)
+    (entries, document, engines)
 }
 
 fn last_seq() -> Option<u64> {
@@ -159,7 +190,7 @@ fn last_seq() -> Option<u64> {
 }
 
 fn status(config: &StatusConfig) -> StatusReport {
-    let (entries, document) = entries(config);
+    let (entries, document, engines) = entries();
     StatusReport {
         api_version: API_VERSION.to_owned(),
         entries,
@@ -168,6 +199,7 @@ fn status(config: &StatusConfig) -> StatusReport {
         readiness: kernel_read::<Readiness>(INTROSPECT_CONTRACT, OP_INTROSPECT_READINESS, &[]).ok(),
         last_ledger_seq: last_seq(),
         document,
+        engines,
         extra: jinn_api::Extensions::new(),
     }
 }
@@ -175,7 +207,7 @@ fn status(config: &StatusConfig) -> StatusReport {
 /// `ok` iff the kernel lists every entry Active, every probe is live,
 /// and the document is either readable or honestly out of reach.
 fn health(config: &StatusConfig) -> HealthReport {
-    let (entries, document) = entries(config);
+    let (entries, document, _) = entries();
     let probes: Vec<ProbeReport> = config.probes.iter().map(probe).collect();
     let live = probes.iter().filter(|report| report.live).count();
     let all_active = !entries.is_empty()
