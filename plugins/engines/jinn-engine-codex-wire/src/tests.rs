@@ -163,7 +163,7 @@ fn the_usage_maps_onto_the_seams_counters_and_claims_no_cost() {
         Usage {
             input_tokens: 27_315,
             output_tokens: 38,
-            cost_micro_usd: 0,
+            ..Usage::default()
         }
     );
 }
@@ -184,9 +184,8 @@ fn a_missing_usage_counter_reads_as_zero_never_as_a_decode_failure() {
     assert_eq!(
         decoder.usage(),
         Usage {
-            input_tokens: 0,
             output_tokens: 7,
-            cost_micro_usd: 0,
+            ..Usage::default()
         }
     );
 }
@@ -289,6 +288,7 @@ fn an_allowlist_run_without_a_model_gets_workspace_write() {
             &ToolPolicy {
                 mode: ToolMode::Allowlist,
                 allow: vec!["shell".to_owned()],
+                ..ToolPolicy::default()
             }
         ),
         [
@@ -309,11 +309,12 @@ fn no_policy_ever_produces_a_sandbox_bypass_flag() {
         ToolPolicy::default(),
         ToolPolicy {
             mode: ToolMode::Allowlist,
-            allow: Vec::new(),
+            ..ToolPolicy::default()
         },
         ToolPolicy {
             mode: ToolMode::Allowlist,
             allow: vec!["anything".to_owned()],
+            ..ToolPolicy::default()
         },
     ] {
         for model in [None, Some("m")] {

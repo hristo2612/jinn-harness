@@ -268,17 +268,28 @@ fn drain(run_id: &str, handle: u64, which: ChildStream) -> (Vec<Event>, u64) {
 }
 
 /// One drain, published, with its bytes charged to the output budget.
-/// Answers `true` once the budget is spent.
+/// Answers the [`Event::Truncated`] once the budget is spent — RECORDED
+/// here, so the cut is on the bus in front of whatever ends the run: a
+/// listener that saw only `cancelled` could not tell a bounded answer
+/// from a whole one.
 fn drain_and_account(run_id: &str, handle: u64) -> bool {
     let (events, bytes) = drain(run_id, handle, ChildStream::Stdout);
     for event in events {
         record_and_emit(run_id, event);
     }
     let _ = drain(run_id, handle, ChildStream::Stderr);
-    RUNS.lock()
+    let cut = RUNS
+        .lock()
         .unwrap()
         .as_mut()
-        .is_some_and(|runs| runs.read(run_id, bytes))
+        .and_then(|runs| runs.read(run_id, bytes));
+    match cut {
+        Some(cut) => {
+            record_and_emit(run_id, cut);
+            true
+        }
+        None => false,
+    }
 }
 
 /// Kills a live child and records why it ended.
@@ -449,6 +460,7 @@ fn op_describe(config: &Config) -> Answer {
             cancel: true,
             usage: true,
             external_cli: true,
+            ..Capabilities::default()
         },
         extra: Extensions::new(),
     })

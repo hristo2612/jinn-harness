@@ -189,6 +189,7 @@ fn the_result_lines_usage_is_the_provider_s_to_attach_cost_rounded_to_micro_usd(
             output_tokens: 67,
             // 0.0193045 USD → 19_304.5 micro-USD → rounded, never floored.
             cost_micro_usd: 19_305,
+            ..Usage::default()
         }
     );
     assert!(!decoder.failed());
@@ -329,6 +330,7 @@ fn the_argv_is_the_stream_json_lane_with_the_tool_policy_last() {
             &ToolPolicy {
                 mode: ToolMode::Allowlist,
                 allow: vec!["Read".to_owned(), "Bash(git *)".to_owned()],
+                ..ToolPolicy::default()
             }
         )
         .last()
@@ -341,7 +343,7 @@ fn the_argv_is_the_stream_json_lane_with_the_tool_policy_last() {
             None,
             &ToolPolicy {
                 mode: ToolMode::Allowlist,
-                allow: Vec::new(),
+                ..ToolPolicy::default()
             }
         ),
         argv(None, &ToolPolicy::default())

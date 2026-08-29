@@ -247,7 +247,7 @@ impl Decoder {
     /// emits from the real `wait` status.
     #[must_use]
     pub fn usage(&self) -> Usage {
-        self.usage
+        self.usage.clone()
     }
 
     /// Whether the `result` line reported a failed turn (`is_error`, or
@@ -390,6 +390,7 @@ impl Decoder {
                 .saturating_add(count("cache_creation_input_tokens")),
             output_tokens: count("output_tokens"),
             cost_micro_usd: micro_usd(value.get("total_cost_usd").and_then(Value::as_f64)),
+            ..Usage::default()
         };
         vec![Event::TurnEnd {
             text: value

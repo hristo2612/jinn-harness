@@ -46,6 +46,27 @@
 //! tokens so the seam's usage path is exercised end to end; they are not
 //! a token estimate and must never be read as one.
 //!
+//! # The spawning shape (`command`)
+//!
+//! With `command` set the provider does NOT answer from the prompt: it
+//! spawns that absolute path through `jinn:process` and the child's
+//! stdout is the answer. That is not a second personality, it is the one
+//! thing the echo shape cannot prove — a REAL child. It makes this
+//! provider the seam's process-lifecycle witness on a box with no vendor
+//! CLI, and therefore in CI and in an independent verification that
+//! (rightly) refuses to spend a metered vendor fixture:
+//!
+//! - `cancel` and a suspend have a live pid in the host's process table
+//!   to kill, so "the child is dead" is checked rather than asserted.
+//! - An executable outside the entry's `jinn:process` exec allowlist is
+//!   a REAL kernel refusal on the record, not a simulated one.
+//! - The child's explicit environment is deliberately EMPTY, so whatever
+//!   it can see arrived through the grant's env allowlist and nothing
+//!   else — an env leak is observable, not argued.
+//!
+//! The prompt is not written to such a child (its stdin is closed at
+//! once): these children are witnesses, not engines.
+//!
 //! # Secrets
 //!
 //! A request's `secrets` are resolved through the granted `jinn:keystore`
@@ -56,6 +77,7 @@
 //! reported (in the accept answer's `extra`); the value never leaves
 //! [`resolve_secrets`].
 
+use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use jinn_engine::{
@@ -71,8 +93,12 @@ wit_bindgen::generate!({
 });
 
 use exports::jinn::plugin::lifecycle::{Guest, GuestFault};
+use jinn::plugin::process::{ChildStream, ProcessError, ReadResult, Signal, WaitResult};
 use jinn::plugin::types::{DispatchMode, KernelError, Selector};
-use jinn::plugin::{clock, effects, events, keystore, services};
+use jinn::plugin::{clock, effects, events, keystore, process, services};
+
+/// Bytes per `read` call while draining a spawned child.
+const READ_CHUNK: u32 = 8_192;
 
 /// This package, as `describe` names it for an operator reading a swap.
 const PROVIDER: &str = "engines/jinn-engine-echo";
@@ -113,6 +139,22 @@ struct EchoConfig {
     /// than one chunk cross the bus.
     #[serde(default = "default_chunk_bytes")]
     chunk_bytes: usize,
+    /// The absolute path of a child to spawn instead of answering from
+    /// the prompt — the spawning shape (see the module doc). Absent, this
+    /// provider touches no host process at all.
+    #[serde(default)]
+    command: Option<String>,
+    /// That child's argv.
+    #[serde(default)]
+    args: Vec<String>,
+    /// How often a spawned child is drained and waited on. Unused by the
+    /// answering shape, which has no child to poll.
+    #[serde(default = "default_poll_ms")]
+    poll_ms: u64,
+}
+
+fn default_poll_ms() -> u64 {
+    250
 }
 
 fn default_keep_runs() -> usize {
@@ -137,6 +179,9 @@ struct Plan {
     reply: String,
     /// Whether the budget cut it.
     truncated: bool,
+    /// The typed cut the registry answered, replayed onto the run so a
+    /// listener sees it (the definition's [`Event::Truncated`]).
+    truncation: Option<Event>,
     /// The prompt's byte length — the input half of [`Usage`].
     prompt_bytes: u64,
     /// The `now` the finish is due at.
@@ -159,6 +204,18 @@ static EMIT_FAILURES: Mutex<u64> = Mutex::new(0);
 /// dispatch). The caller's own instance is then destroyed by that fault,
 /// which is how one emit takes down a consumer permanently.
 static DEFERRED: Mutex<Vec<RunEvent>> = Mutex::new(Vec::new());
+/// The live children of the spawning shape, by run id. A spawned child is
+/// a KERNEL registration: the kernel kills it on suspend and on dispose,
+/// so nothing here outlives an incarnation and `activate` starts empty.
+static CHILDREN: Mutex<BTreeMap<String, Child>> = Mutex::new(BTreeMap::new());
+
+/// One spawned child and what its run has cost so far.
+#[derive(Clone, Debug)]
+struct Child {
+    handle: u64,
+    prompt_bytes: u64,
+    read_bytes: u64,
+}
 
 fn fault(context: &str, error: KernelError) -> GuestFault {
     GuestFault::Failed(format!("{context}: {error:?}"))
@@ -367,12 +424,14 @@ fn resolve_secrets(
 /// Settles one planned run: the deltas, the turn end, and the exit with
 /// its usage.
 fn finish(plan: &Plan, chunk_bytes: usize, keep_runs: usize) {
-    let mut events: Vec<Event> = chunks(&plan.reply, chunk_bytes)
+    // The cut goes on the wire FIRST and typed: a consumer sees events,
+    // and an answer that simply stops reads as a whole one.
+    let mut events: Vec<Event> = plan.truncation.clone().into_iter().collect();
+    events.extend(chunks(&plan.reply, chunk_bytes)
         .into_iter()
         .map(|piece| Event::Delta {
             text: piece.to_owned(),
-        })
-        .collect();
+        }));
     events.push(Event::TurnEnd { text: None });
     events.push(Event::Exited {
         status: 0,
@@ -383,12 +442,200 @@ fn finish(plan: &Plan, chunk_bytes: usize, keep_runs: usize) {
         usage: Usage {
             input_tokens: plan.prompt_bytes,
             output_tokens: plan.reply.len() as u64,
-            cost_micro_usd: 0,
+            ..Usage::default()
         },
         truncated: plan.truncated,
     });
     record_and_emit(&plan.run_id, events);
     prune(keep_runs);
+}
+
+/// Forgets a child without killing it — used once the kernel or a kill
+/// has already ended it.
+fn forget_child(run_id: &str) {
+    CHILDREN.lock().unwrap().remove(run_id);
+}
+
+/// Kills a live child and records why the run ended. The kill is the
+/// kernel's (`jinn:process`), so the inverse obligation — SIGKILL and
+/// reap, no process of that handle left in the table — is the kernel's
+/// too.
+fn kill_and_cancel(run_id: &str, reason: &str) {
+    if let Some(child) = CHILDREN.lock().unwrap().remove(run_id) {
+        let _ = process::kill(child.handle, Signal::Terminate);
+    }
+    record_and_emit(
+        run_id,
+        vec![Event::Cancelled {
+            reason: reason.to_owned(),
+        }],
+    );
+}
+
+/// Spawns the configured child for `run_id` and puts the run live. A
+/// refused spawn is the KERNEL's refusal surfaced typed (`Refused`) and a
+/// failed record — never a run that quietly did not happen.
+fn spawn_run(
+    config: &EchoConfig,
+    run_id: &str,
+    request: &RunRequest,
+    now_ms: u64,
+) -> Result<(), Answer> {
+    let command = config.command.as_deref().unwrap_or_default();
+    // No explicit environment, ever: what the child can see is exactly
+    // what the entry's env policy admits, so an env leak is a fact about
+    // the grant and not about this code.
+    let handle = match process::spawn(command, &config.args, request.cwd.as_deref(), &[]) {
+        Ok(handle) => handle,
+        Err(ProcessError::Denied(detail)) => {
+            fail_and_emit(run_id, "spawn denied");
+            prune(config.keep_runs);
+            return Err(Answer::error(EngineError::new(
+                ErrorCode::Refused,
+                format!("spawn of {command:?} denied: {detail}"),
+            )));
+        }
+        Err(error) => {
+            fail_and_emit(run_id, "spawn failed");
+            prune(config.keep_runs);
+            return Err(Answer::error(EngineError::unavailable(format!(
+                "{command:?} cannot run here: {error:?}"
+            ))));
+        }
+    };
+    // A witness child is not an engine: it is told nothing and its stdin
+    // ends at once, so it never blocks on a prompt that is not coming.
+    let _ = process::close_stdin(handle);
+    CHILDREN.lock().unwrap().insert(
+        run_id.to_owned(),
+        Child {
+            handle,
+            prompt_bytes: request.prompt.len() as u64,
+            read_bytes: 0,
+        },
+    );
+    let model = request.model.clone().or_else(|| default_model(config));
+    record_deferred(run_id, vec![Event::Started { model }]);
+    if let Err(error) = clock::alarm_at(now_ms.saturating_add(config.poll_ms), ALARM_TOKEN) {
+        kill_and_cancel(run_id, &format!("no poll alarm: {error:?}"));
+        prune(config.keep_runs);
+        return Err(Answer::error(EngineError::new(
+            ErrorCode::Failed,
+            format!("could not schedule the run's poll: {error:?}"),
+        )));
+    }
+    Ok(())
+}
+
+/// Everything the child has to say right now, and its byte count.
+fn drain_child(handle: u64) -> (String, u64) {
+    let mut bytes = Vec::new();
+    while let Ok(ReadResult::Data(chunk)) = process::read(handle, ChildStream::Stdout, READ_CHUNK) {
+        bytes.extend_from_slice(&chunk);
+    }
+    // stderr is drained and dropped: the host's per-stream buffer is
+    // BOUNDED, so a stream nobody reads backpressures the child into a
+    // stall. The seam has no event for a diagnostic line.
+    while let Ok(ReadResult::Data(_)) = process::read(handle, ChildStream::Stderr, READ_CHUNK) {}
+    let read = bytes.len() as u64;
+    (String::from_utf8_lossy(&bytes).into_owned(), read)
+}
+
+/// One poll of every live child: drain, charge the output budget, and
+/// settle the ones that have exited. Answers whether any child is still
+/// running (so the wake re-arms).
+fn poll_children(config: &EchoConfig, now_ms: u64) -> bool {
+    let live: Vec<(String, Child)> = CHILDREN
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|(run_id, child)| (run_id.clone(), child.clone()))
+        .collect();
+    let mut running = false;
+    for (run_id, child) in live {
+        // Cancelled between the accept and this wake.
+        if is_terminal(&run_id) != Some(false) {
+            forget_child(&run_id);
+            continue;
+        }
+        let (text, read) = drain_child(child.handle);
+        if !text.is_empty() {
+            record_and_emit(&run_id, vec![Event::Delta { text }]);
+        }
+        let cut = {
+            let mut held = RUNS.lock().unwrap();
+            held.as_mut()
+                .expect("activate holds the registry")
+                .read(&run_id, read)
+        };
+        CHILDREN
+            .lock()
+            .unwrap()
+            .entry(run_id.clone())
+            .and_modify(|held| held.read_bytes = held.read_bytes.saturating_add(read));
+        if let Some(cut) = cut {
+            // The cut on the wire FIRST, then the end it caused.
+            record_and_emit(&run_id, vec![cut]);
+            kill_and_cancel(&run_id, "budget");
+            prune(config.keep_runs);
+            continue;
+        }
+        let over_budget = RUNS
+            .lock()
+            .unwrap()
+            .as_ref()
+            .expect("activate holds the registry")
+            .over_wall_budget(&run_id, now_ms);
+        if over_budget {
+            kill_and_cancel(&run_id, "budget");
+            prune(config.keep_runs);
+            continue;
+        }
+        match process::wait(child.handle, 0) {
+            // The exit is the PROCESS's, never the stream's guess.
+            Ok(WaitResult::Exited(status)) => {
+                let (tail, tail_read) = drain_child(child.handle);
+                if !tail.is_empty() {
+                    record_and_emit(&run_id, vec![Event::Delta { text: tail }]);
+                }
+                let output = child.read_bytes.saturating_add(read).saturating_add(tail_read);
+                let truncated = RUNS
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .and_then(|runs| runs.get(&run_id).map(|record| record.truncated))
+                    .unwrap_or_default();
+                record_and_emit(
+                    &run_id,
+                    vec![
+                        Event::TurnEnd { text: None },
+                        Event::Exited {
+                            status,
+                            // Byte counts standing in for tokens, as the
+                            // answering shape does — never a token guess.
+                            usage: Usage {
+                                input_tokens: child.prompt_bytes,
+                                output_tokens: output,
+                                ..Usage::default()
+                            },
+                            truncated,
+                            error: None,
+                        },
+                    ],
+                );
+                forget_child(&run_id);
+                prune(config.keep_runs);
+            }
+            Ok(WaitResult::Running) => running = true,
+            // The handle is gone: the kernel reaped the child (a suspend,
+            // a dispose). Honest, not a success.
+            Err(error) => {
+                kill_and_cancel(&run_id, &format!("child lost: {error:?}"));
+                prune(config.keep_runs);
+            }
+        }
+    }
+    running
 }
 
 /// `run`: accept at once, then produce the answer here or at a wake.
@@ -444,10 +691,23 @@ fn on_run(payload: &[u8]) -> Answer {
             return Answer::error(error);
         }
     };
+    // The spawning shape answers from a REAL child; the answering shape
+    // from the prompt. One `run`, one accept, two ways to produce it.
+    if config.command.is_some() {
+        if let Err(answer) = spawn_run(&config, &run_id, &request, now_ms) {
+            return answer;
+        }
+        if !secrets.is_empty() {
+            accepted
+                .extra
+                .insert("secrets".to_owned(), serde_json::Value::Object(secrets));
+        }
+        return Answer::ok(accepted);
+    }
     let reply = echo_reply(config.reply.as_deref(), &request.prompt);
     // The registry does the output accounting (it marks the record
     // truncated); the cut is what actually goes on the bus.
-    let spent = {
+    let truncation = {
         let mut held = RUNS.lock().unwrap();
         held.as_mut()
             .expect("activate holds the registry")
@@ -457,7 +717,8 @@ fn on_run(payload: &[u8]) -> Answer {
     let plan = Plan {
         run_id: run_id.clone(),
         reply: cut.to_owned(),
-        truncated: spent || cut_here,
+        truncated: truncation.is_some() || cut_here,
+        truncation,
         prompt_bytes: request.prompt.len() as u64,
         due_ms: now_ms.saturating_add(config.delay_ms),
     };
@@ -516,12 +777,10 @@ fn on_cancel(payload: &[u8]) -> Answer {
                 .lock()
                 .unwrap()
                 .retain(|plan| plan.run_id != request.run_id);
-            record_and_emit(
-                &request.run_id,
-                vec![Event::Cancelled {
-                    reason: "cancel".to_owned(),
-                }],
-            );
+            // The spawning shape has a child to kill, and the kernel's
+            // kill obligation is SIGKILL AND REAP: after this, no process
+            // of that handle exists in the host's process table.
+            kill_and_cancel(&request.run_id, "cancel");
             let answer = Answer::ok(record_json(&request.run_id));
             prune(config().keep_runs);
             answer
@@ -544,6 +803,9 @@ impl Guest for Echo {
         let contract = engine_contract(&config.engine);
         *RUNS.lock().unwrap() = Some(Runs::new(config.engine.clone()));
         *PENDING.lock().unwrap() = Vec::new();
+        // A spawned child is a kernel registration: none survives an
+        // incarnation, so a fresh one starts holding none.
+        *CHILDREN.lock().unwrap() = BTreeMap::new();
         *EMIT_FAILURES.lock().unwrap() = 0;
         *CONFIG.lock().unwrap() = Some(config);
         effects::register("jinn-engine-echo on duty", EFFECT_TOKEN)
@@ -614,6 +876,14 @@ impl Guest for Echo {
             }
             settled += 1;
         }
+        // The spawning shape's children are drained and waited on here,
+        // on this provider's OWN fiber, and the wake re-arms while any is
+        // still running.
+        if poll_children(&config, now_ms) {
+            if let Err(error) = clock::alarm_at(now_ms.saturating_add(config.poll_ms), ALARM_TOKEN) {
+                return Err(GuestFault::Failed(format!("poll alarm: {error:?}")));
+            }
+        }
         Ok(
             serde_json::to_vec(&serde_json::json!({ "settled": settled }))
                 .expect("the wake summary encodes"),
@@ -648,7 +918,8 @@ impl Guest for Echo {
                         usage: true,
                         // The whole point: no CLI on the host, so a run
                         // is never environment-gated.
-                        external_cli: false,
+                        external_cli: config.command.is_some(),
+                        ..Capabilities::default()
                     },
                     extra,
                 })

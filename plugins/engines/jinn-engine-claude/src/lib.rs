@@ -236,13 +236,17 @@ fn drain(run_id: &str) -> bool {
             child.decoder.feed(&bytes)
         };
         emit_stream(run_id, events);
-        // The definition's accounting, not ours.
-        let spent = RUNS
+        // The definition's accounting, not ours — and when the budget is
+        // spent it answers the event, so the CUT reaches the bus before
+        // the cancellation that follows it (a listener that saw only
+        // `cancelled` could not tell a bounded answer from a whole one).
+        let cut = RUNS
             .lock()
             .unwrap()
             .as_mut()
-            .is_some_and(|runs| runs.read(run_id, read));
-        if spent {
+            .and_then(|runs| runs.read(run_id, read));
+        if let Some(cut) = cut {
+            record_and_emit(run_id, cut);
             kill_and_cancel(run_id, "budget");
             return false;
         }
@@ -387,6 +391,7 @@ fn describe() -> Answer {
             cancel: true,
             usage: true,
             external_cli: true,
+            ..Capabilities::default()
         },
         extra: Extensions::new(),
     })

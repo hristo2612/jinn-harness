@@ -168,7 +168,7 @@ impl Decoder {
     /// price, and this provider does not carry a price table.
     #[must_use]
     pub fn usage(&self) -> Usage {
-        self.usage
+        self.usage.clone()
     }
 
     /// Every `error` item's message, in order. See the crate doc: these
@@ -312,6 +312,7 @@ fn usage_of(usage: Option<&serde_json::Value>) -> Usage {
         input_tokens: counter("input_tokens"),
         output_tokens: counter("output_tokens"),
         cost_micro_usd: 0,
+        ..Usage::default()
     }
 }
 

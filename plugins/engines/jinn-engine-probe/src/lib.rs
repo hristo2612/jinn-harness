@@ -303,7 +303,7 @@ fn start_run(config: &ProbeConfig, tick: u64, now_ms: u64) -> Result<(), GuestFa
         engine: config.engine.clone(),
         model: config.model.clone(),
         prompt: config.prompt.clone(),
-        budget: config.budget,
+        budget: config.budget.clone(),
         // Default-deny, spelled out: a probe never needs a tool, and the
         // policy travels rather than being left to the provider's CLI.
         ..RunRequest::default()
@@ -466,7 +466,7 @@ fn absorb(payload: &[u8], now_ms: u64) -> Result<&'static str, GuestFault> {
             } => {
                 run.state = RunState::Exited;
                 run.status = Some(*status);
-                run.usage = *usage;
+                run.usage.clone_from(usage);
                 run.provider_truncated = *truncated;
                 // A clean exit whose ENGINE reported a failure is not a
                 // success, and the record must not read as one.
@@ -478,10 +478,14 @@ fn absorb(payload: &[u8], now_ms: u64) -> Result<&'static str, GuestFault> {
                 run.state = RunState::Cancelled;
                 run.reason = Some(reason.clone());
             }
+            // The output budget cut the answer: the provider says so on
+            // the wire, and the probe's record carries it rather than
+            // reporting a bounded answer as a whole one.
+            Event::Truncated { .. } => run.provider_truncated = true,
             // A tool crossing this probe never asks for, and a kind a
             // newer provider knows and this one does not: counted and
             // ordered, never guessed at (the definition's R12 additivity).
-            Event::ToolCall { .. } | Event::ToolResult { .. } | Event::Unknown => {}
+            Event::ToolCall { .. } | Event::ToolResult { .. } | Event::Unknown { .. } => {}
         }
         if run.state.is_terminal() {
             held.take()

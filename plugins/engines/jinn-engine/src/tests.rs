@@ -106,6 +106,7 @@ fn events_are_tagged_by_kind_on_the_wire() {
             input_tokens: 10,
             output_tokens: 3,
             cost_micro_usd: 19_304,
+            ..Usage::default()
         },
         truncated: false,
         error: None,
@@ -120,8 +121,160 @@ fn events_are_tagged_by_kind_on_the_wire() {
         "kind": "thinking", "tokens": 4
     }))
     .expect("an unknown kind decodes");
-    assert_eq!(ahead.event, Event::Unknown);
+    assert_eq!(
+        ahead.event,
+        Event::Unknown {
+            kind: "thinking".to_owned(),
+            fields: [("tokens".to_owned(), serde_json::json!(4))]
+                .into_iter()
+                .collect(),
+        }
+    );
     assert_eq!(ahead.seq, 9);
+}
+
+/// The additivity law, at EVERY nesting level: a field a newer peer sends
+/// survives a round trip whether it sits on the envelope, on a nested
+/// object, or on an event kind this version has never heard of. A schema
+/// that preserves only at the top level fails the law — a `budget` or a
+/// `usage` a newer provider extended would be silently truncated by the
+/// hop through this version.
+#[test]
+fn every_nested_schema_preserves_a_future_peers_fields() {
+    // One future-shaped request: an unknown field on the envelope AND on
+    // every nested object it carries.
+    let wire = serde_json::json!({
+        "api-version": "0.9",
+        "engine": "default",
+        "prompt": "say ok",
+        "tools": { "mode": "allowlist", "allow": ["Read"], "deny-network": true },
+        "budget": { "wall-ms": 5000, "output-bytes": 4096, "max-turns": 3 },
+        "secrets": { "KEY": { "$secret": "engines/key" } },
+        "beyond-this-version": { "nested": [1, 2] }
+    });
+    let request: RunRequest = serde_json::from_value(wire.clone()).expect("decodes");
+    // Decoded, not swallowed: the known fields still mean what they mean.
+    assert_eq!(request.tools.admitted(), ["Read"]);
+    assert_eq!(request.budget.output_bytes, 4_096);
+    // And byte-preserved: the round trip is the ORIGINAL document.
+    assert_eq!(serde_json::to_value(&request).expect("encodes"), wire);
+
+    // The same law on the answer side: `capabilities` is nested inside a
+    // `describe`, and a capability this version cannot name is still a
+    // fact the next hop must not drop.
+    let described = serde_json::json!({
+        "api-version": "0.9",
+        "engine": "default",
+        "provider": "engines/example",
+        "models": ["m-1"],
+        "default-model": "m-1",
+        "capabilities": { "streaming": true, "tool-calls": false, "cancel": true,
+                          "usage": true, "external-cli": false, "vision": true },
+        "beyond-this-version": 1
+    });
+    let description: Description = serde_json::from_value(described.clone()).expect("decodes");
+    assert!(description.capabilities.streaming);
+    assert_eq!(
+        serde_json::to_value(&description).expect("encodes"),
+        described
+    );
+
+    // And inside an EVENT: `usage` is two levels down from the bus record.
+    let exited = serde_json::json!({
+        "api-version": "0.9", "engine": "default", "run-id": "default-1", "seq": 4,
+        "kind": "exited", "status": 0, "truncated": false,
+        "usage": { "input-tokens": 10, "output-tokens": 3, "cost-micro-usd": 19_304,
+                   "cache-read-tokens": 7 }
+    });
+    let event: RunEvent = serde_json::from_value(exited.clone()).expect("decodes");
+    assert_eq!(serde_json::to_value(&event).expect("encodes"), exited);
+
+    // A run record round-trips whole, nested extensions and all.
+    let record = serde_json::json!({
+        "api-version": "0.9", "run-id": "default-1", "engine": "default",
+        "state": "exited", "events": [], "text": "OK", "truncated": false,
+        "usage": { "input-tokens": 1, "output-tokens": 1, "cost-micro-usd": 0,
+                   "cache-read-tokens": 2 },
+        "beyond-this-version": true
+    });
+    let decoded: RunRecord = serde_json::from_value(record.clone()).expect("decodes");
+    assert_eq!(serde_json::to_value(&decoded).expect("encodes"), record);
+}
+
+/// An event kind a newer provider invented reaches a listener WHOLE: the
+/// kind it was sent under and every field it carried. Keeping the kind is
+/// what lets an operator see what a newer peer is doing; dropping it made
+/// every future event indistinguishable from every other.
+#[test]
+fn an_unknown_event_kind_keeps_its_name_and_its_payload() {
+    let wire = serde_json::json!({
+        "api-version": "0.9", "engine": "default", "run-id": "default-1", "seq": 2,
+        "kind": "thinking", "text": "hmm", "tokens": 4
+    });
+    let event: RunEvent = serde_json::from_value(wire.clone()).expect("decodes");
+    let Event::Unknown { kind, fields } = &event.event else {
+        panic!("an unheard-of kind is Unknown, not a decode failure: {event:?}");
+    };
+    assert_eq!(kind, "thinking");
+    assert_eq!(fields["tokens"], 4);
+    assert_eq!(fields["text"], "hmm");
+    // Byte-preserving: what a listener forwards is what it was sent.
+    assert_eq!(serde_json::to_value(&event).expect("encodes"), wire);
+    // It is still ORDERED and COUNTED like any other event — the whole
+    // reason it is a fact rather than an error.
+    assert_eq!(event.seq, 2);
+    let mut runs = Runs::new("default");
+    let accepted = runs.accept(&request("default"), 0);
+    let recorded = runs
+        .record(&accepted.run_id, event.event.clone())
+        .expect("held");
+    assert_eq!(recorded.seq, 0);
+    // An unknown kind never moves the run's state: this version cannot
+    // know what it meant, so it guesses nothing.
+    assert_eq!(
+        runs.get(&accepted.run_id).expect("held").state,
+        RunState::Starting
+    );
+}
+
+/// The output budget is a fact a CONSUMER must see, and a consumer sees
+/// events. Setting `RunRecord.truncated` alone is invisible on the bus,
+/// so the cut is its own typed event, ordered with the rest of the run.
+#[test]
+fn spending_the_output_budget_is_a_typed_event_on_the_wire() {
+    let mut runs = Runs::new("default");
+    let accepted = runs.accept(
+        &RunRequest {
+            budget: Budget {
+                wall_ms: 60_000,
+                output_bytes: 8,
+                extra: Extensions::new(),
+            },
+            ..request("default")
+        },
+        0,
+    );
+    let run_id = accepted.run_id.clone();
+    // Within budget: nothing to say.
+    assert_eq!(runs.read(&run_id, 4), None);
+    assert!(!runs.get(&run_id).expect("held").truncated);
+    // Past it: the event the provider records and emits before it kills
+    // the child.
+    let cut = runs.read(&run_id, 12).expect("the budget is spent");
+    assert_eq!(
+        cut,
+        Event::Truncated {
+            limit_bytes: 8,
+            read_bytes: 16
+        }
+    );
+    let emitted = runs.record(&run_id, cut).expect("held");
+    assert_eq!(
+        serde_json::to_value(&emitted).expect("encodes")["kind"],
+        "truncated"
+    );
+    // Recording it is what marks the record — one source for the fact.
+    assert!(runs.get(&run_id).expect("held").truncated);
 }
 
 #[test]
@@ -167,7 +320,7 @@ fn a_run_is_minted_sequenced_and_assembled() {
             usage: Usage {
                 input_tokens: 7,
                 output_tokens: 1,
-                cost_micro_usd: 0,
+                ..Usage::default()
             },
             truncated: false,
             error: None,
@@ -223,6 +376,7 @@ fn both_budgets_bound_a_run() {
     request.budget = Budget {
         wall_ms: 500,
         output_bytes: 8,
+        ..Budget::default()
     };
     let run = runs.accept(&request, 1_000).run_id;
 
@@ -230,9 +384,10 @@ fn both_budgets_bound_a_run() {
     assert!(runs.over_wall_budget(&run, 1_600));
     assert!(!runs.over_wall_budget("echo-404", u64::MAX));
 
-    assert!(!runs.read(&run, 8));
+    assert_eq!(runs.read(&run, 8), None);
     assert!(!runs.get(&run).expect("held").truncated);
-    assert!(runs.read(&run, 1));
+    let cut = runs.read(&run, 1).expect("the budget is spent");
+    runs.record(&run, cut).expect("held");
     assert!(runs.get(&run).expect("held").truncated);
 }
 

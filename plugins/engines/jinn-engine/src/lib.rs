@@ -110,7 +110,7 @@ pub enum ToolMode {
 }
 
 /// The run's tool policy.
-#[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ToolPolicy {
     #[serde(default)]
@@ -118,6 +118,11 @@ pub struct ToolPolicy {
     /// The allowlist, meaningful only under [`ToolMode::Allowlist`].
     #[serde(default)]
     pub allow: Vec<String>,
+    /// Additivity is a law at EVERY nesting level, not only on the
+    /// envelope: a policy knob a newer peer sends rides through this
+    /// version untouched rather than being dropped on the hop.
+    #[serde(flatten)]
+    pub extra: Extensions,
 }
 
 impl ToolPolicy {
@@ -134,7 +139,7 @@ impl ToolPolicy {
 
 /// What a run may spend. Both bounds are the provider's to enforce (R9);
 /// [`Runs`] holds the accounting.
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Budget {
     /// Wall clock, from the spawn. Past it the child is killed and the run
@@ -144,6 +149,9 @@ pub struct Budget {
     /// kills the child (the `jinn:process` bundle's own cap is 1 MiB for
     /// `run`; a long-lived spawn has no cap but this one).
     pub output_bytes: u64,
+    /// See [`ToolPolicy::extra`].
+    #[serde(flatten)]
+    pub extra: Extensions,
 }
 
 impl Default for Budget {
@@ -151,6 +159,7 @@ impl Default for Budget {
         Self {
             wall_ms: 120_000,
             output_bytes: 1_048_576,
+            extra: Extensions::new(),
         }
     }
 }
@@ -233,7 +242,7 @@ pub struct Description {
 }
 
 /// What a provider can do, declared rather than assumed.
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Capabilities {
     /// Emits `delta` events as the answer arrives.
@@ -252,52 +261,48 @@ pub struct Capabilities {
     /// environment-gated); `false` for a self-contained provider.
     #[serde(default)]
     pub external_cli: bool,
+    /// See [`ToolPolicy::extra`] — a capability this version cannot name
+    /// is still a fact the next hop must carry.
+    #[serde(flatten)]
+    pub extra: Extensions,
 }
 
 /// What a run cost.
-#[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Usage {
     #[serde(default)]
     pub input_tokens: u64,
     #[serde(default)]
     pub output_tokens: u64,
-    /// Cost in micro-USD — an integer, so the record is exact and the type
-    /// stays `Eq` (a float cost is a rounding argument nobody wins).
+    /// Cost in micro-USD — an integer, so the record is exact (a float
+    /// cost is a rounding argument nobody wins).
     #[serde(default)]
     pub cost_micro_usd: u64,
+    /// See [`ToolPolicy::extra`] — a newer provider's cost dimension
+    /// (cache reads, reasoning tokens) survives this hop.
+    #[serde(flatten)]
+    pub extra: Extensions,
 }
 
 /// One run event, as it goes on the bus under [`EVENT_TOPIC`]. The
 /// variants are the packet's: started, delta, tool-call, tool-result,
 /// turn-end, exited.
-#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
-#[serde(tag = "kind", rename_all = "kebab-case")]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Event {
     /// The child is spawned and the run is live.
-    Started {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        model: Option<String>,
-    },
+    Started { model: Option<String> },
     /// A chunk of the answer.
     Delta { text: String },
     /// The engine called a tool.
     ToolCall {
         name: String,
-        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
         input: serde_json::Value,
     },
     /// A tool answered.
-    ToolResult {
-        name: String,
-        #[serde(default)]
-        ok: bool,
-    },
+    ToolResult { name: String, ok: bool },
     /// One turn finished.
-    TurnEnd {
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        text: Option<String>,
-    },
+    TurnEnd { text: Option<String> },
     /// The run is over: the child's status (negated signal number for a
     /// signal death, the `jinn:process` bundle's convention), what it
     /// cost, and whether the provider cut the stream on the budget.
@@ -309,20 +314,220 @@ pub enum Event {
     /// never "we did not look".
     Exited {
         status: i32,
-        #[serde(default)]
         usage: Usage,
-        #[serde(default)]
         truncated: bool,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
     /// The run ended because someone asked, or because a bound was hit.
     Cancelled { reason: String },
-    /// A kind THIS version does not know, from a newer provider. Kept as
-    /// a fact rather than a decode failure (R12's additivity on the bus):
-    /// a listener orders and counts it, and never guesses what it meant.
-    #[serde(other)]
-    Unknown,
+    /// The provider stopped reading because the run's OUTPUT budget is
+    /// spent: the child is being killed and the answer is a prefix.
+    ///
+    /// This is an event because a consumer of this seam sees EVENTS. A
+    /// truncation recorded only on [`RunRecord::truncated`] is invisible
+    /// to a listener, which is exactly the silent-wrong-answer shape R9
+    /// forbids: a stream that simply stops reads as a complete answer.
+    /// It is ordered with the rest of the run, so a listener knows the
+    /// cut happened BEFORE whatever ended the run.
+    Truncated {
+        /// The budget that was spent, in bytes.
+        limit_bytes: u64,
+        /// What had been read when it was — always more than the limit.
+        read_bytes: u64,
+    },
+    /// A kind THIS version does not know, from a newer provider. Kept
+    /// WHOLE rather than as a decode failure or a nameless placeholder
+    /// (R12's additivity on the bus, at the event level): a listener
+    /// orders it, counts it, forwards it byte-for-byte, and never guesses
+    /// what it meant.
+    Unknown {
+        /// The `kind` tag it arrived under.
+        kind: String,
+        /// Every other field it carried, unread.
+        fields: Extensions,
+    },
+}
+
+/// The `kind` tags this version knows. A tag outside this set is
+/// [`Event::Unknown`] — the one place the wire's future lands.
+const KNOWN_KINDS: [&str; 8] = [
+    "started",
+    "delta",
+    "tool-call",
+    "tool-result",
+    "turn-end",
+    "exited",
+    "cancelled",
+    "truncated",
+];
+
+/// A field the shape requires; absent is a decode error.
+fn field<T: serde::de::DeserializeOwned>(map: &mut Extensions, name: &str) -> Result<T, String> {
+    let value = map
+        .remove(name)
+        .ok_or_else(|| format!("an event of this kind carries {name:?}"))?;
+    serde_json::from_value(value).map_err(|error| format!("event field {name:?}: {error}"))
+}
+
+/// A field whose absence has a meaning of its own (`None`, `false`, an
+/// empty usage) rather than being an error.
+fn optional<T: serde::de::DeserializeOwned + Default>(
+    map: &mut Extensions,
+    name: &str,
+) -> Result<T, String> {
+    match map.remove(name) {
+        None | Some(serde_json::Value::Null) => Ok(T::default()),
+        Some(value) => {
+            serde_json::from_value(value).map_err(|error| format!("event field {name:?}: {error}"))
+        }
+    }
+}
+
+fn put<T: Serialize>(map: &mut Extensions, name: &str, value: T) {
+    map.insert(
+        name.to_owned(),
+        serde_json::to_value(value).expect("an event field encodes"),
+    );
+}
+
+impl Event {
+    /// The `kind` tag this event goes on the wire under.
+    #[must_use]
+    pub fn kind(&self) -> &str {
+        match self {
+            Self::Started { .. } => "started",
+            Self::Delta { .. } => "delta",
+            Self::ToolCall { .. } => "tool-call",
+            Self::ToolResult { .. } => "tool-result",
+            Self::TurnEnd { .. } => "turn-end",
+            Self::Exited { .. } => "exited",
+            Self::Cancelled { .. } => "cancelled",
+            Self::Truncated { .. } => "truncated",
+            Self::Unknown { kind, .. } => kind,
+        }
+    }
+
+    /// The wire object, `kind` included. Written by hand rather than
+    /// derived because [`Event::Unknown`] has to serialize under the tag
+    /// it ARRIVED with — a derived internally-tagged enum can only emit
+    /// its own variant name, which is what made a future kind
+    /// indistinguishable from every other.
+    fn to_map(&self) -> Extensions {
+        let mut map = Extensions::new();
+        map.insert(
+            "kind".to_owned(),
+            serde_json::Value::String(self.kind().to_owned()),
+        );
+        match self {
+            Self::Started { model } => {
+                if let Some(model) = model {
+                    put(&mut map, "model", model);
+                }
+            }
+            Self::Delta { text } => put(&mut map, "text", text),
+            Self::ToolCall { name, input } => {
+                put(&mut map, "name", name);
+                if !input.is_null() {
+                    map.insert("input".to_owned(), input.clone());
+                }
+            }
+            Self::ToolResult { name, ok } => {
+                put(&mut map, "name", name);
+                put(&mut map, "ok", ok);
+            }
+            Self::TurnEnd { text } => {
+                if let Some(text) = text {
+                    put(&mut map, "text", text);
+                }
+            }
+            Self::Exited {
+                status,
+                usage,
+                truncated,
+                error,
+            } => {
+                put(&mut map, "status", status);
+                put(&mut map, "usage", usage);
+                put(&mut map, "truncated", truncated);
+                if let Some(error) = error {
+                    put(&mut map, "error", error);
+                }
+            }
+            Self::Cancelled { reason } => put(&mut map, "reason", reason),
+            Self::Truncated {
+                limit_bytes,
+                read_bytes,
+            } => {
+                put(&mut map, "limit-bytes", limit_bytes);
+                put(&mut map, "read-bytes", read_bytes);
+            }
+            // Byte-for-byte what arrived: the tag above, then every field
+            // this version never read.
+            Self::Unknown { fields, .. } => {
+                for (name, value) in fields {
+                    map.insert(name.clone(), value.clone());
+                }
+            }
+        }
+        map
+    }
+
+    /// The inverse of [`Event::to_map`].
+    fn from_map(mut map: Extensions) -> Result<Self, String> {
+        let kind = match map.remove("kind") {
+            Some(serde_json::Value::String(kind)) => kind,
+            Some(other) => return Err(format!("an event's kind is a string, not {other}")),
+            None => return Err("an event carries a kind".to_owned()),
+        };
+        if !KNOWN_KINDS.contains(&kind.as_str()) {
+            return Ok(Self::Unknown { kind, fields: map });
+        }
+        Ok(match kind.as_str() {
+            "started" => Self::Started {
+                model: optional(&mut map, "model")?,
+            },
+            "delta" => Self::Delta {
+                text: field(&mut map, "text")?,
+            },
+            "tool-call" => Self::ToolCall {
+                name: field(&mut map, "name")?,
+                input: optional(&mut map, "input")?,
+            },
+            "tool-result" => Self::ToolResult {
+                name: field(&mut map, "name")?,
+                ok: optional(&mut map, "ok")?,
+            },
+            "turn-end" => Self::TurnEnd {
+                text: optional(&mut map, "text")?,
+            },
+            "exited" => Self::Exited {
+                status: field(&mut map, "status")?,
+                usage: optional(&mut map, "usage")?,
+                truncated: optional(&mut map, "truncated")?,
+                error: optional(&mut map, "error")?,
+            },
+            "cancelled" => Self::Cancelled {
+                reason: field(&mut map, "reason")?,
+            },
+            // The only remaining known tag.
+            _ => Self::Truncated {
+                limit_bytes: optional(&mut map, "limit-bytes")?,
+                read_bytes: optional(&mut map, "read-bytes")?,
+            },
+        })
+    }
+}
+
+impl Serialize for Event {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.to_map().serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Event {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_map(Extensions::deserialize(deserializer)?).map_err(serde::de::Error::custom)
+    }
 }
 
 /// One run event with its attribution, as a listener receives it. The
@@ -606,7 +811,7 @@ impl Runs {
                 record,
                 seq: 0,
                 started_ms: now_ms,
-                budget: request.budget,
+                budget: request.budget.clone(),
                 read_bytes: 0,
             },
         );
@@ -649,12 +854,18 @@ impl Runs {
             } => {
                 live.record.state = RunState::Exited;
                 live.record.status = Some(*status);
-                live.record.usage = *usage;
+                live.record.usage.clone_from(usage);
                 live.record.truncated |= *truncated;
                 live.record.error.clone_from(error);
             }
             Event::Cancelled { .. } => live.record.state = RunState::Cancelled,
-            Event::ToolCall { .. } | Event::ToolResult { .. } | Event::Unknown => {}
+            // Recording the cut is what marks the record: one fact, one
+            // source, and a listener and a `run-get` reader can never
+            // disagree about whether the answer is whole.
+            Event::Truncated { .. } => live.record.truncated = true,
+            // A kind this version cannot read moves nothing: it is
+            // ordered and kept, never interpreted.
+            Event::ToolCall { .. } | Event::ToolResult { .. } | Event::Unknown { .. } => {}
         }
         live.record.events.push(event.clone());
         Some(RunEvent {
@@ -681,18 +892,25 @@ impl Runs {
         emitted
     }
 
-    /// Accounts `bytes` read for `run_id`; `true` once the output budget
-    /// is spent (the provider stops reading and kills the child).
-    pub fn read(&mut self, run_id: &str, bytes: u64) -> bool {
-        let Some(live) = self.live.get_mut(run_id) else {
-            return false;
-        };
+    /// Accounts `bytes` read for `run_id`. Answers the
+    /// [`Event::Truncated`] the provider must RECORD once the output
+    /// budget is spent — after which it stops reading and kills the child
+    /// — and `None` while the run is still inside its budget.
+    ///
+    /// The event is answered rather than the old bare `true` because the
+    /// cut has to reach the bus: a consumer sees events, and a boolean
+    /// buried in a record it may never fetch is a silent truncation.
+    /// Answered once per run: recording it marks the record, and a
+    /// marked record has already told the story.
+    pub fn read(&mut self, run_id: &str, bytes: u64) -> Option<Event> {
+        let live = self.live.get_mut(run_id)?;
         live.read_bytes = live.read_bytes.saturating_add(bytes);
-        if live.read_bytes > live.budget.output_bytes {
-            live.record.truncated = true;
-            return true;
-        }
-        false
+        (live.read_bytes > live.budget.output_bytes && !live.record.truncated).then_some(
+            Event::Truncated {
+                limit_bytes: live.budget.output_bytes,
+                read_bytes: live.read_bytes,
+            },
+        )
     }
 
     /// Whether `run_id` has outlived its wall budget at `now_ms`.
