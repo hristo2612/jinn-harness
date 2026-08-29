@@ -214,52 +214,220 @@ fn wrapper_dry_run_classifies_each_start() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// `kern.boottime` is the wrapper's ONLY evidence for a boot. If it cannot
-/// be read — sysctl absent, or its `{ sec = N, usec = M }` shape changed
-/// under a future macOS — the wrapper must say so. Falling back to a zero
-/// epoch is not a safe default: `date -r 0` prints 1970 quite happily, and
-/// the death line would then read `host up since 1970-01-01T00:00:00Z`,
-/// asserting a boot time nobody measured. That is the same class of defect
-/// this packet exists to close, one level down.
+// ---------------------------------------------------------------------------
+// The inverted default (PLA-297, 2026-08-30).
+//
+// Three degradation paths in a row produced a confident `reason=boot` out of
+// an input nobody managed to read: a vanished stamp file; an unreadable
+// `kern.boottime` falling back to a zero epoch; and a torn previous-start
+// record whose missing mtime defaulted to `0`, making `boottime > prev_start`
+// trivially true. Patching each path in turn failed three times, so the
+// default inverts, as jinnd M2-K9 inverted serial dispatch:
+//
+//   `boot` requires POSITIVE PROOF FROM BOTH SIDES — a host boot time the
+//   wrapper can prove it read AND a coherent previous-start record, with the
+//   boot strictly after that start. Every other outcome, imagined or not,
+//   resolves to `unknown` by construction.
+//
+// A claim is derived from proof, never from the absence of a contradiction.
+//
+// The tests below are one per input: make that read fail or tear, and assert
+// the wrapper claims nothing.
+
+/// A scratch runtime root with a stub directory first on `PATH`.
 #[cfg(target_os = "macos")]
-#[test]
-fn an_unreadable_host_boot_time_reads_unknown_never_epoch_zero() {
-    let root = std::env::temp_dir().join(format!("soak-boottime-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    for dir in ["logs", "run", "stub"] {
-        std::fs::create_dir_all(root.join(dir)).expect("scratch dir");
-    }
-    std::fs::write(
-        root.join("logs/jinnd.log"),
-        "2026-08-29T14:18:19.162106Z fire\n",
-    )
-    .expect("log");
-    std::fs::write(root.join("run/jinnd.pid"), "75738\n").expect("pid");
-    use std::os::unix::fs::PermissionsExt as _;
-    for (name, body) in [
-        (
+struct Scratch {
+    root: PathBuf,
+    path: String,
+}
+
+#[cfg(target_os = "macos")]
+impl Scratch {
+    fn new(tag: &str) -> Self {
+        let root = std::env::temp_dir().join(format!("soak-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        for dir in ["logs", "run", "stub"] {
+            std::fs::create_dir_all(root.join(dir)).expect("scratch dir");
+        }
+        std::fs::write(
+            root.join("logs/jinnd.log"),
+            "2026-08-29T14:18:19.162106Z fire\n",
+        )
+        .expect("log");
+        let path = format!(
+            "{}:{}",
+            root.join("stub").display(),
+            std::env::var("PATH").unwrap_or_default()
+        );
+        let scratch = Self { root, path };
+        // launchd retained the previous instance's SIGTERM, so the death is
+        // readable in every case below. What is not readable is the one input
+        // under test — and that alone must sink the claim.
+        scratch.stub(
             "launchctl",
             "#!/bin/sh\nprintf '{\\n\\t\"LastExitStatus\" = 15;\\n};\\n'\n",
-        ),
-        // sysctl that answers nothing, as an absent or reshaped one would.
-        ("sysctl", "#!/bin/sh\nexit 1\n"),
-    ] {
-        let stub = root.join("stub").join(name);
-        std::fs::write(&stub, body).expect("stub");
-        std::fs::set_permissions(&stub, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        );
+        scratch
     }
+
+    fn stub(&self, name: &str, body: &str) {
+        use std::os::unix::fs::PermissionsExt as _;
+        let path = self.root.join("stub").join(name);
+        std::fs::write(&path, body).expect("stub");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+
+    /// A previous-start record whose mtime predates every plausible host
+    /// boot: were the pair trusted, the wrapper would answer `boot`. That is
+    /// what makes "not boot" a real assertion rather than an accident of
+    /// timing.
+    fn ancient_pid_record(&self, kind: &str) {
+        let target = self.root.join("run/jinnd.pid");
+        match kind {
+            "file" => std::fs::write(&target, "75738\n").expect("pid"),
+            // A directory is a read failure for every uid, root included:
+            // `stat` still answers, `cat` cannot.
+            "dir" => std::fs::create_dir(&target).expect("pid dir"),
+            other => panic!("unknown record kind {other}"),
+        }
+        let touched = Command::new("touch")
+            .args(["-t", "200001010000"])
+            .arg(&target)
+            .status()
+            .expect("touch");
+        assert!(touched.success());
+    }
+
+    fn dry_run(&self) -> String {
+        let output = Command::new("/bin/sh")
+            .arg(soak_dir().join("soak-run.sh"))
+            .env("SOAK", &self.root)
+            .env("SOAK_DRY_RUN", "1")
+            .env("PATH", &self.path)
+            .output()
+            .expect("/bin/sh");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+/// INPUT 1 — the host boot time. `sysctl` answers nothing (absent, or its
+/// `{ sec = N, usec = M }` shape reshaped under a future macOS). Half the
+/// evidence for `boot` is missing, so no boot is claimed and no boot time is
+/// printed: `unknown`, never the zero epoch that `date -r 0` prints as 1970.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_unreadable_host_boot_time_claims_nothing() {
+    let scratch = Scratch::new("no-boottime");
+    scratch.ancient_pid_record("file");
+    scratch.stub("sysctl", "#!/bin/sh\nexit 1\n");
+    let out = scratch.dry_run();
+    assert!(out.contains("host_boot=unknown"), "{out}");
+    assert!(
+        !out.contains("1970"),
+        "a zero epoch is not a boot time: {out}"
+    );
+    assert!(out.contains("reason=unknown"), "{out}");
+}
+
+/// INPUT 2 — the previous pid. The record is there and `stat` answers, but
+/// the contents cannot be read. Half the pair is missing, so the pair is not
+/// a previous start: nothing is claimed, and `first-supervised-start` is NOT
+/// inferred from a read failure — only a proven ABSENCE earns that.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_unreadable_previous_pid_claims_nothing() {
+    let scratch = Scratch::new("unreadable-pid");
+    scratch.ancient_pid_record("dir");
+    let out = scratch.dry_run();
+    assert!(out.contains("reason=unknown"), "{out}");
+    assert!(!out.contains("first-supervised-start"), "{out}");
+}
+
+/// INPUT 3 — the previous start's mtime, TORN. The verifier's FIFO probe in
+/// deterministic form: the record answers once and is gone by the second
+/// look, so the pid and the mtime cannot be proven to describe one record.
+/// The old wrapper defaulted the missing mtime to `0`, which made
+/// `boottime > prev_start` trivially true and returned `reason=boot` at rc 0.
+/// A torn record is not a previous start.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_torn_previous_start_record_claims_nothing() {
+    let scratch = Scratch::new("torn-record");
+    scratch.ancient_pid_record("file");
+    scratch.stub(
+        "stat",
+        // Answers the first look with an ancient mtime, then vanishes.
+        "#!/bin/sh\nc=$0.calls\nn=$(cat \"$c\" 2>/dev/null || echo 0)\n\
+         n=$((n+1)); printf '%s' \"$n\" >\"$c\"\n\
+         [ \"$n\" = 1 ] || exit 1\nprintf '946684800\\n'\n",
+    );
+    let out = scratch.dry_run();
+    assert!(out.contains("reason=unknown"), "{out}");
+    assert!(!out.contains("reason=boot"), "{out}");
+}
+
+/// The same tear the other way round: both looks answer, but with different
+/// mtimes — the record was replaced between them. Two reads of two records
+/// are not one previous start either.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_previous_start_record_replaced_mid_read_claims_nothing() {
+    let scratch = Scratch::new("replaced-record");
+    scratch.ancient_pid_record("file");
+    scratch.stub(
+        "stat",
+        "#!/bin/sh\nc=$0.calls\nn=$(cat \"$c\" 2>/dev/null || echo 0)\n\
+         n=$((n+1)); printf '%s' \"$n\" >\"$c\"\n\
+         if [ \"$n\" = 1 ]; then printf '946684800\\n'; else printf '946684801\\n'; fi\n",
+    );
+    let out = scratch.dry_run();
+    assert!(out.contains("reason=unknown"), "{out}");
+    assert!(!out.contains("reason=boot"), "{out}");
+}
+
+/// The proven lane still answers. With a readable boot time and a coherent
+/// record, `boot` and `keepalive-restart` are both still reachable — the
+/// inversion must not have made the wrapper useless, only honest.
+#[cfg(target_os = "macos")]
+#[test]
+fn both_sides_proven_still_decides() {
+    let scratch = Scratch::new("proven");
+    // Previous start BEFORE this host booted: the daemon died with the host.
+    scratch.ancient_pid_record("file");
+    let out = scratch.dry_run();
+    assert!(out.contains("reason=boot"), "{out}");
+    assert!(out.contains("prev_pid=75738"), "{out}");
+    assert!(out.contains("killed by signal 15"), "{out}");
+    // Previous start AFTER it: launchd replaced a daemon that ended uncleanly.
+    std::fs::write(scratch.root.join("run/jinnd.pid"), "75738\n").expect("pid");
+    let out = scratch.dry_run();
+    assert!(out.contains("reason=keepalive-restart"), "{out}");
+}
+
+/// The absence of a previous record is evidence only where the wrapper could
+/// actually look. An unenumerable run directory is a read failure, not proof
+/// of a first start — and certainly not of a boot.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_unenumerable_run_directory_is_not_a_first_supervised_start() {
+    let root = std::env::temp_dir().join(format!("soak-no-run-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
     let output = Command::new("/bin/sh")
         .arg(soak_dir().join("soak-run.sh"))
         .env("SOAK", &root)
         .env("SOAK_DRY_RUN", "1")
-        .env(
-            "PATH",
-            format!(
-                "{}:{}",
-                root.join("stub").display(),
-                std::env::var("PATH").unwrap_or_default()
-            ),
-        )
         .output()
         .expect("/bin/sh");
     assert!(
@@ -268,12 +436,58 @@ fn an_unreadable_host_boot_time_reads_unknown_never_epoch_zero() {
         String::from_utf8_lossy(&output.stderr)
     );
     let out = String::from_utf8_lossy(&output.stdout);
-    assert!(out.contains("host_boot=unknown"), "{out}");
-    assert!(
-        !out.contains("1970"),
-        "a zero epoch is not a boot time: {out}"
-    );
-    // With no evidence of a boot, the wrapper must not assert one.
-    assert!(!out.contains("reason=boot"), "{out}");
+    assert!(out.contains("reason=unknown"), "{out}");
+    assert!(!out.contains("first-supervised-start"), "{out}");
     let _ = std::fs::remove_dir_all(&root);
+}
+
+/// A run directory the wrapper CAN enumerate, with no record in it: that
+/// absence is the evidence, and `first-supervised-start` is earned.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_proven_absent_record_is_a_first_supervised_start() {
+    let scratch = Scratch::new("first-start");
+    let out = scratch.dry_run();
+    assert!(out.contains("reason=first-supervised-start"), "{out}");
+}
+
+/// The dry run's documented promise is that it touches nothing. It was
+/// creating `logs/` and `run/` under the supplied root before printing its
+/// decision — a write; and on a root that did not exist, it was the only
+/// thing that made the root exist at all.
+#[cfg(target_os = "macos")]
+#[test]
+fn dry_run_touches_nothing() {
+    let root = std::env::temp_dir().join(format!("soak-untouched-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let output = Command::new("/bin/sh")
+        .arg(soak_dir().join("soak-run.sh"))
+        .env("SOAK", &root)
+        .env("SOAK_DRY_RUN", "1")
+        .output()
+        .expect("/bin/sh");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!root.exists(), "dry run created {}", root.display());
+}
+
+/// The construction, not the guard: no read may fall back to a value that
+/// reads like a measurement. `0`, an empty string and a zero epoch are all
+/// values a comparison happily believes.
+#[test]
+fn no_read_falls_back_to_a_value_that_looks_measured() {
+    let wrapper = read("soak-run.sh");
+    for banned in ["|| echo 0", "||echo 0", ":-0}"] {
+        assert!(
+            !wrapper.contains(banned),
+            "a read falls back to a measured-looking default: {banned:?}"
+        );
+    }
+    assert!(
+        wrapper.contains("reason=unknown"),
+        "every unproven path must resolve to reason=unknown"
+    );
 }
