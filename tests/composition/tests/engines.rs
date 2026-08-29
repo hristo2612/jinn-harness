@@ -33,6 +33,17 @@ const PROBE: &str = "jinn-engine-probe";
 const ECHO_ID: &str = "jinn-engine-echo";
 /// See [`ECHO_ID`].
 const ECHO_ENGINE: &str = "echo";
+/// The PROCESS-lifecycle witness's entry: the echo package in its
+/// spawning shape, driving a real child through `jinn:process`. Every
+/// proof about a CHILD — a cancel that kills a pid, a suspend that kills
+/// one in flight, an executable the exec allowlist refuses, an
+/// environment the env policy bounds — runs here rather than against a
+/// vendor CLI, because a vendor CLI is absent exactly when those proofs
+/// matter (CI, and a verification that declines to spend a metered
+/// fixture).
+const SPAWN_ID: &str = "jinn-engine-spawn";
+/// See [`SPAWN_ID`].
+const SPAWN_ENGINE: &str = "spawn";
 
 /// How long a run may take to reach a terminal state before a proof
 /// fails. Generous: a vendor CLI's cold start is seconds, and the suite
@@ -110,6 +121,98 @@ fn listed(port: u16) -> Vec<String> {
         .iter()
         .map(|engine| engine["engine"].as_str().unwrap_or_default().to_owned())
         .collect()
+}
+
+/// The witness entry's own knowledge as the PROFILE holds it — the
+/// absolute paths its proofs need, read from the document of record
+/// rather than written into this file (the privacy firewall bars a
+/// machine path from a tracked file, and a path this suite invented
+/// would not be the one the grant names anyway). `None`, with a LOUD
+/// skip, on a host without the POSIX utilities the witness needs.
+fn witness(root: &std::path::Path) -> Option<serde_json::Value> {
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("profile.json")).expect("profile"))
+            .expect("profile parses");
+    let entry = document["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .find(|entry| entry["id"] == SPAWN_ID)
+        .cloned();
+    if entry.is_none() {
+        eprintln!(
+            "SKIPPED (loudly): this host has no `sleep`/`env`/`sh` on PATH, so the engines kit              mounted no {SPAWN_ID} witness and the child-lifecycle proofs cannot run"
+        );
+    }
+    entry.map(|entry| entry["config"]["data"].clone())
+}
+
+/// Every pid the kernel recorded `entry` spawning, from its OWN
+/// `ProcessSpawned` rows. The harness learns a pid exactly one way: the
+/// ledger. Reading it anywhere else would be the test inventing the fact
+/// it is supposed to be checking.
+fn spawned_pids(rows: &[composition::kit::LedgerRow], entry: &str) -> Vec<u32> {
+    rows.iter()
+        .filter(|row| row.entry.as_deref() == Some(entry))
+        .filter_map(|row| {
+            let kind = &row.kind;
+            let start = kind.find("ProcessSpawned")?;
+            let pid = kind[start..].find("\"pid\":")? + start + 6;
+            let digits: String = kind[pid..]
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
+            digits.parse().ok()
+        })
+        .collect()
+}
+
+/// Whether the host still has a process with this id — `kill -0`, the
+/// POSIX existence test. This is the PROCESS TABLE, not the ledger: it is
+/// what makes "the child is dead" a checked fact rather than an assertion
+/// the seam makes about itself.
+fn alive(pid: u32) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("kill -0 runs")
+        .success()
+}
+
+/// Waits (bounded) for `pid` to leave the process table.
+fn reaped(pid: u32) -> bool {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while alive(pid) {
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    true
+}
+
+/// Starts a witness run and answers `(run-id, pid)` once its child is
+/// genuinely live — both in the seam's own record and in the host's
+/// process table. Every lifecycle proof begins here, so none of them can
+/// pass by killing something that was already dead.
+fn live_child(daemon: &Daemon, port: u16, root: &std::path::Path) -> (String, u32) {
+    let run = start(port, SPAWN_ENGINE, &ask("witness"));
+    daemon.eventually("the witness run to be live", || {
+        get(port, &format!("/v1/engines/{SPAWN_ENGINE}/runs/{run}")).body["state"] == "running"
+    });
+    daemon.eventually("the kernel to record the spawn", || {
+        !spawned_pids(&composition::kit::ledger_rows_at(root), SPAWN_ID).is_empty()
+    });
+    let pid = *spawned_pids(&composition::kit::ledger_rows_at(root), SPAWN_ID)
+        .last()
+        .expect("a spawned pid");
+    assert!(
+        alive(pid),
+        "the witness child {pid} is in the process table before anything kills it"
+    );
+    (run, pid)
 }
 
 /// A minimal run body: the prompt, tools denied by default, a budget
@@ -375,12 +478,64 @@ fn a_secret_outside_the_granted_prefix_is_refused_and_the_run_never_starts() {
     daemon.interrupt();
 }
 
+/// A cancel KILLS THE CHILD. The record saying `cancelled` is the seam
+/// talking about itself; the proof is the host's process table, where the
+/// pid the kernel recorded spawning is gone afterwards. `jinn:process`
+/// owes SIGKILL AND REAP on its registration's inverse, so "gone" means
+/// gone — not a zombie the seam can still claim.
 #[test]
-fn a_cancelled_run_is_terminal_and_the_provider_stops_polling() {
-    let Some((daemon, port, _root)) = booted("engines-cancel") else {
+fn a_cancel_kills_the_child_and_the_process_table_agrees() {
+    let Some((daemon, port, root)) = booted("engines-cancel") else {
         return;
     };
-    // A cancel needs something LIVE to kill, so the slot's run has to
+    let Some(_witness) = witness(&root) else {
+        daemon.interrupt();
+        return;
+    };
+    let (run, pid) = live_child(&daemon, port, &root);
+
+    let cancelled = delete(port, &format!("/v1/engines/{SPAWN_ENGINE}/runs/{run}"));
+    assert_eq!(cancelled.status, 200, "{}", cancelled.raw);
+
+    let record = settled(&daemon, port, SPAWN_ENGINE, &run);
+    assert_eq!(record["state"], "cancelled", "{record}");
+    assert!(
+        record["events"]
+            .as_array()
+            .expect("events")
+            .iter()
+            .any(|event| event["kind"] == "cancelled"),
+        "the cancellation is on the run's own record: {record}"
+    );
+    // THE PROOF.
+    assert!(
+        reaped(pid),
+        "the cancelled run's child {pid} is gone from the process table\n\
+         --- daemon log ---\n{}",
+        daemon.log()
+    );
+    // And the kernel says so on its own record, both halves: a kill is
+    // never half a story (jinn:process README).
+    daemon.eventually("the kernel to record the kill and the exit", || {
+        let rows = daemon.ledger_rows();
+        rows.iter()
+            .any(|row| row.entry.as_deref() == Some(SPAWN_ID) && row.kind.contains("ProcessKilled"))
+            && rows.iter().any(|row| {
+                row.entry.as_deref() == Some(SPAWN_ID) && row.kind.contains("ProcessExited")
+            })
+    });
+    daemon.interrupt();
+}
+
+/// The answering shape's own cancel: no child, but the same terminal
+/// record. Kept beside the child proof because a provider with nothing to
+/// kill must still refuse to re-label a run it already finished.
+#[test]
+fn a_cancelled_run_is_terminal_and_the_provider_stops_polling() {
+    let Some((daemon, port, _root)) = booted("engines-cancel-echo") else {
+        return;
+    };
+    // A cancel needs something LIVE to end, so the slot's run has to
     // outlive the round trip. The delay is the echo provider's own knob
     // and this is a profile edit like any other.
     daemon.edit_profile_restarting(DEFAULT_ID, |document| {
@@ -406,17 +561,42 @@ fn a_cancelled_run_is_terminal_and_the_provider_stops_polling() {
             .any(|event| event["kind"] == "cancelled"),
         "the cancellation is on the run's own record: {record}"
     );
+    // A terminal run is never re-labelled by a second cancel.
+    let again = delete(port, &format!("/v1/engines/{DEFAULT_ENGINE}/runs/{run}"));
+    assert_eq!(again.status, 200, "{}", again.raw);
+    assert_eq!(again.body["state"], "cancelled", "{}", again.raw);
     daemon.interrupt();
 }
 
+/// A suspend kills a run that is GENUINELY IN FLIGHT. Waiting for a run
+/// to settle and then stopping proves only that a stop is clean; the
+/// lifecycle claim is that a suspended incarnation cannot own a live
+/// child, and the only way to check it is to stop while one is running
+/// and then look for the pid.
 #[test]
 fn a_stop_ends_the_seam_cleanly_and_the_next_boot_re_declares() {
     let Some((daemon, port, root)) = booted("engines-suspend") else {
         return;
     };
-    let run = start(port, DEFAULT_ENGINE, &ask("say ok"));
-    settled(&daemon, port, DEFAULT_ENGINE, &run);
+    let in_flight = witness(&root).map(|_| live_child(&daemon, port, &root));
     daemon.interrupt();
+
+    if let Some((run, pid)) = &in_flight {
+        // THE PROOF: the child did not survive the incarnation that owned
+        // it. `jinn:process` calls a spawn a kernel REGISTRATION, and a
+        // registration's inverse runs on suspend.
+        assert!(
+            reaped(*pid),
+            "the in-flight run {run}'s child {pid} did not survive the suspend"
+        );
+        let rows = composition::kit::ledger_rows_at(&root);
+        assert!(
+            rows.iter()
+                .any(|row| row.entry.as_deref() == Some(SPAWN_ID)
+                    && row.kind.contains("ProcessKilled")),
+            "the kill is on the record, attributed to the entry that spawned it"
+        );
+    }
 
     // The provision is withdrawn on the suspend and re-declared on the
     // next activate — a run does not survive an incarnation, and the
@@ -437,8 +617,10 @@ fn a_stop_ends_the_seam_cleanly_and_the_next_boot_re_declares() {
     });
     // The old run id is gone with its incarnation, answered honestly
     // rather than invented.
-    let stale = get(port, &format!("/v1/engines/{DEFAULT_ENGINE}/runs/{run}"));
-    assert_ne!(stale.status, 200, "{}", stale.raw);
+    if let Some((run, _)) = &in_flight {
+        let stale = get(port, &format!("/v1/engines/{SPAWN_ENGINE}/runs/{run}"));
+        assert_ne!(stale.status, 200, "{}", stale.raw);
+    }
     // And a fresh run works.
     let again = start(port, DEFAULT_ENGINE, &ask("say ok"));
     assert_eq!(
@@ -539,4 +721,186 @@ fn a_vendor_engine_answers_for_real_or_is_honestly_environment_gated() {
 fn document(daemon: &Daemon) -> serde_json::Value {
     serde_json::from_slice(&std::fs::read(daemon.root.join("profile.json")).expect("profile"))
         .expect("profile parses")
+}
+
+/// An executable outside the entry's `jinn:process` exec allowlist is
+/// REFUSED by the kernel, the refusal reaches the operator typed, the run
+/// is recorded as never having run, and the kernel says so on its own
+/// ledger. This is the boundary the operator's own-auth approval was
+/// granted behind (PLA-316, 2026-08-29): the provider may spawn ONE named
+/// binary, and the kernel — not the provider's good behaviour — is what
+/// holds it there.
+#[test]
+fn an_executable_outside_the_exec_allowlist_is_refused_and_ledgered() {
+    let Some((daemon, port, root)) = booted("engines-exec-refusal") else {
+        return;
+    };
+    let Some(witness) = witness(&root) else {
+        daemon.interrupt();
+        return;
+    };
+    // An absolute path that certainly exists and is certainly NOT in this
+    // entry's allowlist, taken from the document of record so the refusal
+    // is the kernel's and not a typo's.
+    let denied = witness["denied-command"]
+        .as_str()
+        .expect("the witness names an unauthorized executable")
+        .to_owned();
+    daemon.edit_profile_restarting(SPAWN_ID, |document| {
+        let data = &mut entry_mut(document, SPAWN_ID)["config"]["data"];
+        data["command"] = serde_json::json!(denied);
+        data["args"] = serde_json::json!([]);
+    });
+    daemon.eventually("the re-pointed witness to answer", || {
+        listed(port).contains(&SPAWN_ENGINE.to_owned())
+    });
+
+    let refused = post(
+        port,
+        &format!("/v1/engines/{SPAWN_ENGINE}/runs"),
+        &ask("nope"),
+    );
+    assert_ne!(refused.status, 200, "{}", refused.raw);
+    assert_eq!(
+        refused.body["error"]["code"], "refused",
+        "the kernel's exec refusal reaches the operator typed: {}",
+        refused.raw
+    );
+    // On the record, attributed to the entry that tried, under the
+    // contract that refused.
+    daemon.eventually("the exec refusal on the ledger", || {
+        daemon.ledger_rows().iter().any(|row| {
+            row.entry.as_deref() == Some(SPAWN_ID)
+                && row.kind.contains("GrantRefused")
+                && row.kind.contains("jinn:process")
+        })
+    });
+    // And nothing was spawned: a refused run is not a quiet one.
+    assert!(
+        spawned_pids(&daemon.ledger_rows(), SPAWN_ID).is_empty(),
+        "a refused spawn puts no child in the process table"
+    );
+    daemon.interrupt();
+}
+
+/// A spawned child sees EXACTLY what its entry's env policy admits — and
+/// nothing else, the daemon's own secrets included. The witness spawns
+/// `env`, so the child reports its whole environment and the assertion is
+/// about observed fact rather than about what the provider intended. The
+/// second half is the one that matters: narrowing the policy to
+/// inherit-none narrows the child, which is what makes the allowlist a
+/// BOUND and not a suggestion.
+#[test]
+fn a_child_sees_only_the_environment_its_grant_admits() {
+    let Some((daemon, port, root)) = booted("engines-env-policy") else {
+        return;
+    };
+    let Some(witness) = witness(&root) else {
+        daemon.interrupt();
+        return;
+    };
+    let printenv = witness["env-command"]
+        .as_str()
+        .expect("the witness names an environment reporter")
+        .to_owned();
+    daemon.edit_profile_restarting(SPAWN_ID, |document| {
+        let data = &mut entry_mut(document, SPAWN_ID)["config"]["data"];
+        data["command"] = serde_json::json!(printenv);
+        data["args"] = serde_json::json!([]);
+    });
+    daemon.eventually("the environment reporter to answer", || {
+        listed(port).contains(&SPAWN_ENGINE.to_owned())
+    });
+
+    let run = start(port, SPAWN_ENGINE, &ask("what can you see"));
+    let record = settled(&daemon, port, SPAWN_ENGINE, &run);
+    assert_eq!(record["state"], "exited", "{record}");
+    let seen = record["text"].as_str().unwrap_or_default().to_owned();
+    // The allowlist admits these two, and the CLI providers need exactly
+    // them: `HOME` because each vendor CLI opens its own credential file
+    // under it, `PATH` because a node-hosted CLI needs its interpreter.
+    assert!(seen.contains("HOME="), "the policy admits HOME: {seen:?}");
+    assert!(seen.contains("PATH="), "the policy admits PATH: {seen:?}");
+    // THE LEAK CHECK. The daemon holds its keystore passphrase in its own
+    // environment; a child that could read it would hold the key to every
+    // secret in the composition. It is not on the allowlist, so it is not
+    // in the child — an allowlist, never inherit-all.
+    assert!(
+        !seen.contains(composition::kit::KEYSTORE_PASSPHRASE_VAR),
+        "the daemon's keystore passphrase did not reach the child: {seen:?}"
+    );
+    assert!(
+        !seen.contains(composition::kit::KEYSTORE_PASSPHRASE),
+        "not by name and not by value: {seen:?}"
+    );
+
+    // Narrow the policy and the child narrows with it: the grant decides,
+    // not the provider.
+    daemon.edit_profile_restarting(SPAWN_ID, |document| {
+        let grants = entry_mut(document, SPAWN_ID)["config"]["grants"]
+            .as_array_mut()
+            .expect("grants");
+        let policy = grants
+            .iter_mut()
+            .find(|grant| grant["contract"] == "jinn:process")
+            .expect("a process grant");
+        policy["scope"]["env"] = serde_json::json!([]);
+    });
+    daemon.eventually("the narrowed witness to answer", || {
+        listed(port).contains(&SPAWN_ENGINE.to_owned())
+    });
+    let narrowed = start(port, SPAWN_ENGINE, &ask("what can you see now"));
+    let record = settled(&daemon, port, SPAWN_ENGINE, &narrowed);
+    let seen = record["text"].as_str().unwrap_or_default().to_owned();
+    assert!(
+        !seen.contains("HOME=") && !seen.contains("PATH="),
+        "an empty env policy inherits nothing at all: {seen:?}"
+    );
+    daemon.interrupt();
+}
+
+/// Spending the output budget is a TYPED EVENT on the wire, ordered ahead
+/// of whatever ends the run. A consumer of this seam sees events; a
+/// truncation recorded only on the run's record is a bounded answer that
+/// reads as a whole one, which is the silent-wrong-answer shape the seam
+/// must never produce.
+#[test]
+fn the_output_budget_cuts_the_answer_and_says_so_on_the_wire() {
+    let Some((daemon, port, _root)) = booted("engines-truncation") else {
+        return;
+    };
+    let body = serde_json::json!({
+        "prompt": "x".repeat(4_096),
+        "budget": { "wall-ms": 60_000, "output-bytes": 32 } });
+    let run = start(port, DEFAULT_ENGINE, &body);
+    let record = settled(&daemon, port, DEFAULT_ENGINE, &run);
+
+    assert_eq!(record["truncated"], true, "{record}");
+    let events = record["events"].as_array().expect("events");
+    let cut = events
+        .iter()
+        .find(|event| event["kind"] == "truncated")
+        .unwrap_or_else(|| panic!("the cut is its own event: {record}"));
+    assert_eq!(cut["limit-bytes"], 32, "{record}");
+    assert!(
+        cut["read-bytes"].as_u64().unwrap_or_default() > 32,
+        "the cut reports what had been read when it happened: {record}"
+    );
+    // Ordered BEFORE the end it caused: a listener learns the answer is a
+    // prefix while the run is still going, not by inference afterwards.
+    let kinds: Vec<&str> = events
+        .iter()
+        .map(|event| event["kind"].as_str().unwrap_or_default())
+        .collect();
+    let at = kinds.iter().position(|kind| *kind == "truncated");
+    let ended = kinds
+        .iter()
+        .position(|kind| *kind == "exited" || *kind == "cancelled");
+    assert!(at < ended, "{kinds:?}");
+    // The answer really is the prefix the budget admits.
+    assert!(
+        record["text"].as_str().unwrap_or_default().len() <= 32,
+        "{record}"
+    );
+    daemon.interrupt();
 }

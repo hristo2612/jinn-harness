@@ -14,7 +14,7 @@ use api_kit::{api_entries, settings_entries, PROVIDER_ID};
 use cron_kit::{build, cron_entries, flag, write_profile};
 use engine_kit::{
     api_engine_grants, probe_entry, provider_entry, resolve_cli, Provider, DEFAULT_ENGINE,
-    DEFAULT_ID, PROBE_ID,
+    DEFAULT_ID, PROBE_ID, SPAWN_ENGINE, SPAWN_ID, SPAWN_SECONDS,
 };
 
 /// The models each vendor provider advertises through `describe`. A model
@@ -67,6 +67,7 @@ fn kit(cli: &Cli) {
         hash: &echo,
         engine: DEFAULT_ENGINE,
         command: None,
+        also_exec: &[],
         env: &[],
         models: &["echo-1"],
         // A POSITIVE delay is required here, not cosmetic: the probe
@@ -81,6 +82,39 @@ fn kit(cli: &Cli) {
         data: serde_json::json!({ "delay-ms": 250 }),
     })];
     let mut engines = vec![DEFAULT_ENGINE];
+    // The process-lifecycle witness. `sleep` is a child that is reliably
+    // ALIVE when a cancel or a suspend lands; `env` is a child that says
+    // what it can see, which is how the entry's env policy is checked
+    // rather than asserted. Both are POSIX, so the proofs hold wherever
+    // the suite runs; a host missing them simply does not mount the
+    // witness and the lifecycle proofs skip LOUDLY rather than lying.
+    let sleep = resolve_cli(None, "sleep");
+    let printenv = resolve_cli(None, "env");
+    // NOT in the exec allowlist, and that is its whole job: the refusal
+    // probe needs an executable that certainly exists and is certainly
+    // unauthorized, so the refusal is the kernel's and not a typo's.
+    let denied = resolve_cli(None, "sh");
+    if let (Some(sleep), Some(printenv), Some(denied)) = (&sleep, &printenv, &denied) {
+        let (sleep, printenv) = (sleep.display().to_string(), printenv.display().to_string());
+        entries.push(provider_entry(&Provider {
+            id: SPAWN_ID,
+            package: "engines/jinn-engine-echo",
+            hash: &echo,
+            engine: SPAWN_ENGINE,
+            command: Some(&sleep),
+            also_exec: &[&printenv],
+            env: &CLI_ENV,
+            models: &["witness-1"],
+            data: serde_json::json!({
+                "args": [SPAWN_SECONDS],
+                // Read by the proofs out of the document, never hardcoded
+                // in a test: a machine path lives in the profile only.
+                "env-command": printenv,
+                "denied-command": denied.display().to_string(),
+            }),
+        }));
+        engines.push(SPAWN_ENGINE);
+    }
     if let Some(command) = &cli.claude {
         entries.push(provider_entry(&Provider {
             id: "jinn-engine-claude",
@@ -88,6 +122,7 @@ fn kit(cli: &Cli) {
             hash: &claude,
             engine: "claude",
             command: Some(&command.display().to_string()),
+            also_exec: &[],
             env: &CLI_ENV,
             models: &CLAUDE_MODELS,
             data: serde_json::Value::Null,
@@ -101,6 +136,7 @@ fn kit(cli: &Cli) {
             hash: &codex,
             engine: "codex",
             command: Some(&command.display().to_string()),
+            also_exec: &[],
             env: &CLI_ENV,
             models: &CODEX_MODELS,
             data: serde_json::Value::Null,

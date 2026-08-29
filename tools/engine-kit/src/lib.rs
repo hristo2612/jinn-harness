@@ -28,6 +28,22 @@ pub const ECHO_ID: &str = "jinn-engine-echo";
 /// See [`ECHO_ID`].
 pub const ECHO_ENGINE: &str = "echo";
 
+/// The PROCESS-lifecycle witness: the echo package in its spawning shape,
+/// driving a real child through `jinn:process`. It exists so the seam's
+/// lifecycle and grant-refusal proofs — a cancel that kills a pid, a
+/// suspend that kills one in flight, an executable outside the exec
+/// allowlist, an environment bounded by the env policy — hold on ANY box,
+/// including CI and an independent verification that declines to spend a
+/// metered vendor fixture. A vendor CLI would prove the same thing and be
+/// absent exactly when the proof matters.
+pub const SPAWN_ID: &str = "jinn-engine-spawn";
+/// See [`SPAWN_ID`].
+pub const SPAWN_ENGINE: &str = "spawn";
+/// How long the witness child lives when nothing kills it: long enough
+/// that a cancel and a suspend always land while it is genuinely
+/// running, short enough that a leaked one is gone before the next run.
+pub const SPAWN_SECONDS: &str = "30";
+
 /// The `jinn:keystore` prefix engine providers read under. Key NAMES only
 /// ever appear in a profile; values live in the kernel's sealed store.
 pub const KEYSTORE_PREFIX: &str = "engines/";
@@ -54,6 +70,12 @@ pub struct Provider<'a> {
     /// The absolute path of the CLI it spawns, when it spawns one. The
     /// ONLY place a machine path is written.
     pub command: Option<&'a str>,
+    /// Further absolute paths the entry's `jinn:process` exec allowlist
+    /// admits beyond [`Provider::command`]. Empty for every provider that
+    /// drives exactly one CLI; the lifecycle witness needs two, because a
+    /// proof about the ENVIRONMENT and a proof about a LIVE child are
+    /// different children.
+    pub also_exec: &'a [&'a str],
     /// Variables the child may inherit from the host, by name. `HOME`
     /// because every one of these CLIs opens its OWN credential file
     /// under it (the harness never reads those files); `PATH` because a
@@ -75,8 +97,10 @@ pub fn provider_entry(provider: &Provider<'_>) -> serde_json::Value {
                             "scope": [KEYSTORE_PREFIX], "ops": ["get"] }),
     ];
     if let Some(command) = provider.command {
+        let mut exec = vec![command];
+        exec.extend_from_slice(provider.also_exec);
         grants.push(serde_json::json!({ "contract": "jinn:process",
-            "scope": { "exec": [command], "env": provider.env } }));
+            "scope": { "exec": exec, "env": provider.env } }));
     }
     let mut data = serde_json::json!({
         "engine": provider.engine,
@@ -159,6 +183,7 @@ mod tests {
             hash: "abc",
             engine: DEFAULT_ENGINE,
             command: None,
+            also_exec: &[],
             env: &[],
             models: &["echo-1"],
             data: serde_json::json!({ "delay-ms": 0 }),
@@ -191,6 +216,7 @@ mod tests {
             hash: "def",
             engine: "codex",
             command: Some("/opt/example/bin/codex"),
+            also_exec: &[],
             env: &["HOME", "PATH"],
             models: &[],
             data: serde_json::Value::Null,
