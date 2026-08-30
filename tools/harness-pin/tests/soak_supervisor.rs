@@ -810,3 +810,82 @@ fn the_previous_end_is_decoded_in_exactly_one_place() {
         "every ops.log line must render the one decoded phrase"
     );
 }
+
+// ---------------------------------------------------------------------------
+// A wait status is not a claim about agency (PLA-297 round 5, 2026-08-30).
+//
+// Round 4 made the narrative and the field one decode. It left the clean
+// branch wording that decode as `ended CLEANLY, on its own: exit 0` — and
+// that is not merely unprovable, it is FALSE on the pinned daemon's own
+// normal path: a planned stop sends SIGINT, the handler runs, and the
+// process exits 0 (SOAK.md §Stop). The wrapper was asserting the daemon was
+// not signalled at precisely the moment it was.
+//
+// `wait` rc 0 proves the EXIT STATUS. Whether a signal prompted the exit is
+// a DIFFERENT reading, and the wrapper does not have it — nothing on this
+// path retains a sender. So the clause is deleted rather than hedged: an
+// unreadable fact gets no wording, not a softer one.
+
+/// The premise, observed rather than cited: a process signalled EXTERNALLY
+/// can still exit 0, so `LastExitStatus = 0` cannot carry "on its own".
+/// This test signals a real process, watches it exit 0, and then requires the
+/// wrapper to narrate that same status with no claim about agency.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_externally_signalled_exit_zero_is_never_narrated_as_agency() {
+    let mut probe = Command::new("/bin/sh")
+        .arg("-c")
+        .arg("trap 'exit 0' TERM; while :; do sleep 0.05; done")
+        .spawn()
+        .expect("probe");
+    // Let the shell install its trap before the signal arrives.
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let signalled = Command::new("kill")
+        .arg("-TERM")
+        .arg(probe.id().to_string())
+        .status()
+        .expect("kill");
+    assert!(signalled.success(), "the probe could not be signalled");
+    assert_eq!(
+        probe.wait().expect("wait").code(),
+        Some(0),
+        "premise: an externally signalled process can still exit 0"
+    );
+
+    let scratch = Scratch::new("signalled-exit-zero");
+    scratch.ancient_pid_record("file");
+    scratch.launchctl_status("0");
+    let line = scratch.death_line();
+    assert!(
+        line.contains("ended CLEANLY: exit 0"),
+        "the clean status must be stated without a claim about agency: {line}"
+    );
+    assert!(
+        !line.contains("on its own"),
+        "exit 0 narrated as agency the wrapper never read: {line}"
+    );
+}
+
+/// The same deletion, swept across every branch of the exit-status space: no
+/// wording the wrapper can produce claims the daemon ended unprompted, because
+/// no input it reads carries that.
+#[cfg(target_os = "macos")]
+#[test]
+fn no_branch_of_the_exit_status_space_claims_agency() {
+    for raw in [Some("15"), Some("0"), Some("768"), Some("2"), None] {
+        let tag = raw.unwrap_or("none");
+        let scratch = Scratch::new(&format!("no-agency-{tag}"));
+        scratch.ancient_pid_record("file");
+        match raw {
+            Some(raw) => scratch.launchctl_status(raw),
+            None => scratch.launchctl_retains_nothing(),
+        }
+        let line = scratch.death_line();
+        for claim in ["on its own", "by itself", "unprompted", "was not signalled"] {
+            assert!(
+                !line.contains(claim),
+                "status {tag} narrated as {claim:?}: {line}"
+            );
+        }
+    }
+}
