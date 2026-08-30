@@ -5,14 +5,25 @@
 //! semantics are ONE implementation with one set of tests, and a provider
 //! adds only where the records live.
 //!
+//! # Nothing here advances until the record is durable
+//!
+//! Every mutation is TWO calls: a `plan_*` that computes what WOULD
+//! happen and touches nothing, and a `commit_*` that folds the planned
+//! record into the registry. A provider appends that record to its
+//! journal BETWEEN the two, so the state this registry reports is the
+//! state the log holds. A durable write that fails leaves the reported
+//! status exactly where it was, and a restart replays what the live view
+//! was already saying. There is no method here that advances state and
+//! writes nothing — which is why the two views cannot disagree.
+//!
 //! # The refusal is a recorded outcome, not an exception
 //!
-//! [`Todos::update`] answers [`Moved::Refused`] for an illegal move, with
-//! the [`RefusedChange`] already appended to the Todo. That shape is
+//! [`Todos::plan_update`] answers [`Moved::Refused`] for an illegal move,
+//! carrying the [`RefusedChange`] its provider must record. That shape is
 //! deliberate: it makes it impossible for a provider to refuse a move
-//! WITHOUT recording it, because there is no code path that produces the
-//! refusal and not the record. "Typed and ledgered" is then a property of
-//! the type, not of a provider remembering to do both.
+//! WITHOUT a record in hand, because there is no code path that produces
+//! the refusal and not the record. "Typed and ledgered" is then a
+//! property of the type, not of a provider remembering to do both.
 
 use std::collections::BTreeMap;
 
@@ -29,14 +40,32 @@ use crate::{
 /// with every page, so a reader is never told a gap is quiet.
 pub const EVENT_RING: usize = 256;
 
-/// What an `update` did. Both arms are outcomes the caller RECORDS — see
-/// the module doc.
+/// What an `update` WOULD do. Both arms are records the caller makes
+/// DURABLE and only then commits — see the module doc.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Moved {
-    /// The move was legal and is now history.
+    /// The move is legal. Record it, then [`Todos::commit_change`].
     Changed(StatusChange),
-    /// The move was refused. The attempt is already on the Todo's
-    /// `refused` list; the error is what the caller answers with.
+    /// The move is refused. Record the attempt, then
+    /// [`Todos::commit_refusal`]; the error is what the caller answers
+    /// with once the attempt is on the record.
+    Refused(RefusedChange, TodoError),
+}
+
+/// What a `dispatch` WOULD do: the status move it implies and the
+/// dispatch it opens, or the refusal that stops it before it begins.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Dispatching {
+    /// The dispatch may open. `change` is the move to `executing` it
+    /// implies, absent when the Todo already stands there.
+    Opens {
+        /// The status move to record before the dispatch itself.
+        change: Option<StatusChange>,
+        /// The dispatch to record and commit.
+        dispatch: Dispatch,
+    },
+    /// The move a dispatch implies is not in the table. Nothing opens;
+    /// the attempt is recorded exactly as any other refusal.
     Refused(RefusedChange, TodoError),
 }
 
@@ -89,15 +118,17 @@ impl Todos {
         self.live.keys().map(String::as_str)
     }
 
-    /// Records a Todo and mints its id (`<store>-<n>`, monotone within
-    /// this incarnation).
+    /// The Todo a `create` WOULD record, and the id it would carry
+    /// (`<store>-<n>`, monotone within this incarnation). Touches
+    /// nothing: the registry learns of this Todo in
+    /// [`Todos::commit_create`], after its first journal line is durable.
     ///
     /// # Errors
     ///
     /// A spec the seam will not record, or a parent that is not here. A
     /// parent must ALREADY exist, which is what makes the tree acyclic by
     /// construction rather than by a cycle check.
-    pub fn create(&mut self, spec: TodoSpec, now_ms: u64) -> Result<TodoCreated, TodoError> {
+    pub fn plan_create(&self, spec: &TodoSpec, _now_ms: u64) -> Result<TodoCreated, TodoError> {
         spec.check()?;
         if let Some(parent) = &spec.parent {
             if !self.live.contains_key(parent) {
@@ -107,16 +138,32 @@ impl Todos {
                 ));
             }
         }
-        self.minted += 1;
-        let todo_id = format!("{}-{}", self.store, self.minted);
-        self.install(todo_id.clone(), spec, now_ms);
         Ok(TodoCreated {
             api_version: API_VERSION.to_owned(),
-            todo_id,
+            todo_id: format!("{}-{}", self.store, self.minted + 1),
             store: self.store.clone(),
             status: Status::default(),
             extra: Extensions::new(),
         })
+    }
+
+    /// Installs a planned Todo, once its `created` line is durable. The
+    /// id is the planned one, so the record on disk and the record in
+    /// memory carry the same name.
+    pub fn commit_create(&mut self, created: &TodoCreated, spec: TodoSpec, now_ms: u64) {
+        self.mint_past(&created.todo_id);
+        self.install(created.todo_id.clone(), spec, now_ms);
+    }
+
+    /// Moves the id counter past `todo_id`, so a later `create` cannot
+    /// collide with one already here.
+    fn mint_past(&mut self, todo_id: &str) {
+        if let Some(minted) = todo_id
+            .strip_prefix(&format!("{}-", self.store))
+            .and_then(|tail| tail.parse::<u64>().ok())
+        {
+            self.minted = self.minted.max(minted);
+        }
     }
 
     /// Installs a Todo read back from a durable journal under the id it
@@ -125,12 +172,7 @@ impl Todos {
     /// Mints forward past any adopted numeric id so a later `create`
     /// cannot collide with one.
     pub fn adopt(&mut self, todo_id: &str, replayed: Replayed) {
-        if let Some(minted) = todo_id
-            .strip_prefix(&format!("{}-", self.store))
-            .and_then(|tail| tail.parse::<u64>().ok())
-        {
-            self.minted = self.minted.max(minted);
-        }
+        self.mint_past(todo_id);
         let created = replayed.created_ms;
         self.install(todo_id.to_owned(), replayed.spec, created);
         if let Some(live) = self.live.get_mut(todo_id) {
@@ -162,12 +204,6 @@ impl Todos {
                 dropped: 0,
             },
         );
-    }
-
-    /// Drops a Todo whose durable record did not land, so nothing
-    /// half-created is left for a later replay to disagree with.
-    pub fn forget(&mut self, todo_id: &str) {
-        self.live.remove(todo_id);
     }
 
     /// The spec of one Todo.
@@ -205,55 +241,63 @@ impl Todos {
         record
     }
 
-    /// Applies one status move — the table, and the record of what it
-    /// did. See the module doc for why a refusal is an `Ok(Moved)`.
+    /// What one status move WOULD do — the table applied, and the record
+    /// of either outcome. Touches nothing. See the module doc for why a
+    /// refusal is an `Ok(Moved)`.
     ///
     /// # Errors
     ///
-    /// The Todo is not here, or the actor is a blank.
-    pub fn update(
-        &mut self,
+    /// The Todo is not here.
+    pub fn plan_update(
+        &self,
         todo_id: &str,
         to: Status,
         actor: Option<String>,
         note: Option<String>,
         now_ms: u64,
     ) -> Result<Moved, TodoError> {
-        let live = self
-            .live
-            .get_mut(todo_id)
-            .ok_or_else(|| not_found(todo_id))?;
+        let live = self.live.get(todo_id).ok_or_else(|| not_found(todo_id))?;
         let from = live.declared;
         match from.transition(to) {
-            Ok(to) => {
-                let change = StatusChange {
-                    seq: live.history.len() as u64,
-                    from,
-                    to,
-                    actor,
-                    note,
-                    at_ms: now_ms,
-                    extra: Extensions::new(),
-                };
-                live.declared = to;
-                live.history.push(change.clone());
-                Ok(Moved::Changed(change))
-            }
-            Err(refusal) => {
-                let refused = RefusedChange {
+            Ok(to) => Ok(Moved::Changed(StatusChange {
+                seq: live.history.len() as u64,
+                from,
+                to,
+                actor,
+                note,
+                at_ms: now_ms,
+                extra: Extensions::new(),
+            })),
+            Err(refusal) => Ok(Moved::Refused(
+                RefusedChange {
                     seq: live.refused.len() as u64,
                     from,
                     to,
                     actor,
                     at_ms: now_ms,
                     extra: Extensions::new(),
-                };
-                live.refused.push(refused.clone());
-                Ok(Moved::Refused(
-                    refused,
-                    TodoError::refused_transition(refusal),
-                ))
-            }
+                },
+                TodoError::refused_transition(refusal),
+            )),
+        }
+    }
+
+    /// Folds a status move that is already durable into the registry. A
+    /// Todo that is gone is a no-op rather than a panic: the record is on
+    /// the log either way, and a replay is what decides.
+    pub fn commit_change(&mut self, todo_id: &str, change: &StatusChange) {
+        if let Some(live) = self.live.get_mut(todo_id) {
+            live.declared = change.to;
+            live.history.push(change.clone());
+        }
+    }
+
+    /// Folds a refused attempt that is already durable into the registry.
+    /// The declared status does not move — a refusal never was a move —
+    /// but the attempt joins the record.
+    pub fn commit_refusal(&mut self, todo_id: &str, refused: &RefusedChange) {
+        if let Some(live) = self.live.get_mut(todo_id) {
+            live.refused.push(refused.clone());
         }
     }
 
@@ -271,15 +315,17 @@ impl Todos {
     /// That is not a rewrite. It is a NEW event appended after the ones
     /// that were already there — the whole history stays readable, and a
     /// reader can see both that the work was started and that the daemon
-    /// died on it. Answers the change to journal, or `None` when the Todo
-    /// owes nothing.
-    pub fn recover(&mut self, todo_id: &str, now_ms: u64) -> Option<StatusChange> {
+    /// died on it. Answers the change to JOURNAL — the caller commits it
+    /// through [`Todos::commit_change`] once the line is durable — or
+    /// `None` when the Todo owes nothing.
+    #[must_use]
+    pub fn plan_recovery(&self, todo_id: &str, now_ms: u64) -> Option<StatusChange> {
         let live = self.live.get(todo_id)?;
         let (folded, reason) = reported_status(live.declared, live.dispatches.last());
         if folded == live.declared {
             return None;
         }
-        match self.update(todo_id, folded, None, reason, now_ms) {
+        match self.plan_update(todo_id, folded, None, reason, now_ms) {
             // The fold only ever produces a move the table admits (the
             // debug assertion in `reported_status`), so a refusal here is
             // unreachable; it is answered as "nothing to record" rather
@@ -289,14 +335,15 @@ impl Todos {
         }
     }
 
-    /// Adds one comment and mints its id.
+    /// The comment a `comment` WOULD add, with the id it would carry.
+    /// Touches nothing.
     ///
     /// # Errors
     ///
     /// The Todo is not here, or the comment is blank — a comment that
     /// says nothing is a line in the history that means nothing.
-    pub fn comment(
-        &mut self,
+    pub fn plan_comment(
+        &self,
         todo_id: &str,
         body: &str,
         actor: Option<String>,
@@ -308,21 +355,23 @@ impl Todos {
                 "a comment's `body` cannot be blank",
             ));
         }
-        let live = self
-            .live
-            .get_mut(todo_id)
-            .ok_or_else(|| not_found(todo_id))?;
-        live.minted_comments += 1;
-        let comment = Comment {
-            comment_id: format!("{todo_id}-c{}", live.minted_comments),
+        let live = self.live.get(todo_id).ok_or_else(|| not_found(todo_id))?;
+        Ok(Comment {
+            comment_id: format!("{todo_id}-c{}", live.minted_comments + 1),
             seq: live.comments.len() as u64,
             body: body.to_owned(),
             actor,
             at_ms: now_ms,
             extra: Extensions::new(),
-        };
-        live.comments.push(comment.clone());
-        Ok(comment)
+        })
+    }
+
+    /// Folds a comment that is already durable into the registry.
+    pub fn commit_comment(&mut self, todo_id: &str, comment: &Comment) {
+        if let Some(live) = self.live.get_mut(todo_id) {
+            live.minted_comments += 1;
+            live.comments.push(comment.clone());
+        }
     }
 
     /// The dispatch in flight for a Todo, if it has one.
@@ -335,23 +384,25 @@ impl Todos {
             .find(|dispatch| !dispatch.status.is_terminal())
     }
 
-    /// Opens a dispatch: the status move it implies, then the dispatch
-    /// itself, recorded RUNNING. This is the one place that status is
-    /// ever minted, and only for a dispatch this incarnation is about to
+    /// What opening a dispatch WOULD do: the status move it implies, and
+    /// the dispatch itself as it would be recorded RUNNING. Touches
+    /// nothing — `running` is minted here and committed only for a
+    /// dispatch this incarnation has durably started and is about to
     /// drive.
     ///
     /// # Errors
     ///
-    /// The Todo is not here, it already has a dispatch in flight, or its
-    /// status cannot legally reach `executing` (a terminal Todo is not
-    /// dispatched — the table says so, and the refusal names the move).
-    pub fn begin_dispatch(
-        &mut self,
+    /// The Todo is not here, or it already has a dispatch in flight. A
+    /// status that cannot legally reach `executing` is a
+    /// [`Dispatching::Refused`], not an error: the attempt is a fact and
+    /// the caller records it.
+    pub fn plan_dispatch(
+        &self,
         todo_id: &str,
         spec: &DispatchSpec,
         actor: Option<String>,
         now_ms: u64,
-    ) -> Result<(Dispatch, Option<StatusChange>), TodoError> {
+    ) -> Result<Dispatching, TodoError> {
         if let Some(dispatch) = self.in_flight(todo_id) {
             return Err(TodoError::new(
                 ErrorCode::Refused,
@@ -361,39 +412,38 @@ impl Todos {
                 ),
             ));
         }
-        let declared = self
-            .live
-            .get(todo_id)
-            .ok_or_else(|| not_found(todo_id))?
-            .declared;
+        let live = self.live.get(todo_id).ok_or_else(|| not_found(todo_id))?;
         // A dispatch IS the work starting, so it moves the Todo through
         // the same table every other move goes through. Already
         // `executing` is not a move.
-        let change = if declared == Status::Executing {
+        let change = if live.declared == Status::Executing {
             None
         } else {
-            match self.update(todo_id, Status::Executing, actor, None, now_ms)? {
+            match self.plan_update(todo_id, Status::Executing, actor, None, now_ms)? {
                 Moved::Changed(change) => Some(change),
-                // The refusal is already recorded by `update`; the
-                // dispatch does not happen and the caller answers typed.
-                Moved::Refused(_, error) => return Err(error),
+                Moved::Refused(refused, error) => return Ok(Dispatching::Refused(refused, error)),
             }
         };
-        let live = self
-            .live
-            .get_mut(todo_id)
-            .ok_or_else(|| not_found(todo_id))?;
-        live.minted_dispatches += 1;
-        let dispatch = Dispatch {
-            dispatch_id: format!("{todo_id}-d{}", live.minted_dispatches),
-            session_store: spec.store.clone(),
-            engine: spec.engine.engine.clone(),
-            status: DispatchStatus::Running,
-            started_ms: now_ms,
-            ..Dispatch::default()
-        };
-        live.dispatches.push(dispatch.clone());
-        Ok((dispatch, change))
+        Ok(Dispatching::Opens {
+            change,
+            dispatch: Dispatch {
+                dispatch_id: format!("{todo_id}-d{}", live.minted_dispatches + 1),
+                session_store: spec.store.clone(),
+                engine: spec.engine.engine.clone(),
+                status: DispatchStatus::Running,
+                started_ms: now_ms,
+                ..Dispatch::default()
+            },
+        })
+    }
+
+    /// Folds a dispatch whose `dispatch-started` line is already durable
+    /// into the registry.
+    pub fn commit_dispatch(&mut self, todo_id: &str, dispatch: &Dispatch) {
+        if let Some(live) = self.live.get_mut(todo_id) {
+            live.minted_dispatches += 1;
+            live.dispatches.push(dispatch.clone());
+        }
     }
 
     /// Mutates one dispatch in place; `None` when the Todo or dispatch is
@@ -406,15 +456,16 @@ impl Todos {
             .find(|dispatch| dispatch.dispatch_id == dispatch_id)
     }
 
-    /// Ends a dispatch. A terminal status other than `done` MUST carry a
-    /// reason, so no reader ever has to invent one.
+    /// The dispatch record an ending WOULD write. A terminal status other
+    /// than `done` MUST carry a reason, so no reader ever has to invent
+    /// one. Touches nothing.
     ///
     /// # Errors
     ///
     /// The dispatch is unknown, the status is not terminal, or a
     /// non-`done` ending carries no reason.
-    pub fn end_dispatch(
-        &mut self,
+    pub fn plan_end_dispatch(
+        &self,
         todo_id: &str,
         dispatch_id: &str,
         status: DispatchStatus,
@@ -436,14 +487,27 @@ impl Todos {
                 format!("a {status:?} dispatch carries the reason it ended"),
             ));
         }
-        let dispatch = self
-            .dispatch_mut(todo_id, dispatch_id)
-            .ok_or_else(|| not_found(dispatch_id))?;
+        let mut dispatch = self
+            .live
+            .get(todo_id)
+            .ok_or_else(|| not_found(todo_id))?
+            .dispatches
+            .iter()
+            .find(|dispatch| dispatch.dispatch_id == dispatch_id)
+            .ok_or_else(|| not_found(dispatch_id))?
+            .clone();
         dispatch.status = status;
         dispatch.reason = reason;
         dispatch.answer = answer;
         dispatch.ended_ms = Some(now_ms);
-        Ok(dispatch.clone())
+        Ok(dispatch)
+    }
+
+    /// Folds an ending that is already durable into the registry.
+    pub fn commit_end_dispatch(&mut self, todo_id: &str, ended: &Dispatch) {
+        if let Some(dispatch) = self.dispatch_mut(todo_id, &ended.dispatch_id) {
+            *dispatch = ended.clone();
+        }
     }
 
     /// One Todo's record, with the reported status FOLDED from its

@@ -14,6 +14,17 @@
 //! session resolves that — which is what makes the three-layer stack
 //! compose.
 //!
+//! **The record is durable BEFORE the store's answer moves.** Every
+//! mutation here is the same three steps in the same order: PLAN what
+//! would happen (the definition's `plan_*`, which touches nothing),
+//! APPEND the record to the journal, and only then COMMIT it into the
+//! registry (`commit_*`). So a refused append leaves the status this
+//! store reports exactly where it was, and a restart replays what the
+//! live view was already saying — the two views cannot disagree, because
+//! the live one is folded from the log by construction. Writing first
+//! and folding after is not a courtesy; it is the only order in which a
+//! reported status is a status something durable justifies.
+//!
 //! **A refusal is recorded before it is answered.** An illegal status
 //! move goes to the journal and the bus as a `transition-refused`, and
 //! only then comes back to the caller as a typed error. The registry
@@ -34,9 +45,10 @@ use std::sync::Mutex;
 
 use jinn_todo::{
     dispatch as translate, Answer, CommentRequest, CreateRequest, DispatchRequest, DispatchStatus,
-    ErrorCode, EventKind, EventsRequest, Extensions, GetRequest, ListRequest, Moved, StatusChange,
-    TodoError, TodoEvent, TodoRecord, Todos, TreeRequest, UpdateRequest, API_VERSION, EVENT_TOPIC,
-    OP_COMMENT, OP_CREATE, OP_DISPATCH, OP_EVENTS, OP_GET, OP_LIST, OP_TREE, OP_UPDATE,
+    Dispatching, ErrorCode, EventKind, EventsRequest, Extensions, GetRequest, ListRequest, Moved,
+    RefusedChange, StatusChange, TodoError, TodoEvent, TodoRecord, Todos, TreeRequest,
+    UpdateRequest, API_VERSION, EVENT_TOPIC, OP_COMMENT, OP_CREATE, OP_DISPATCH, OP_EVENTS, OP_GET,
+    OP_LIST, OP_TREE, OP_UPDATE,
 };
 use serde::Deserialize;
 
@@ -210,21 +222,17 @@ pub fn session_call(
     })
 }
 
-/// `create`: the Todo, its journal's first line, and its `created` event.
-/// The journal is written BEFORE the Todo is answered for, so a Todo a
-/// caller holds an id for is a Todo that survives a crash.
+/// `create`: the Todo's first journal line, and only then the Todo. A
+/// caller that holds an id holds one that survives a crash, and a
+/// `created` line that could not be written leaves NO Todo behind — not
+/// one that a later replay would have to disagree with.
 fn on_create(payload: &[u8]) -> Result<serde_json::Value, TodoError> {
     let request: CreateRequest = decode(payload, "create")?;
     let now = now_ms()?;
     let spec = request.spec;
-    let created = with_todos(|todos| todos.create(spec.clone(), now))?;
-    if let Err(error) = journal::created(&created.todo_id, &spec, now) {
-        // The durable record did not land, so the Todo does not exist.
-        // Nothing half-created is left for a later replay to disagree
-        // with.
-        with_todos(|todos| todos.forget(&created.todo_id));
-        return Err(error);
-    }
+    let created = with_todos(|todos| todos.plan_create(&spec, now))?;
+    journal::created(&created.todo_id, &spec, now)?;
+    with_todos(|todos| todos.commit_create(&created, spec.clone(), now));
     record_event(
         &created.todo_id,
         EventKind::Created {
@@ -237,15 +245,35 @@ fn on_create(payload: &[u8]) -> Result<serde_json::Value, TodoError> {
     Ok(serde_json::to_value(created).expect("encodes"))
 }
 
-/// Writes one status move to the journal and puts it on the bus. The
-/// `closed` that a terminal move implies rides along from the
-/// definition's own `move_events`, so a provider cannot emit one without
-/// the other.
+/// Lands one status move in the ONE order this store is allowed to use:
+/// the journal first, the registry second, the bus last. A move whose
+/// line did not land changes nothing a reader can see. The `closed` that
+/// a terminal move implies rides along from the definition's own
+/// `move_events`, so a provider cannot emit one without the other.
 fn land_change(todo_id: &str, change: &StatusChange, now: u64) -> Result<(), TodoError> {
     journal::status_changed(todo_id, change, now)?;
+    with_todos(|todos| todos.commit_change(todo_id, change));
     for kind in Todos::move_events(change) {
         record_event(todo_id, kind);
     }
+    Ok(())
+}
+
+/// Lands one REFUSED attempt in the same order: the journal, then the
+/// record, then the bus. A refusal whose line did not land is answered
+/// as the append's own failure — never as a refusal the record does not
+/// hold.
+fn land_refusal(todo_id: &str, refused: &RefusedChange, now: u64) -> Result<(), TodoError> {
+    journal::transition_refused(todo_id, refused, now)?;
+    with_todos(|todos| todos.commit_refusal(todo_id, refused));
+    record_event(
+        todo_id,
+        EventKind::TransitionRefused {
+            from: refused.from,
+            to: refused.to,
+            actor: refused.actor.clone(),
+        },
+    );
     Ok(())
 }
 
@@ -261,7 +289,7 @@ fn on_update(payload: &[u8]) -> Result<serde_json::Value, TodoError> {
     let now = now_ms()?;
     let todo_id = request.todo_id.clone();
     let moved = with_todos(|todos| {
-        todos.update(&todo_id, request.status, actor, request.note.clone(), now)
+        todos.plan_update(&todo_id, request.status, actor, request.note.clone(), now)
     })?;
     match moved {
         Moved::Changed(change) => {
@@ -270,15 +298,7 @@ fn on_update(payload: &[u8]) -> Result<serde_json::Value, TodoError> {
             record_of(&todo_id)
         }
         Moved::Refused(refused, error) => {
-            journal::transition_refused(&todo_id, &refused, now)?;
-            record_event(
-                &todo_id,
-                EventKind::TransitionRefused {
-                    from: refused.from,
-                    to: refused.to,
-                    actor: refused.actor.clone(),
-                },
-            );
+            land_refusal(&todo_id, &refused, now)?;
             wake_at(now)?;
             Err(error)
         }
@@ -291,8 +311,9 @@ fn on_comment(payload: &[u8]) -> Result<serde_json::Value, TodoError> {
     let actor = request.attribution.check()?;
     let now = now_ms()?;
     let todo_id = request.todo_id.clone();
-    let comment = with_todos(|todos| todos.comment(&todo_id, &request.body, actor, now))?;
+    let comment = with_todos(|todos| todos.plan_comment(&todo_id, &request.body, actor, now))?;
     journal::commented(&todo_id, &comment, now)?;
+    with_todos(|todos| todos.commit_comment(&todo_id, &comment));
     record_event(
         &todo_id,
         EventKind::Commented {
@@ -321,24 +342,26 @@ fn on_dispatch(payload: &[u8]) -> Result<serde_json::Value, TodoError> {
     let now = now_ms()?;
     let todo_id = request.todo_id.clone();
     let spec = request.dispatch;
-    let (dispatch, change) =
-        with_todos(|todos| todos.begin_dispatch(&todo_id, &spec, actor, now))?;
+    let planned = with_todos(|todos| todos.plan_dispatch(&todo_id, &spec, actor, now))?;
+    let (change, dispatch) = match planned {
+        Dispatching::Opens { change, dispatch } => (change, dispatch),
+        // A terminal Todo is not dispatched. The attempt is a fact and is
+        // recorded exactly as any other refusal, before the caller hears
+        // it.
+        Dispatching::Refused(refused, error) => {
+            land_refusal(&todo_id, &refused, now)?;
+            wake_at(now)?;
+            return Err(error);
+        }
+    };
     if let Some(change) = &change {
         land_change(&todo_id, change, now)?;
     }
-    if let Err(error) = journal::dispatch_started(&todo_id, &dispatch, now) {
-        // The dispatch was never durably started, so it is ended here
-        // rather than left in flight with nothing driving it.
-        end_dispatch(
-            &todo_id,
-            &dispatch.dispatch_id,
-            DispatchStatus::Failed,
-            Some(error.message.clone()),
-            String::new(),
-            now,
-        )?;
-        return Err(error);
-    }
+    // The `dispatch-started` line lands BEFORE the registry holds a
+    // running dispatch, so a failed append leaves no dispatch in flight
+    // to end and nothing for a replay to disagree with.
+    journal::dispatch_started(&todo_id, &dispatch, now)?;
+    with_todos(|todos| todos.commit_dispatch(&todo_id, &dispatch));
     record_event(
         &todo_id,
         EventKind::Dispatched {
@@ -430,8 +453,8 @@ fn open_and_send(
     Ok((session_id, turn_id))
 }
 
-/// Ends one dispatch: the registry, the journal, and the event — in that
-/// order, so nothing is announced that is not recorded.
+/// Ends one dispatch: the journal, the registry, and the event — in that
+/// order, so nothing is REPORTED that is not recorded.
 fn end_dispatch(
     todo_id: &str,
     dispatch_id: &str,
@@ -441,9 +464,10 @@ fn end_dispatch(
     now: u64,
 ) -> Result<(), TodoError> {
     let dispatch = with_todos(|todos| {
-        todos.end_dispatch(todo_id, dispatch_id, status, reason.clone(), answer, now)
+        todos.plan_end_dispatch(todo_id, dispatch_id, status, reason.clone(), answer, now)
     })?;
     journal::dispatch_ended(todo_id, &dispatch, now)?;
+    with_todos(|todos| todos.commit_end_dispatch(todo_id, &dispatch));
     record_event(
         todo_id,
         EventKind::DispatchEnded {

@@ -21,11 +21,16 @@
 //!
 //! # History is not rewritten to make it true
 //!
-//! The interrupted Todo's `declared-status` stays `executing`, because
-//! that is what happened. The journal is append-only in the strong sense:
-//! this store has no code path that edits or removes a line it wrote. The
-//! honest reading is a DERIVATION over the whole document, not a repair
-//! of part of it.
+//! The line that says the work started stays exactly as it was written.
+//! What the recovery adds is a NEW line: on adoption this store appends
+//! the move the fold implies — `executing -> blocked`, carrying the
+//! dispatch's reason as its note — so the ledger a caller can act on and
+//! the status a reader is shown are the same status
+//! ([`jinn_todo::Todos::plan_recovery`]). Both readings are then in the
+//! document, in order, and neither replaced the other. The journal is
+//! append-only in the strong sense: this store has no code path that
+//! edits or removes a line it wrote, and the only rewrite it ever
+//! performs drops a torn TAIL that was never a record (see `heal`).
 
 wit_bindgen::generate!({
     path: "../../../kernel-pin/wit",

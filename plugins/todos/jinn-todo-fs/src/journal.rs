@@ -201,19 +201,27 @@ fn heal(path: &str, bytes: &[u8], torn: usize) -> Result<(), TodoError> {
     Ok(())
 }
 
-/// Records the recovery an adopted Todo owes, if any.
+/// Records the recovery an adopted Todo owes, if any — the journal line
+/// first, the registry after, like every other move this seam makes. A
+/// recovery whose line could not be written fails the activation instead
+/// of leaving a store reporting a status its journal never recorded.
 fn recover(todo_id: &str) -> Result<(), TodoError> {
     let now = crate::store::now_ms()?;
     let change = {
-        let mut held = TODOS.lock().unwrap();
-        held.as_mut()
+        let held = TODOS.lock().unwrap();
+        held.as_ref()
             .expect("activate holds the registry")
-            .recover(todo_id, now)
+            .plan_recovery(todo_id, now)
     };
-    match change {
-        Some(change) => status_changed(todo_id, &change, now),
-        None => Ok(()),
-    }
+    let Some(change) = change else { return Ok(()) };
+    status_changed(todo_id, &change, now)?;
+    TODOS
+        .lock()
+        .unwrap()
+        .as_mut()
+        .expect("activate holds the registry")
+        .commit_change(todo_id, &change);
+    Ok(())
 }
 
 /// The last segment of a listed path.

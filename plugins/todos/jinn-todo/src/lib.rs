@@ -90,7 +90,7 @@ pub use spec::{
     ListRequest, TodoCreated, TodoSpec, TreeRequest, UpdateRequest,
 };
 pub use status::{Refusal, Status};
-pub use todos::{event_kind, Moved, Todos, EVENT_RING};
+pub use todos::{event_kind, Dispatching, Moved, Todos, EVENT_RING};
 
 /// The answer envelope's version (additive within `0.x`).
 pub const API_VERSION: &str = "0.1";
