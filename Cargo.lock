@@ -263,6 +263,7 @@ name = "jinn-api"
 version = "0.1.0"
 dependencies = [
  "jinn-engine",
+ "jinn-session",
  "serde",
  "serde_json",
 ]

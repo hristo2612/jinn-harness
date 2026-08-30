@@ -21,11 +21,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use jinn_api::{
-    decode_engine_answer, engine_list, engine_routable, engine_route, is_engines_path, route,
-    run_id_payload, run_payload, Answer, ApiError, EngineRoute, ErrorCode, Outcome, ENGINE_METHODS,
+    decode_engine_answer, decode_session_answer, engine_list, engine_routable, engine_route,
+    is_engines_path, is_sessions_path, route, run_id_payload, run_payload, session_payload,
+    session_route, store_list, store_routable, Answer, ApiError, EngineRoute, ErrorCode, Outcome,
+    SessionRoute, ENGINE_METHODS, SESSION_METHODS,
 };
 use jinn_api_http_wire::{error_answer_response, error_response, parse, response, Parse};
 use jinn_engine::{engine_contract, OP_DESCRIBE};
+use jinn_session::{store_contract, OP_DESCRIBE as OP_DESCRIBE_STORE};
 use serde::Deserialize;
 
 wit_bindgen::generate!({
@@ -62,6 +65,11 @@ struct HttpConfig {
     /// spending a kernel call.
     #[serde(default)]
     engines: Vec<String>,
+    /// The session stores this API may route to, written by the profile
+    /// from the SAME source as this entry's `jinn:session.<id>` grants —
+    /// the same discipline as `engines`.
+    #[serde(default)]
+    stores: Vec<String>,
 }
 
 fn default_host() -> String {
@@ -77,6 +85,7 @@ struct Conn {
 static LISTENER: AtomicU64 = AtomicU64::new(0);
 static CONNS: Mutex<Vec<Conn>> = Mutex::new(Vec::new());
 static ENGINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 fn fault(context: &str, error: impl std::fmt::Debug) -> GuestFault {
     GuestFault::Failed(format!("{context}: {error:?}"))
@@ -195,6 +204,85 @@ fn dispatch_engines(method: &str, path: &str, body: &[u8]) -> Vec<u8> {
     })
 }
 
+/// One granted store call: resolve `jinn:session.<id>`, call it, decode
+/// its answer into this seam's outcome. A store with no provider mounted
+/// is an ordinary typed answer naming it — never a fault, never a 500.
+fn store_call(
+    contract: &str,
+    operation: &str,
+    payload: &[u8],
+) -> Result<serde_json::Value, ApiError> {
+    let handle = services::resolve(contract).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Unavailable,
+            format!("{contract} is not resolvable: {error:?}"),
+        )
+    })?;
+    let bytes = services::call(handle, operation, payload).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Refused,
+            format!("{contract}/{operation} refused: {error:?}"),
+        )
+    })?;
+    decode_session_answer(&bytes)
+}
+
+/// The sessions surface: the stores this API may route to, and one
+/// session's life in one of them. Every route is exactly one granted
+/// contract call per store addressed — the store list is one per
+/// configured store.
+fn dispatch_sessions(
+    method: &str,
+    path: &str,
+    query: serde_json::Value,
+    body: &[u8],
+) -> Vec<u8> {
+    let Some(sessions_route) = session_route(method, path) else {
+        return route_miss(
+            SESSION_METHODS
+                .iter()
+                .any(|candidate| session_route(candidate, path).is_some()),
+        );
+    };
+    let stores = STORES.lock().unwrap().clone();
+    let outcome = match &sessions_route {
+        // The list is the kernel's answer per store: each provider's own
+        // `describe`, or the typed reason it could not answer.
+        SessionRoute::Stores => Ok(serde_json::to_value(store_list(stores.iter().map(|store| {
+            (
+                store.clone(),
+                store_call(&store_contract(store), OP_DESCRIBE_STORE, &[]),
+            )
+        })))
+        .expect("encodes")),
+        _ => {
+            let store = sessions_route
+                .store()
+                .expect("a call route names its store");
+            let operation = sessions_route
+                .operation()
+                .expect("a call route names its operation");
+            store_routable(&stores, store).and_then(|contract| {
+                // A write takes the BODY, a read takes the query: a route
+                // never reads both, so a caller cannot smuggle a field
+                // past the shape its method declares.
+                let document = if sessions_route.takes_body() {
+                    json_object(body)?
+                } else {
+                    query
+                };
+                let payload = serde_json::to_vec(&session_payload(&sessions_route, document))
+                    .expect("encodes");
+                store_call(&contract, operation, &payload)
+            })
+        }
+    };
+    answered(&match outcome {
+        Ok(value) => Answer::ok(value),
+        Err(error) => Answer::error(error),
+    })
+}
+
 /// One request → one contract call → one response.
 fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> Vec<u8> {
     // The engines surface is routed first: its paths carry two
@@ -202,6 +290,11 @@ fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> 
     // (one parameter, one contract) cannot shape.
     if is_engines_path(path) {
         return dispatch_engines(method, path, body);
+    }
+    // The sessions surface has the same shape for the same reason: a
+    // store id and a session id, on a per-store contract.
+    if is_sessions_path(path) {
+        return dispatch_sessions(method, path, query, body);
     }
     let Some((route, id)) = route(method, path) else {
         return route_miss(
@@ -349,6 +442,7 @@ impl Guest for Http {
         LISTENER.store(listener, Ordering::SeqCst);
         CONNS.lock().unwrap().clear();
         *ENGINES.lock().unwrap() = config.engines;
+        *STORES.lock().unwrap() = config.stores;
         Ok(())
     }
 
