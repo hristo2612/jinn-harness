@@ -39,7 +39,7 @@ use std::time::{Duration, Instant};
 
 use composition::api::{get, post};
 use composition::daemon::{jinnd_source, pinned_commit, pinned_daemon};
-use composition::kit::{artifact_hash, entry_mut, fresh_todo_root, Daemon};
+use composition::kit::{artifact_hash, entry_mut, fresh_todo_root, Daemon, ExtraDaemonLoad};
 
 /// The switchable Todo store slot's entry id and the store id it serves.
 const DEFAULT_ID: &str = "jinn-todo-default";
@@ -65,6 +65,18 @@ const DEFAULT_ENGINE: &str = "default";
 /// live for tens of seconds, which is what makes it both the "another
 /// engine" proof and the mid-flight one.
 const SPAWN_ENGINE: &str = "spawn";
+
+/// The env var that turns the VENDOR leg on, and its only home. A vendor
+/// CLI spends real inference under the operator's own authentication, so
+/// that leg runs where a person asked for it by name and self-skips
+/// everywhere else — CI included, exactly as the pinned-daemon gate
+/// self-skips without a jinnd checkout. A skip is announced and proves
+/// NOTHING; it never stands in for a run.
+const VENDOR_GATE: &str = "JINN_HARNESS_TODO_VENDOR_ENGINE";
+/// What every dispatch in the vendor proof asks for: one line, from an
+/// engine that is metered. The echo leg is asked the same thing, so the
+/// two legs differ in the binding and in nothing else.
+const VENDOR_PROMPT: &str = "Reply with exactly: OK";
 
 /// The reason an interrupted dispatch carries, from its one home.
 const INTERRUPTED_REASON: &str = jinn_todo::journal::INTERRUPTED_REASON;
@@ -166,6 +178,27 @@ fn dispatch(port: u16, store: &str, todo: &str, engine: &str) -> serde_json::Val
     );
     assert_eq!(sent.status, 200, "{}", sent.raw);
     sent.body
+}
+
+/// Dispatches one Todo with an explicit message, so two legs can differ
+/// in the engine binding and in nothing else.
+fn dispatch_saying(
+    port: u16,
+    store: &str,
+    todo: &str,
+    engine: &str,
+    message: &str,
+) -> composition::api::Response {
+    post(
+        port,
+        &format!("/v1/todos/{store}/{todo}/dispatch"),
+        &serde_json::json!({
+            "store": SESSION_STORE,
+            "engine": { "engine": engine },
+            "message": message,
+            "actor": "planner"
+        }),
+    )
 }
 
 /// The last dispatch of a Todo record.
@@ -810,5 +843,187 @@ fn a_tree_and_a_list_answer_the_company_view_of_the_ledger() {
         &serde_json::json!({ "body": "anon", "actor": "  " }),
     );
     assert_ne!(blank.status, 200, "{}", blank.raw);
+    daemon.interrupt();
+}
+
+#[test]
+fn a_status_no_durable_line_justifies_is_never_a_status_this_store_reports() {
+    let Some((daemon, port, root)) = booted("todos-append-refused") else {
+        return;
+    };
+    let todo = create(port, DEFAULT_STORE, "work whose journal stops accepting");
+    assert_eq!(
+        update(port, DEFAULT_STORE, &todo, "executing", "planner").status,
+        200
+    );
+    let path = daemon.data(&format!("todos/{todo}.jsonl"));
+
+    // Withdraw exactly ONE authority and nothing else: the durable store
+    // may still read, list and rewrite its own directory, and may no
+    // longer APPEND to it. Everything above and below is untouched, so
+    // what follows is a failure of the durable write and of nothing else.
+    daemon.edit_profile_restarting(DEFAULT_ID, |document| {
+        let entry = entry_mut(document, DEFAULT_ID);
+        for grant in entry["config"]["grants"].as_array_mut().expect("grants") {
+            if grant["contract"] == "jinn:fs" {
+                grant["ops"] = serde_json::json!(["read", "list", "meta", "write"]);
+            }
+        }
+    });
+    daemon.eventually("the re-granted store to answer", || {
+        get(port, &format!("/v1/todos/{DEFAULT_STORE}/{todo}")).status == 200
+    });
+    // What the store reports with its journal intact, and the bytes that
+    // justify it. Both are read AFTER the restart, so the comparison is
+    // between two readings of the same document.
+    let before = record(port, DEFAULT_STORE, &todo);
+    let bytes_before = std::fs::read(&path).expect("a journal");
+    assert_eq!(before["declared-status"], "executing", "{before}");
+
+    // (a) The move FAILS, typed, naming the durable write that refused.
+    let refused = update(port, DEFAULT_STORE, &todo, "in-review", "planner");
+    assert_ne!(
+        refused.status, 200,
+        "a move whose record could not be written is not a move: {}",
+        refused.raw
+    );
+    assert!(
+        refused.body["error"]["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("could not be appended to"),
+        "the refusal names the write that failed: {}",
+        refused.raw
+    );
+
+    // (b) The status the store REPORTS did not move, and its history did
+    // not grow — the reported state is still exactly what the journal
+    // holds, byte for byte.
+    let after = record(port, DEFAULT_STORE, &todo);
+    assert_eq!(after["status"], before["status"], "{after}");
+    assert_eq!(
+        after["declared-status"], before["declared-status"],
+        "{after}"
+    );
+    assert_eq!(after["history"], before["history"], "{after}");
+    assert_eq!(
+        std::fs::read(&path).expect("a journal"),
+        bytes_before,
+        "the journal is byte-identical, so nothing may have advanced above it"
+    );
+
+    // The same holds for a COMMENT: refused, and not reported either.
+    let commented = post(
+        port,
+        &format!("/v1/todos/{DEFAULT_STORE}/{todo}/comments"),
+        &serde_json::json!({ "body": "started", "actor": "planner" }),
+    );
+    assert_ne!(commented.status, 200, "{}", commented.raw);
+    assert_eq!(
+        record(port, DEFAULT_STORE, &todo)["comments"],
+        before["comments"],
+        "a comment whose line did not land is not a comment the store holds"
+    );
+
+    // (c) The binding assertion: a RESTART replays exactly what the live
+    // view was already saying. The two views of one Todo cannot disagree,
+    // because the live one is folded from the log rather than kept beside
+    // it.
+    daemon.kill();
+    let daemon = reboot(&root);
+    let replayed = record(port, DEFAULT_STORE, &todo);
+    assert_eq!(replayed["status"], after["status"], "{replayed}");
+    assert_eq!(
+        replayed["declared-status"], after["declared-status"],
+        "{replayed}"
+    );
+    assert_eq!(replayed["history"], after["history"], "{replayed}");
+    assert_eq!(replayed["comments"], after["comments"], "{replayed}");
+    daemon.interrupt();
+}
+
+#[test]
+fn the_same_dispatch_runs_over_a_vendor_engine_when_the_operator_names_one() {
+    // The three-layer composition against a REAL vendor CLI: the same
+    // Todo store, the same session store, the same message, and one
+    // field different. Gated by name because it spends metered inference
+    // under the operator's own authentication.
+    let Ok(named) = std::env::var(VENDOR_GATE) else {
+        eprintln!(
+            "SKIPPED (loudly): the vendor leg of the three-layer composition did NOT run in \
+             this pass and nothing here reports one. Set {VENDOR_GATE}=claude (or codex) on a \
+             host where that CLI is authenticated to run it; the echo and child-backed legs \
+             prove the binding swap between two in-repo providers and cannot stand in for a \
+             real vendor CLI."
+        );
+        return;
+    };
+    let engine = named.trim().to_owned();
+    assert!(
+        !engine.is_empty(),
+        "{VENDOR_GATE} names the engine to bind (claude or codex); an empty value is not a \
+         request and is not a skip"
+    );
+    // A vendor CLI's load is not in the daemon budget's model.
+    let _load = ExtraDaemonLoad::all_but_one();
+    let Some((daemon, port, _root)) = booted("todos-vendor-engine") else {
+        return;
+    };
+    // Asked for and ABSENT is a failure, never a quiet pass: the operator
+    // named an engine, so its absence is the answer they need.
+    let engines = get(port, "/v1/engines");
+    assert_eq!(engines.status, 200, "{}", engines.raw);
+    assert!(
+        engines.body["engines"]
+            .as_array()
+            .is_some_and(|mounted| mounted
+                .iter()
+                .any(|entry| entry["engine"] == engine.as_str())),
+        "{VENDOR_GATE} named {engine:?}, which this profile does not mount — the kit writes a \
+         vendor entry only where that CLI is on the host: {}",
+        engines.raw
+    );
+
+    // Leg one: the echo engine, asked exactly what the vendor will be.
+    let echoed = create(port, DEFAULT_STORE, "the same brief, over echo");
+    let sent = dispatch_saying(port, DEFAULT_STORE, &echoed, DEFAULT_ENGINE, VENDOR_PROMPT);
+    assert_eq!(sent.status, 200, "{}", sent.raw);
+    let first = settled(&daemon, port, DEFAULT_STORE, &echoed);
+    assert_eq!(last_dispatch(&first)["status"], "done", "{first}");
+    assert_eq!(last_dispatch(&first)["engine"], DEFAULT_ENGINE);
+
+    // Leg two: ONE field different — the engine the dispatch names. The
+    // Todo store, the session store, the API and every entry in the
+    // profile are the same ones leg one ran through.
+    let vended = create(port, DEFAULT_STORE, "the same brief, over a vendor CLI");
+    let sent = dispatch_saying(port, DEFAULT_STORE, &vended, &engine, VENDOR_PROMPT);
+    assert_eq!(sent.status, 200, "{}", sent.raw);
+    let second = settled(&daemon, port, DEFAULT_STORE, &vended);
+    let landed = last_dispatch(&second);
+    assert_eq!(
+        landed["status"], "done",
+        "the vendor CLI answered and the Todo store recorded it: {second}"
+    );
+    assert_eq!(landed["engine"], engine.as_str(), "{second}");
+    assert_eq!(landed["session-store"], SESSION_STORE, "{second}");
+    let answer = landed["answer"].as_str().unwrap_or_default();
+    assert!(
+        answer.contains("OK"),
+        "a real vendor answer reached the Todo through the session: {second}"
+    );
+    // The MIDDLE layer carried it: the session the dispatch opened is on
+    // the sessions surface, bound to the vendor engine and to this Todo.
+    let session_id = landed["session-id"].as_str().expect("a session id");
+    let session = get(port, &format!("/v1/sessions/{SESSION_STORE}/{session_id}"));
+    assert_eq!(session.status, 200, "{}", session.raw);
+    assert_eq!(session.body["engine"], engine.as_str());
+    assert_eq!(session.body["metadata"]["todo-id"], vended.as_str());
+    // Said out loud, so a reader of the run's output can tell a leg that
+    // RAN from one that was skipped without reading the assertions.
+    eprintln!(
+        "VENDOR LEG RAN: engine {engine:?} answered a Todo dispatched through session store \
+         {SESSION_STORE:?}; answer {:?}",
+        answer.trim()
+    );
     daemon.interrupt();
 }
