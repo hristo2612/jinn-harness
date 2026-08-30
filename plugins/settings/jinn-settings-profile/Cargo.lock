@@ -164,6 +164,7 @@ name = "jinn-api"
 version = "0.1.0"
 dependencies = [
  "jinn-engine",
+ "jinn-session",
  "serde",
  "serde_json",
 ]
@@ -172,6 +173,16 @@ dependencies = [
 name = "jinn-engine"
 version = "0.1.0"
 dependencies = [
+ "jinn-settings",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jinn-session"
+version = "0.1.0"
+dependencies = [
+ "jinn-engine",
  "jinn-settings",
  "serde",
  "serde_json",

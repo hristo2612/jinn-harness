@@ -1,0 +1,23 @@
+# The sessions seam's kit builder:
+#   session-kit kit <root> --port N [--claude-bin PATH] [--codex-bin PATH]
+#       [--poll-ms N] [--probe-every-ms N] [--every-ms N] [--tick-ms N]
+#   — compiles the store guests beside the engine providers, the api trio,
+#   the settings pair and the cron pair, encodes components, and writes the
+#   pinned sessions profile. Boot the result with `--data <root>` (the
+#   operator layout).
+[package]
+name = "session-kit"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+api-kit = { path = "../api-kit" }
+cron-kit = { path = "../cron-kit" }
+engine-kit = { path = "../engine-kit" }
+jinn-cron = { path = "../../plugins/cron/jinn-cron" }
+jinn-engine = { path = "../../plugins/engines/jinn-engine" }
+jinn-session = { path = "../../plugins/sessions/jinn-session" }
+serde_json = "1.0"

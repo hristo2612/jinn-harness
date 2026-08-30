@@ -25,6 +25,7 @@ members = [
     "tools/cron-kit",
     "tools/engine-kit",
     "tools/harness-pin",
+    "tools/session-kit",
 ]
 
 [workspace.package]
