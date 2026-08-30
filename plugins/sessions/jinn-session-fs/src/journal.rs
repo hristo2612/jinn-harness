@@ -129,6 +129,13 @@ pub fn adopt_all(config: &StoreConfig) -> Result<(), SessionError> {
                 format!("the journal {path:?} does not replay: {error}"),
             )
         })?;
+        // No complete record is the absence of the SESSION. Adopting a
+        // default `Replayed` would install a session nobody created —
+        // empty spec, sitting `idle` — out of bytes that were never a
+        // record. See `FINDINGS.md` #36.
+        let Some(replayed) = replayed else {
+            continue;
+        };
         let mut held = SESSIONS.lock().unwrap();
         held.as_mut()
             .expect("activate holds the registry")

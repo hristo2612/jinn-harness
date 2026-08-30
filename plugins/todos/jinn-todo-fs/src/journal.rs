@@ -174,9 +174,19 @@ pub fn adopt_all(config: &StoreConfig) -> Result<(), TodoError> {
                 format!("the journal {path:?} does not replay: {error}"),
             )
         })?;
-        if replayed.torn_tail_bytes > 0 {
-            heal(&path, &bytes, replayed.torn_tail_bytes)?;
+        let torn = replayed
+            .as_ref()
+            .map_or_else(|| torn_tail(&bytes), |replayed| replayed.torn_tail_bytes);
+        if torn > 0 {
+            heal(&path, &bytes, torn)?;
         }
+        // No complete record is the absence of the TODO. Adopting a
+        // default `Replayed` would install a Todo nobody created — empty
+        // spec, default status — and then RECOVER it, writing a record
+        // into a document that held none. See `FINDINGS.md` #36.
+        let Some(replayed) = replayed else {
+            continue;
+        };
         {
             let mut held = TODOS.lock().unwrap();
             held.as_mut()
@@ -224,6 +234,17 @@ fn recover(todo_id: &str) -> Result<(), TodoError> {
         .expect("activate holds the registry")
         .commit_change(todo_id, &change);
     Ok(())
+}
+
+/// The trailing bytes of a document that were never a record: everything
+/// after the last line terminator. The same split
+/// `jinn_todo::journal::replay` makes, needed here for the one document
+/// it replays no record out of at all.
+fn torn_tail(bytes: &[u8]) -> usize {
+    bytes
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(bytes.len(), |last| bytes.len() - last - 1)
 }
 
 /// The last segment of a listed path.
