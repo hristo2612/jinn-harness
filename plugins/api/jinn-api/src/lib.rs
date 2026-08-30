@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 pub mod engines;
 pub mod kernel;
 pub mod sessions;
+pub mod todos;
 
 pub use engines::{
     decode_engine_answer, engine_api_error, engine_list, engine_routable, engine_route,
@@ -26,6 +27,11 @@ pub use sessions::{
     decode_session_answer, is_sessions_path, no_such_store, session_api_error, session_payload,
     session_route, store_list, store_routable, SessionRoute, StoreEntry, StoreList, SESSIONS_PATH,
     SESSION_METHODS,
+};
+pub use todos::{
+    decode_todo_answer, is_todos_path, no_such_todo_store, todo_api_error, todo_payload,
+    todo_route, todo_store_list, todo_store_routable, TodoRoute, TodoStoreEntry, TodoStoreList,
+    TODOS_PATH, TODO_METHODS,
 };
 
 pub use kernel::{

@@ -27,6 +27,7 @@ members = [
     "tools/engine-kit",
     "tools/harness-pin",
     "tools/session-kit",
+    "tools/todo-kit",
 ]
 
 [workspace.package]

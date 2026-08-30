@@ -1,0 +1,26 @@
+# The todos seam's kit builder. Usage:
+#
+#     cargo run -p todo-kit -- kit <root> --port N [--poll-ms N] …
+#
+# Builds every guest the todos profile mounts (the two Todo stores beside
+# the two session stores, the engine providers, the api trio, the settings
+# pair and the cron seam), pins each by content hash, and writes
+# `<root>/profile.json`. The seam's profile ENTRIES live in the library
+# half (one home per fact).
+[package]
+name = "todo-kit"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+api-kit = { path = "../api-kit" }
+cron-kit = { path = "../cron-kit" }
+engine-kit = { path = "../engine-kit" }
+session-kit = { path = "../session-kit" }
+jinn-cron = { path = "../../plugins/cron/jinn-cron" }
+jinn-session = { path = "../../plugins/sessions/jinn-session" }
+jinn-todo = { path = "../../plugins/todos/jinn-todo" }
+serde_json = "1.0"
