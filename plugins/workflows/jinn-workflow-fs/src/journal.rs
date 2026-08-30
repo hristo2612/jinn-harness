@@ -159,13 +159,16 @@ pub fn run_ended(
 /// never a record. The count is reported by `describe`, so a store that
 /// discarded bytes says so.
 ///
-/// **A document with no record is absence, and is not adopted.** A
-/// daemon killed inside its very first append leaves bytes that were
-/// never a record; `jinn_workflow::journal::replay` answers
+/// **A document with no record is absence — and absence is three things,
+/// not one.** A daemon killed inside its very first append leaves bytes
+/// that were never a record; `jinn_workflow::journal::replay` answers
 /// `RunDocument::Absent` for it and this reads that answer literally. No
 /// run is installed, so no recovery is planned and nothing is appended:
-/// the document that held no record still holds none after boot. The
-/// count is reported by `describe` (`FINDINGS.md` #36).
+/// the document that held no record still holds none after boot. That is
+/// the FIRST thing. The second is the BYTES, which are dropped so nothing
+/// can be appended onto them, and the third is the ID, which is RESERVED
+/// so the next mint cannot hand it out again. The count is reported by
+/// `describe` (`FINDINGS.md` #36).
 ///
 /// **What it does NOT do is recover.** The recovery every adopted run
 /// owes is the shared store's, immediately after this answers and before
@@ -175,7 +178,8 @@ pub fn run_ended(
 /// # Errors
 ///
 /// A directory is unreadable for any reason but absence, a document in it
-/// does not replay, or a healed document could not be written back.
+/// does not replay, or a document this store had to repair could not be
+/// written or removed.
 pub fn adopt_all(config: &StoreConfig) -> Result<(), WorkflowError> {
     let root = config.dir.clone().unwrap_or_else(|| DEFAULT_DIR.to_owned());
     for (id, path, bytes) in documents(&format!("{root}/{WORKFLOW_DIR}"))? {
@@ -185,17 +189,17 @@ pub fn adopt_all(config: &StoreConfig) -> Result<(), WorkflowError> {
                 format!("the journal {path:?} does not replay: {error}"),
             )
         })?;
-        if torn > 0 {
-            heal(&path, &bytes, torn)?;
-        }
         // No complete `defined` record is no WORKFLOW — not a workflow
         // with nothing in it. Adopting the empty vector would install an
         // id that answers `get-workflow` with `latest-revision: 0`: a
         // workflow nobody defined, which is the same fabrication as a run
         // nobody started.
         if revisions.is_empty() {
-            record_less();
+            record_less(&path, &bytes, |workflows| workflows.reserve_workflow(&id))?;
             continue;
+        }
+        if torn > 0 {
+            heal(&path, &bytes, torn)?;
         }
         with_registry(|workflows| workflows.adopt_workflow(&id, revisions));
     }
@@ -206,17 +210,19 @@ pub fn adopt_all(config: &StoreConfig) -> Result<(), WorkflowError> {
                 format!("the journal {path:?} does not replay: {error}"),
             )
         })?;
-        if document.torn_tail_bytes() > 0 {
-            heal(&path, &bytes, document.torn_tail_bytes())?;
-        }
         // The typed absence, honoured. `RunDocument::Absent` carries no
         // `Replayed`, so there is nothing here to adopt even by mistake —
         // and because nothing is adopted, `recover_all` plans nothing for
         // it and no line is ever written into the document. That is the
         // whole guarantee: a heal DROPS bytes and never creates a record.
         match document {
-            RunDocument::Absent { .. } => record_less(),
+            RunDocument::Absent { .. } => {
+                record_less(&path, &bytes, |workflows| workflows.reserve_run(&id))?;
+            }
             RunDocument::Run(replayed) => {
+                if replayed.torn_tail_bytes > 0 {
+                    heal(&path, &bytes, replayed.torn_tail_bytes)?;
+                }
                 with_registry(|workflows| workflows.adopt_run(&id, *replayed));
             }
         }
@@ -224,22 +230,50 @@ pub fn adopt_all(config: &StoreConfig) -> Result<(), WorkflowError> {
     Ok(())
 }
 
-/// Counts one document this store read and found no record in.
+/// Answers one document this store read and found no record in: the bytes
+/// go, the id is spoken for, and the count says both happened.
 ///
 /// It is not adopted and it is not an error: a daemon killed inside its
 /// very first append leaves exactly this, and the honest reading of it is
-/// that nothing was ever recorded there. It is COUNTED because a store
-/// that declines to make a record out of a document should say so — a
-/// reader asking `describe` gets evidence of the absence rather than the
-/// absence of evidence.
+/// that nothing was ever recorded there. Reading it that way is the FIRST
+/// of three things, and on its own it is not safe.
 ///
-/// The document keeps its name and is left where it is (empty, after the
-/// heal). The id is therefore never handed to a different run behind an
-/// operator's back: the registry's counter only ever advances past ids it
-/// ADOPTED, so a fresh mint may reuse this one — onto a document that
-/// now holds nothing, which is precisely a fresh run's starting state.
-fn record_less() {
+/// The document is REMOVED rather than trimmed. Every byte in it is a
+/// byte the reader's own law says was never a record, so nothing that is
+/// a record is lost — and a name that is gone cannot be appended onto by
+/// any later writer, which an emptied file left in place still can.
+///
+/// The ID is RESERVED in the same breath. The registry's counter only
+/// ever advanced past ids it ADOPTED, so the very next mint handed this
+/// one out again — proven against the real daemon, and the reuse this
+/// store survived only because the heal had emptied the file first. That
+/// is safety by derivation; reserving makes it safety by construction,
+/// and the two reasons do not lean on each other (`FINDINGS.md` #36).
+///
+/// It is COUNTED because a store that declines to make a record out of a
+/// document should say so — a reader asking `describe` gets evidence of
+/// the absence rather than the absence of evidence.
+///
+/// # Errors
+///
+/// The document could not be removed. That fails the activation rather
+/// than leaving a store running over bytes it has decided to append past.
+fn record_less(
+    path: &str,
+    bytes: &[u8],
+    reserve: impl FnOnce(&mut jinn_workflow::Workflows),
+) -> Result<(), WorkflowError> {
+    if !bytes.is_empty() {
+        fs::remove(path, "").map_err(|error| {
+            WorkflowError::new(
+                ErrorCode::Failed,
+                format!("the record-less document {path:?} could not be dropped: {error:?}"),
+            )
+        })?;
+    }
+    with_registry(reserve);
     *crate::store::RECORD_LESS_DOCUMENTS.lock().unwrap() += 1;
+    Ok(())
 }
 
 /// Every journal in one directory, as `(id, path, bytes)`. An absent

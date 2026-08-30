@@ -822,7 +822,11 @@ fn a_heal_drops_incomplete_bytes_and_never_writes_a_record() {
         return;
     };
 
-    let after = std::fs::read(&path).expect("the healed journal");
+    // No bytes at all: the document that held no record is DROPPED whole
+    // rather than trimmed to nothing, so there is no name left for a
+    // later writer to append onto. Either reading — gone, or present and
+    // empty — is "no bytes"; only bytes would be a failure.
+    let after = std::fs::read(&path).unwrap_or_default();
     assert_eq!(
         kinds(&after),
         Vec::<String>::new(),
@@ -1393,5 +1397,62 @@ fn the_same_run_runs_over_a_vendor_engine_when_the_operator_names_one() {
             .is_some_and(|answer| !answer.trim().is_empty()),
         "a vendor engine that answered nothing is not a proof: {settled}"
     );
+    daemon.interrupt();
+}
+
+/// The id this store mints after `minted` — the name a daemon killed
+/// inside its very next `start` would leave a document under.
+fn next_id(minted: &str) -> String {
+    let (prefix, number) = minted.rsplit_once('r').expect("a run id ends in r<number>");
+    let number: u64 = number.parse().expect("a numeric run id");
+    format!("{prefix}r{}", number + 1)
+}
+
+#[test]
+fn the_id_of_a_record_less_document_is_never_handed_to_a_new_run() {
+    // `a_heal_drops_incomplete_bytes_and_never_writes_a_record` proves the
+    // BYTES half at an id this store would not mint for a very long time.
+    // This is the ID half, at the id it mints NEXT — the one a daemon
+    // killed inside `start`'s first append actually leaves behind, and the
+    // one whose reuse turned an accepted absence into corruption one seam
+    // down (`FINDINGS.md` #36).
+    let Some((daemon, port, root)) = booted("workflows-record-less-id") else {
+        return;
+    };
+    let (workflow, _) = define(
+        port,
+        DEFAULT_STORE,
+        &one_node_spec("a run that really happened", DEFAULT_ENGINE),
+    );
+    let real = start(port, DEFAULT_STORE, &workflow);
+    settled(&daemon, port, DEFAULT_STORE, &real);
+
+    let absent = next_id(&real);
+    let path = daemon.data(&format!("workflows/runs/{absent}.jsonl"));
+    daemon.kill();
+    std::fs::write(&path, b"{").expect("write the record-less journal");
+    let daemon = reboot(&root);
+
+    let after = std::fs::read(&path).unwrap_or_default();
+    assert!(
+        after.is_empty(),
+        "the incomplete bytes survived the boot: {:?}",
+        String::from_utf8_lossy(&after)
+    );
+    let fresh = start(port, DEFAULT_STORE, &workflow);
+    assert_ne!(
+        fresh, absent,
+        "a new run was handed the record-less document's id"
+    );
+    settled(&daemon, port, DEFAULT_STORE, &fresh);
+    let document = run_journal(&daemon, &fresh).expect("the new run's journal");
+    assert_untorn(&document, "the run started after the absence");
+
+    // The boot after is where a fused line would show up as a replay that
+    // refuses and a store that fails to activate.
+    daemon.kill();
+    let daemon = reboot(&root);
+    assert_eq!(run(port, DEFAULT_STORE, &fresh)["status"], "done");
+    assert_eq!(run(port, DEFAULT_STORE, &real)["status"], "done");
     daemon.interrupt();
 }

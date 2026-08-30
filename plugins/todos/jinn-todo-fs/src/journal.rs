@@ -114,7 +114,7 @@ pub fn dispatch_ended(todo_id: &str, dispatch: &Dispatch, at_ms: u64) -> Result<
 /// that quietly skipped a corrupt Todo would answer `list` short and no
 /// one would know a piece of work was missing.
 ///
-/// # Two things this does BESIDES reading
+/// # Three things this does BESIDES reading
 ///
 /// **A torn tail is healed.** The reader admits an unterminated last line
 /// as absence, but leaving those bytes in place would make the NEXT
@@ -124,6 +124,16 @@ pub fn dispatch_ended(todo_id: &str, dispatch: &Dispatch, at_ms: u64) -> Result<
 /// a torn tail is rewritten to its whole prefix. No RECORD is lost: by
 /// the reader's own law those bytes were never a record. The count is
 /// reported by `describe`, so a store that discarded bytes says so.
+///
+/// **A document with no record is absence — and absence is three things,
+/// not one.** Reading it as absence is the first
+/// (`jinn_todo::journal::replay` answers `None`, so no Todo is installed
+/// out of bytes that were never a record, and none is then recovered).
+/// The second is the BYTES: they are dropped, so nothing can be appended
+/// onto them. The third is the ID: the document is named for one, and a
+/// `create` that minted it again would write the new Todo's first record
+/// into that same document, so the id is RESERVED. Each is counted by
+/// `describe`, apart from the healed tails (`FINDINGS.md` #36).
 ///
 /// **An interrupted dispatch is recovered ON THE RECORD.** After
 /// adopting, `Todos::plan_recovery` answers the fold as a real
@@ -137,8 +147,8 @@ pub fn dispatch_ended(todo_id: &str, dispatch: &Dispatch, at_ms: u64) -> Result<
 /// # Errors
 ///
 /// The directory is unreadable for any reason but absence, a document in
-/// it does not replay, a healed document could not be written back, or
-/// the recovery line could not be appended.
+/// it does not replay, a document this store had to repair could not be
+/// written or removed, or the recovery line could not be appended.
 pub fn adopt_all(config: &StoreConfig) -> Result<(), TodoError> {
     let dir = config.dir.clone().unwrap_or_else(|| DEFAULT_DIR.to_owned());
     let entries = match fs::list(&dir) {
@@ -174,19 +184,17 @@ pub fn adopt_all(config: &StoreConfig) -> Result<(), TodoError> {
                 format!("the journal {path:?} does not replay: {error}"),
             )
         })?;
-        let torn = replayed
-            .as_ref()
-            .map_or_else(|| torn_tail(&bytes), |replayed| replayed.torn_tail_bytes);
-        if torn > 0 {
-            heal(&path, &bytes, torn)?;
-        }
         // No complete record is the absence of the TODO. Adopting a
         // default `Replayed` would install a Todo nobody created — empty
         // spec, default status — and then RECOVER it, writing a record
         // into a document that held none. See `FINDINGS.md` #36.
         let Some(replayed) = replayed else {
+            record_less(&path, &bytes, &todo_id)?;
             continue;
         };
+        if replayed.torn_tail_bytes > 0 {
+            heal(&path, &bytes, replayed.torn_tail_bytes)?;
+        }
         {
             let mut held = TODOS.lock().unwrap();
             held.as_mut()
@@ -213,6 +221,45 @@ fn heal(path: &str, bytes: &[u8], torn: usize) -> Result<(), TodoError> {
     Ok(())
 }
 
+/// Answers one document this store read and found no record in: the bytes
+/// go, the id is spoken for, and the count says both happened.
+///
+/// The document is REMOVED rather than trimmed. Every byte in it is a
+/// byte the reader's own law says was never a record, so nothing that is
+/// a record is lost — and a name that is gone cannot be appended onto by
+/// any later writer, which an emptied file left in place still can. The
+/// id is reserved in the same breath, so the registry never mints it even
+/// though its document no longer exists: two independent reasons the next
+/// `create` cannot land in an absent Todo's place, and neither leaning on
+/// the other (`FINDINGS.md` #36).
+///
+/// It is counted apart from a healed TAIL. Reporting it as one would
+/// describe a repair this store did not make: a trimmed tail leaves the
+/// records that were there, and this document had none.
+///
+/// # Errors
+///
+/// The document could not be removed. That fails the activation rather
+/// than leaving a store running over bytes it has decided to append past.
+fn record_less(path: &str, bytes: &[u8], todo_id: &str) -> Result<(), TodoError> {
+    if !bytes.is_empty() {
+        fs::remove(path, "").map_err(|error| {
+            TodoError::new(
+                ErrorCode::Failed,
+                format!("the record-less document {path:?} could not be dropped: {error:?}"),
+            )
+        })?;
+    }
+    TODOS
+        .lock()
+        .unwrap()
+        .as_mut()
+        .expect("activate holds the registry")
+        .reserve(todo_id);
+    *crate::store::RECORD_LESS_DOCUMENTS.lock().unwrap() += 1;
+    Ok(())
+}
+
 /// Records the recovery an adopted Todo owes, if any — the journal line
 /// first, the registry after, like every other move this seam makes. A
 /// recovery whose line could not be written fails the activation instead
@@ -234,17 +281,6 @@ fn recover(todo_id: &str) -> Result<(), TodoError> {
         .expect("activate holds the registry")
         .commit_change(todo_id, &change);
     Ok(())
-}
-
-/// The trailing bytes of a document that were never a record: everything
-/// after the last line terminator. The same split
-/// `jinn_todo::journal::replay` makes, needed here for the one document
-/// it replays no record out of at all.
-fn torn_tail(bytes: &[u8]) -> usize {
-    bytes
-        .iter()
-        .rposition(|byte| *byte == b'\n')
-        .map_or(bytes.len(), |last| bytes.len() - last - 1)
 }
 
 /// The last segment of a listed path.
