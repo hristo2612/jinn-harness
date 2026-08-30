@@ -114,6 +114,14 @@ proven_digits() {
     esac
 }
 
+# A wait status is an optionally-signed run of digits, or it is not one.
+proven_status() {
+    case "${1#-}" in
+        '' | *[!0-9]*) printf 'unknown' ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
 # --- Input 1: the host's boot time.
 boot_sec=$(proven_digits "$(sysctl -n kern.boottime 2>/dev/null \
     | sed -n 's/^{[[:space:]]*sec[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[^0-9].*/\1/p')")
@@ -170,20 +178,61 @@ else
     prev_start_at=$(date -u -r "$prev_start" +%FT%TZ 2>/dev/null || printf unknown)
 fi
 
+# --- Input 4: how the previous instance ended.
+#
 # launchd's LastExitStatus is a wait status: a signal in the low seven
 # bits, an exit code in the high byte (the table form of `launchctl list`
 # shows a signal as a negative number; the detail form as positive).
-raw=$(launchctl list "$label" 2>/dev/null | sed -n 's/.*"LastExitStatus" = \(-*[0-9]*\);.*/\1/p')
+#
+# Round 3 decoded it HERE for the `prev_end=` field and worded the ops.log
+# narrative THERE, as a literal — and on a real start path with
+# `LastExitStatus = 15` the two met on one line at rc 0: "ended UNCLEAN …
+# a daemon that ended on its own", beside `prev_end="killed by signal 15
+# (SIGTERM)"`. One line, disagreeing with itself. Same defect class as the
+# three above, arrived at from the printing side instead of the reading
+# side: a statement made without the proof beside it drifts from the
+# proof.
+#
+# So there is one decode, and everything said about the end is rendered
+# from it — the field, the narrative phrase, the clean/unclean token. The
+# phrase EMBEDS the field rather than paraphrasing it, so the two cannot
+# disagree because there is no second wording to disagree with. Not a
+# check that they agree: nothing left to check.
+prev_end_raw=$(proven_status "$(launchctl list "$label" 2>/dev/null \
+    | sed -n 's/.*"LastExitStatus" = \(-\{0,1\}[0-9][0-9]*\);.*/\1/p')")
 signal_name() { kill -l "$1" 2>/dev/null || echo '?'; }
-prev_end_raw=${raw:-unknown}
-case "${raw:-}" in
-    '') prev_end="end status unknown (launchd retained none)" ;;
-    -*) prev_end="killed by signal ${raw#-} (SIG$(signal_name "${raw#-}"))" ;;
-    *)  if [ $((raw & 127)) -ne 0 ]; then
-            prev_end="killed by signal $((raw & 127)) (SIG$(signal_name $((raw & 127))))"
-        else
-            prev_end="exit $((raw >> 8))"
-        fi ;;
+case "$prev_end_raw" in
+    unknown) end_kind=unrecorded; end_detail=unknown ;;
+    -*)      end_kind=signal;     end_detail=${prev_end_raw#-} ;;
+    *)       if [ $((prev_end_raw & 127)) -ne 0 ]; then
+                 end_kind=signal; end_detail=$((prev_end_raw & 127))
+             else
+                 end_kind=exit;   end_detail=$((prev_end_raw >> 8))
+             fi ;;
+esac
+case "$end_kind" in
+    signal)
+        prev_end="killed by signal $end_detail (SIG$(signal_name "$end_detail"))"
+        prev_end_clean=no ;;
+    exit)
+        prev_end="exit $end_detail"
+        if [ "$end_detail" -eq 0 ]; then prev_end_clean=yes; else prev_end_clean=no; fi ;;
+    *)
+        prev_end="end status unknown (launchd retained none)"
+        prev_end_clean=unknown ;;
+esac
+# The narrative the ops.log lines open with. It is the same decode worded
+# for a reader, and it CONTAINS the field verbatim — the one construction
+# under which the prose cannot say something the field denies. Note what
+# it does not say: a signal has no sender here, because nothing retains
+# one (SOAK.md §Known limits).
+case "$prev_end_clean" in
+    yes)     prev_end_phrase="ended CLEANLY, on its own: $prev_end" ;;
+    no)      case "$end_kind" in
+                 signal) prev_end_phrase="ended UNCLEAN: $prev_end" ;;
+                 *)      prev_end_phrase="ended UNCLEAN, on its own: $prev_end" ;;
+             esac ;;
+    *)       prev_end_phrase="ended, HOW UNKNOWN: $prev_end" ;;
 esac
 esc=$(printf '\033')
 last_seen=$(LC_ALL=C sed "s/${esc}\[[0-9;]*m//g" "$SOAK/logs/jinnd.log" 2>/dev/null \
@@ -228,9 +277,9 @@ fi
 
 # Built ONCE, printed everywhere: the dry run, the death line and the start
 # line are three views of one record, so they cannot drift apart.
-evidence=$(printf 'host_boot_sec=%s host_boot=%s prev_record=%s prev_pid=%s prev_start_sec=%s prev_start=%s prev_end_raw=%s prev_end="%s" last_seen=%s unproven=%s' \
+evidence=$(printf 'host_boot_sec=%s host_boot=%s prev_record=%s prev_pid=%s prev_start_sec=%s prev_start=%s prev_end_raw=%s prev_end="%s" prev_end_clean=%s last_seen=%s unproven=%s' \
     "$boot_sec" "$boot_at" "$prev_record" "$prev_pid" "$prev_start" "$prev_start_at" \
-    "$prev_end_raw" "$prev_end" "$last_seen" "$unproven")
+    "$prev_end_raw" "$prev_end" "$prev_end_clean" "$last_seen" "$unproven")
 
 # Dry run (the harness-pin gate, and an operator checking the decision):
 # print it, touch nothing, start nothing. An unproven decision names what
@@ -253,17 +302,18 @@ now=$(date -u +%FT%TZ)
 # who doubts it re-derives the answer from the same evidence, on the spot.
 case "$reason" in
     boot-consistent)
-        printf '%s previous jinnd %s ended; DERIVED boot-consistent: the readings are consistent with the daemon having died with the host (an inference from the evidence below, not an observation of a reboot). evidence: %s\n' \
-            "$now" "$prev_pid" "$evidence" >>"$SOAK/logs/ops.log" ;;
+        printf '%s previous jinnd %s %s; DERIVED boot-consistent: the readings are consistent with the daemon having died with the host (an inference from the evidence below, not an observation of a reboot). evidence: %s\n' \
+            "$now" "$prev_pid" "$prev_end_phrase" "$evidence" >>"$SOAK/logs/ops.log" ;;
     keepalive-restart-consistent)
-        printf '%s previous jinnd %s ended UNCLEAN; DERIVED keepalive-restart-consistent: the readings are consistent with the previous start belonging to THIS host boot, so launchd is relaunching a daemon that ended on its own (an inference, not an observation). evidence: %s\n' \
-            "$now" "$prev_pid" "$evidence" >>"$SOAK/logs/ops.log" ;;
+        printf '%s previous jinnd %s %s; DERIVED keepalive-restart-consistent: the readings are consistent with the previous start belonging to THIS host boot, so the host did not reboot under the daemon and launchd relaunched it (an inference, not an observation). evidence: %s\n' \
+            "$now" "$prev_pid" "$prev_end_phrase" "$evidence" >>"$SOAK/logs/ops.log" ;;
     unknown)
-        # Something ended and the wrapper cannot prove what: it says so,
-        # names the input it could not read, and derives nothing at all.
-        # This line is the audit's cue to go looking.
-        printf '%s previous jinnd %s ended, PROVENANCE UNKNOWN (could not read: %s). evidence: %s\n' \
-            "$now" "$prev_pid" "$unproven" "$evidence" >>"$SOAK/logs/ops.log" ;;
+        # Something ended and the wrapper cannot prove WHY this start
+        # happened: it says so, names the input it could not read, and
+        # derives nothing. How the previous instance ended is a separate
+        # reading and is still reported, from the same one decode.
+        printf '%s previous jinnd %s %s, PROVENANCE UNKNOWN (could not read: %s). evidence: %s\n' \
+            "$now" "$prev_pid" "$prev_end_phrase" "$unproven" "$evidence" >>"$SOAK/logs/ops.log" ;;
 esac
 
 pin=$(cat "$SOAK/bin/jinnd.commit" 2>/dev/null || echo unknown)
