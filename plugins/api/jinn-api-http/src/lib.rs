@@ -21,16 +21,21 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use jinn_api::{
-    decode_engine_answer, decode_session_answer, decode_todo_answer, engine_list, engine_routable,
-    engine_route, is_engines_path, is_sessions_path, is_todos_path, route, run_id_payload,
-    run_payload, session_payload, session_route, store_list, store_routable, todo_payload,
-    todo_route, todo_store_list, todo_store_routable, Answer, ApiError, EngineRoute, ErrorCode,
-    Outcome, SessionRoute, TodoRoute, ENGINE_METHODS, SESSION_METHODS, TODO_METHODS,
+    decode_engine_answer, decode_session_answer, decode_todo_answer, decode_workflow_answer,
+    engine_list, engine_routable, engine_route, is_engines_path, is_sessions_path, is_todos_path,
+    is_workflows_path, route, run_id_payload, run_payload, session_payload, session_route,
+    store_list, store_routable, todo_payload, todo_route, todo_store_list, todo_store_routable,
+    workflow_payload, workflow_route, workflow_store_list, workflow_store_routable, Answer,
+    ApiError, EngineRoute, ErrorCode, Outcome, SessionRoute, TodoRoute, WorkflowRoute,
+    ENGINE_METHODS, SESSION_METHODS, TODO_METHODS, WORKFLOW_METHODS,
 };
 use jinn_api_http_wire::{error_answer_response, error_response, parse, response, Parse};
 use jinn_engine::{engine_contract, OP_DESCRIBE};
 use jinn_session::{store_contract, OP_DESCRIBE as OP_DESCRIBE_STORE};
 use jinn_todo::{store_contract as todo_store_contract, OP_DESCRIBE as OP_DESCRIBE_TODO_STORE};
+use jinn_workflow::{
+    store_contract as workflow_store_contract, OP_DESCRIBE as OP_DESCRIBE_WORKFLOW_STORE,
+};
 use serde::Deserialize;
 
 wit_bindgen::generate!({
@@ -79,6 +84,13 @@ struct HttpConfig {
     /// session store, and neither may stand in for the other.
     #[serde(default)]
     todo_stores: Vec<String>,
+    /// The RUN stores this API may route to, written from the same source
+    /// as this entry's `jinn:workflow.<id>` grants. A separate list again,
+    /// for the same reason `todo_stores` is separate from `stores`: the
+    /// seams' store ids are independent, and one may never stand in for
+    /// another.
+    #[serde(default)]
+    workflow_stores: Vec<String>,
 }
 
 fn default_host() -> String {
@@ -96,6 +108,7 @@ static CONNS: Mutex<Vec<Conn>> = Mutex::new(Vec::new());
 static ENGINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static TODO_STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static WORKFLOW_STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 fn fault(context: &str, error: impl std::fmt::Debug) -> GuestFault {
     GuestFault::Failed(format!("{context}: {error:?}"))
@@ -361,6 +374,81 @@ fn dispatch_todos(method: &str, path: &str, query: serde_json::Value, body: &[u8
     })
 }
 
+/// One granted run store call: resolve `jinn:workflow.<id>`, call it,
+/// decode its answer into this seam's outcome. A store with no provider
+/// mounted is an ordinary typed answer naming it — never a fault.
+fn workflow_call(
+    contract: &str,
+    operation: &str,
+    payload: &[u8],
+) -> Result<serde_json::Value, ApiError> {
+    let handle = services::resolve(contract).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Unavailable,
+            format!("{contract} is not resolvable: {error:?}"),
+        )
+    })?;
+    let bytes = services::call(handle, operation, payload).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Refused,
+            format!("{contract}/{operation} refused: {error:?}"),
+        )
+    })?;
+    decode_workflow_answer(&bytes)
+}
+
+/// The workflows surface: the run stores this API may route to, the
+/// procedures one of them holds, and the life of one run of one pinned
+/// revision. Every route is exactly one granted contract call per store
+/// addressed.
+fn dispatch_workflows(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> Vec<u8> {
+    let Some(workflows_route) = workflow_route(method, path) else {
+        return route_miss(
+            WORKFLOW_METHODS
+                .iter()
+                .any(|candidate| workflow_route(candidate, path).is_some()),
+        );
+    };
+    let stores = WORKFLOW_STORES.lock().unwrap().clone();
+    let outcome = match &workflows_route {
+        WorkflowRoute::Stores => Ok(serde_json::to_value(workflow_store_list(stores.iter().map(
+            |store| {
+                (
+                    store.clone(),
+                    workflow_call(
+                        &workflow_store_contract(store),
+                        OP_DESCRIBE_WORKFLOW_STORE,
+                        &[],
+                    ),
+                )
+            },
+        )))
+        .expect("encodes")),
+        _ => {
+            let store = workflows_route
+                .store()
+                .expect("a call route names its store");
+            let operation = workflows_route
+                .operation()
+                .expect("a call route names its operation");
+            workflow_store_routable(&stores, store).and_then(|contract| {
+                let document = if workflows_route.takes_body() {
+                    json_object(body)?
+                } else {
+                    query
+                };
+                let payload = serde_json::to_vec(&workflow_payload(&workflows_route, document))
+                    .expect("encodes");
+                workflow_call(&contract, operation, &payload)
+            })
+        }
+    };
+    answered(&match outcome {
+        Ok(value) => Answer::ok(value),
+        Err(error) => Answer::error(error),
+    })
+}
+
 /// One request → one contract call → one response.
 fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> Vec<u8> {
     // The engines surface is routed first: its paths carry two
@@ -378,6 +466,11 @@ fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> 
     // Todo id, and a per-store contract.
     if is_todos_path(path) {
         return dispatch_todos(method, path, query, body);
+    }
+    // And the workflows surface: a store id, then either a workflow or a
+    // run within it, on a per-store contract.
+    if is_workflows_path(path) {
+        return dispatch_workflows(method, path, query, body);
     }
     let Some((route, id)) = route(method, path) else {
         return route_miss(
@@ -527,6 +620,7 @@ impl Guest for Http {
         *ENGINES.lock().unwrap() = config.engines;
         *STORES.lock().unwrap() = config.stores;
         *TODO_STORES.lock().unwrap() = config.todo_stores;
+        *WORKFLOW_STORES.lock().unwrap() = config.workflow_stores;
         Ok(())
     }
 

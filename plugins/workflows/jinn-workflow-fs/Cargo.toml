@@ -1,0 +1,25 @@
+# The workflows seam's DURABLE run store provider: one append-only JSONL
+# journal per workflow (its revisions) and one per run (its whole life)
+# over `jinn:fs`, and a replay on activate that reads back honestly what
+# the last incarnation left behind. It records no Todo of its own: it
+# injects the TODOS seam's DEFINITION and drives whatever answers.
+# Compiles for wasm32-unknown-unknown ONLY and is deliberately NOT a
+# workspace member (see the workspace manifest's note).
+[package]
+name = "jinn-workflow-fs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-todo = { path = "../../todos/jinn-todo" }
+jinn-workflow = { path = "../jinn-workflow" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+wit-bindgen = "0.43.0"
+
+[workspace]

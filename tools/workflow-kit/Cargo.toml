@@ -1,0 +1,27 @@
+# The workflows seam's kit builder. Usage:
+#
+#     cargo run -p workflow-kit -- kit <root> --port N [--poll-ms N] …
+#
+# Builds every guest the workflows profile mounts (the two run stores
+# above the two Todo stores, which sit above the two session stores, the
+# engine providers, the api trio, the settings pair and the cron seam),
+# pins each by content hash, and writes `<root>/profile.json`. The seam's
+# profile ENTRIES live in the library half (one home per fact).
+[package]
+name = "workflow-kit"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+api-kit = { path = "../api-kit" }
+cron-kit = { path = "../cron-kit" }
+engine-kit = { path = "../engine-kit" }
+session-kit = { path = "../session-kit" }
+todo-kit = { path = "../todo-kit" }
+jinn-cron = { path = "../../plugins/cron/jinn-cron" }
+jinn-todo = { path = "../../plugins/todos/jinn-todo" }
+jinn-workflow = { path = "../../plugins/workflows/jinn-workflow" }
+serde_json = "1.0"

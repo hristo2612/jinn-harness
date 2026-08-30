@@ -54,8 +54,9 @@ That is the transferable lesson, and it is narrower than "never derive":
 
 ## What was done instead
 
-`Todos::recover` applies the fold as a REAL move, through the same table
-as every other move, and the durable store journals it during adoption.
+`Todos::plan_recovery` answers the fold as a REAL move, through the same
+table as every other move; the durable store journals that line during
+adoption and only then folds it in with `Todos::commit_change`.
 The recovery is an ordinary `status-changed` line — a new event appended
 after the ones already there, never an edit of one — carrying the
 dispatch's reason as its note and no actor, because nobody asked for it.

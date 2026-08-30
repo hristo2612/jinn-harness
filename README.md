@@ -13,7 +13,54 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
-Phase 2.5 — kernel pin `3a8e5c0` (M2-K9), UNCHANGED. The todos seam
+Phase 2.6 — kernel pin `3a8e5c0` (M2-K9), UNCHANGED. The workflows seam
+(`plugins/workflows/`) is the sixth core-port seam and the FOURTH layer of
+the stack: a workflow node dispatches work through the `jinn-todo`
+DEFINITION, which dispatches to a session through `jinn-session`, which
+runs over `jinn-engine`, so
+
+```text
+jinn:workflow.<store> -> jinn:todo.<store> -> jinn:session.<store> -> jinn:engine.<id>
+```
+
+composes with no layer naming the next one's provider. The layering is
+enforced by AUTHORITY: a run store's entry is granted no
+`jinn:session.<id>` and no `jinn:engine.<id>` at all.
+
+**A run is pinned to a definition REVISION, and says which.** `start`
+resolves "latest" exactly once, records the number, and carries that
+revision's WHOLE spec in the run's own `run-started` line; nothing
+re-resolves it. A definition edited mid-flight therefore cannot reach a
+run already in flight, and `definition-revision` is on every read — the
+old gateway does this incidentally, and the invisibility of it cost a
+wasted prompt patch on 2026-08-30
+(`docs/notes/2026-08-30-workflows-the-pin-and-the-fourth-layer.md`).
+
+**A node is never eternally `running`, and the guarantee is an ORDER
+rather than a fold.** The reader reports what the document says; a durable
+store replays, plans the recovery, APPENDS the `running -> interrupted`
+moves and the run's own ending, and only THEN provides its contract. A
+store whose recovery append is refused fails to activate rather than
+serving a `running` no durable line justifies. That is the sessions seam's
+`running` defect and the todos seam's `executing` defect answered one
+layer up, proven red-first rather than assumed inherited.
+
+**The pin was NOT bumped, on evidence.** jinnd's M2-K10 refuses a
+reply-expecting dispatch that would close a cycle; nothing in this
+four-layer stack can close one, because the profile's grant graph — which
+BOUNDS the dispatch graph — is acyclic, and that is checked rather than
+asserted
+(`tests/composition/tests/workflows.rs::the_grant_graph_the_four_layers_compose_through_is_acyclic`).
+`FINDINGS.md` #32 therefore stays open and the test it blocked was not
+run.
+
+**`FINDINGS.md` #35 is no longer derived.** It predicted that latency
+compounds per layer because a composing seam must poll the one below, and
+graded itself *derived, not measured*. This seam adds the fourth layer it
+was about, so the entry now carries real end-to-end numbers at two, three
+and four layers from one daemon, with the poll periods stated.
+
+### Phase 2.5 — kernel pin `3a8e5c0` (M2-K9), UNCHANGED. The todos seam
 (`plugins/todos/`) is the fifth core-port seam and the first that is
 THREE layers deep: a Todo is dispatched to a SESSION through the
 `jinn-session` DEFINITION, and the session drives an engine through
@@ -144,6 +191,7 @@ iteration channel — kernel changes are never made here).
 | `tools/engine-kit` | Builds the engines profile: the engine providers and the probe beside the api trio |
 | `tools/session-kit` | Builds the sessions profile: the two store providers beside the engine providers |
 | `tools/todo-kit` | Builds the todos profile: the two Todo stores above the two session stores |
+| `tools/workflow-kit` | Builds the workflows profile: the two run stores above the two Todo stores |
 | `plugins/` | First-party plugin crates (wasm components) — land per phase, one seam triple at a time |
 | `profiles/` | Named plugin trees — a product is a profile |
 | `tests/composition` | Real-composition gates: boot generated profiles through the REAL pinned jinnd daemon |
@@ -173,4 +221,5 @@ skip is never reported, returned, or summarized as a pass.
 |---|---|
 | `JINND_DIR` / `JINND_CLONE_URL` | Where the real-composition suites find a jinnd checkout holding the pinned commit (`KERNEL-PIN.md` Gate 2). Without one, every composition proof skips. |
 | `JINND_READ_TOKEN` | CI's credential for the same checkout; jinnd is private, so CI runs the composition leg only where it is configured. |
+| `JINN_HARNESS_WORKFLOW_VENDOR_ENGINE` | The engine id the workflows seam's vendor leg binds as the last of the FOUR-layer composition proof. Same discipline as the todos gate below, one layer up: it spends metered inference under the operator's own authentication, so it runs where a person names it and skips loudly everywhere else, and an engine that is NAMED and not mounted fails the proof rather than skipping it. |
 | `JINN_HARNESS_TODO_VENDOR_ENGINE` | The engine id (`claude` or `codex`) the todos seam's vendor leg binds as the second half of the three-layer composition proof. It spends metered inference under the operator's own authentication, so it runs where a person names it and skips everywhere else. An engine that is NAMED and not mounted fails the proof rather than skipping it. |

@@ -26,6 +26,8 @@ jinn-engine = { path = "../../engines/jinn-engine" }
 # The sessions seam's operation and contract names, from their one home.
 jinn-session = { path = "../../sessions/jinn-session" }
 jinn-todo = { path = "../../todos/jinn-todo" }
+# The workflows seam's operation and contract names, from their one home.
+jinn-workflow = { path = "../../workflows/jinn-workflow" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 # Guest-side bindings of the pinned plugin world (kernel-pin/wit).

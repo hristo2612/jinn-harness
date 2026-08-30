@@ -126,11 +126,13 @@ pub fn dispatch_ended(todo_id: &str, dispatch: &Dispatch, at_ms: u64) -> Result<
 /// reported by `describe`, so a store that discarded bytes says so.
 ///
 /// **An interrupted dispatch is recovered ON THE RECORD.** After
-/// adopting, `Todos::recover` turns the fold into a real status-changed
-/// line — a NEW event appended after the ones already there, never an
-/// edit of one — so the ledger a caller can act on and the status a
-/// reader is shown are the same status. See its doc for why the fold
-/// alone is not enough.
+/// adopting, `Todos::plan_recovery` answers the fold as a real
+/// status-changed record, this module appends the line, and
+/// `Todos::commit_change` folds it into the registry after — a NEW event
+/// appended after the ones already there, never an edit of one — so the
+/// ledger a caller can act on and the status a reader is shown are the
+/// same status. See `plan_recovery`'s doc for why the fold alone is not
+/// enough.
 ///
 /// # Errors
 ///

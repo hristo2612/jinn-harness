@@ -36,8 +36,10 @@
 //! - A status move is legal or it is REFUSED, from an explicit table
 //!   ([`Status::allows`]) that is nowhere near "any status to any
 //!   status". The refusal is typed, names the attempted `from -> to`, and
-//!   is RECORDED — there is no code path in [`Todos::update`] that
-//!   produces one without the other.
+//!   is RECORDED — [`Todos::plan_update`] answers the typed refusal and
+//!   its record as ONE value, and [`Todos::commit_refusal`] folds that
+//!   record in only once the line is durable, so there is no code path
+//!   that produces one without the other.
 //! - [`DispatchStatus::Done`] — the claim that the work was carried out —
 //!   exists only where a terminal record was written. A dispatch read
 //!   back from a journal with no ending is [`DispatchStatus::Interrupted`]
