@@ -1530,6 +1530,36 @@ not as a reproduced defect. A card should start by measuring it.
 
 ---
 
+## What the TODOS seam could NOT prove, and says so
+
+Recorded here because the honest limit of a proof belongs beside the
+frictions, not buried in a test:
+
+- **No vendor engine ran under a Todo in this round**, for the reason the
+  sessions seam gives below: the "same Todo over another engine" proof
+  runs over the two engine PROVIDER SHAPES that exist on every host. The
+  three-layer composition is the same one field either way.
+- **The torn tail is manufactured, not observed.** `jinn:fs`'s append is
+  whole-document atomic (#22), so the suite writes a short document
+  behind the daemon's back to produce one. What is proven is the
+  READER's behaviour on a torn document, not that the kernel tears.
+  See #34.
+- **Concurrency between two writers to one Todo is not proven.** The
+  proofs drive one caller at a time. The registry is behind a mutex and
+  the journal's append is atomic, so a lost update is not reachable
+  through the ops as written — but "not reachable by inspection" is not
+  a proof, and no test races two `update`s on one Todo.
+- **The event ring's drop count is proven at unit level only.** The
+  composition proofs read the feed but never overflow it: a Todo with
+  more than `EVENT_RING` events would take longer than a test's
+  deadline to produce through the API.
+- **`declared-status` and `status` agree in every state the composition
+  reaches after the recovery lands.** The one state where they differ —
+  a Todo adopted but not yet recovered — exists only inside
+  `adopt_all`, and is proven at unit level
+  (`the_recovery_is_a_new_event_and_makes_the_ledger_usable_again`),
+  not through the daemon.
+
 ## What the sessions seam could NOT prove, and says so
 
 Recorded here because the honest limit of a proof belongs beside the
@@ -1548,3 +1578,91 @@ frictions, not buried in a test:
   open response would have to be pushed into from inside a caller's
   dispatch, which is entry #4's and #32's class. Named in
   `plugins/sessions/jinn-session/README.md`.
+
+---
+
+## 34. `jinn:fs` can append and it can rewrite, but it cannot DROP A SUFFIX — so a store that tolerates a torn tail has to rewrite the whole document to stay readable
+
+**What happened.** The todos seam's journal reader admits an unterminated
+last line as ABSENCE (a half-written record must read as "absent or
+complete", never as a damaged one) and REFUSES a hole anywhere earlier.
+That reader law is right and is unit-proven. What the real-composition
+gate then found is that the law is not enough on its own: the next
+`append` lands on the END of the partial line, so the tear and the new
+record become ONE undecodable line — in the middle of the document. A
+Todo that came back fine after one boot refuses to replay at the boot
+after, and the store that holds it fails to activate.
+
+**Evidence.** `tests/composition/tests/todos.rs::a_torn_tail_is_absence_and_the_todo_before_it_survives`,
+which manufactures the tear the way a torn write would leave it (the
+daemon is killed, the document is written short, the daemon is rebooted).
+Before the fix the proof failed at "the appended move to be durable": the
+appended line was there in bytes and gone as a record.
+
+**What the harness does meanwhile.** The durable store HEALS the document
+on adoption: a replay that reports `torn_tail_bytes > 0` is followed by a
+full `fs::write` of the whole prefix
+(`plugins/todos/jinn-todo-fs/src/journal.rs::heal`), and `describe`
+reports `healed-tails` so bytes are never discarded in silence. No record
+is lost — by the reader's own law those bytes were never a record — but
+this is a REWRITE of an append-only document, and it costs the whole
+document's bytes per heal. On a long-lived ledger that is the wrong shape
+for the smallest possible repair.
+
+**The capability that would retire it.** A `truncate(path, len,
+idempotency-key)` on `jinn:fs`, or an `append` variant that refuses
+unless the document ends on a given byte (so a store learns of a tear
+without reading and rewriting). Either lets a store drop exactly the
+bytes that are not a record, atomically, without touching the ones that
+are. The kernel already owns the atomic commit path (#22), so this is a
+new operation on an existing mechanism rather than a new mechanism.
+
+*Evidence grade:* **packet-card-ready.** The failure is reproduced by a
+named composition proof, the workaround is in the tree and cited, and the
+shape of the missing operation follows from the contract's own vocabulary.
+The one thing NOT established is how a tear arises through the kernel's
+own commit path: `#22` closed `append` as whole-document atomic, so the
+suite has to manufacture the tear by writing behind the daemon's back.
+Read the entry as "the reader's tolerance has a hole in it" rather than
+as "the kernel tears writes".
+
+---
+
+## 35. Latency compounds per LAYER, because every seam that composes another has to poll it — the three-layer stack pays two poll periods, and a fourth would pay three
+
+**What happened.** Nothing failed. This is the first seam in the
+distribution that sits on top of a seam that itself sits on top of one:
+`jinn:todo.<store>` drives `jinn:session.<store>`, which drives
+`jinn:engine.<id>`. Neither store may LISTEN for the layer below it —
+that is entry #4's and #32's nested-dispatch class, and a store that
+emitted from inside its callee's delivery is exactly the deadlock this
+repo keeps finding. So each layer POLLS the one below on its own clock
+wake. The cost is additive by construction: a session's answer is visible
+to the store one session-poll after the engine produced it, and to the
+TODO store one todo-poll after that.
+
+**Evidence.** `plugins/todos/store-core/store.rs` (`poll_once`, and the
+module doc's third discipline) beside
+`plugins/sessions/store-core/store.rs`, which does the same thing one
+layer down; the suite kits both at 250 ms and the composition proofs wait
+accordingly (`DISPATCH_DEADLINE` is 120 s against the sessions suite's
+90 s, for the same work).
+
+**Why it is worth a card even though it is not a defect.** The
+distribution's whole shape is seams composing seams, and this is the
+first measurement of what that costs per layer. Two layers is a bound
+nobody notices. The company ledger over sessions over engines is already
+three; a workflow seam over todos would be four. The additive term is
+structural, not incidental, and it is paid on every answer.
+
+**The capability that would retire it.** Whatever closes #4/#32 — a
+delivery that does not run inside the caller's dispatch, so a consumer
+can be NOTIFIED by the seam it drives rather than asking it. That would
+make the cost per layer a wake rather than a period.
+
+*Evidence grade:* **derived, not measured.** The additive structure is
+read off the two implementations and is certain; the harness has NOT
+measured end-to-end latency at each layer, has not established a
+distribution, and does not claim a number. The deadlines the suite uses
+are generous margins, not measurements. A card should start by measuring
+it at two and three layers.
