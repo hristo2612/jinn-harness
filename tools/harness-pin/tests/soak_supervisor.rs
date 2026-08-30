@@ -188,7 +188,7 @@ fn wrapper_dry_run_classifies_each_start() {
     // KeepAlive restart, with the death decoded and the last-seen bound.
     std::fs::write(root.join("run/jinnd.pid"), "75738\n").expect("pid");
     let out = dry_run(&root);
-    assert!(out.contains("reason=keepalive-restart"), "{out}");
+    assert!(out.contains("reason=keepalive-restart-consistent"), "{out}");
     assert!(out.contains("killed by signal 15"), "{out}");
     assert!(
         out.contains("last_seen=2026-08-29T14:18:19.162106Z"),
@@ -202,7 +202,7 @@ fn wrapper_dry_run_classifies_each_start() {
         .status()
         .expect("touch");
     assert!(touch.success());
-    assert!(dry_run(&root).contains("reason=boot"));
+    assert!(dry_run(&root).contains("reason=boot-consistent"));
 
     // An operator's reason file wins, and dry-run does not consume it.
     std::fs::write(root.join("run/launchd.reason"), "planned-start").expect("reason");
@@ -407,13 +407,13 @@ fn both_sides_proven_still_decides() {
     // Previous start BEFORE this host booted: the daemon died with the host.
     scratch.ancient_pid_record("file");
     let out = scratch.dry_run();
-    assert!(out.contains("reason=boot"), "{out}");
+    assert!(out.contains("reason=boot-consistent"), "{out}");
     assert!(out.contains("prev_pid=75738"), "{out}");
     assert!(out.contains("killed by signal 15"), "{out}");
     // Previous start AFTER it: launchd replaced a daemon that ended uncleanly.
     std::fs::write(scratch.root.join("run/jinnd.pid"), "75738\n").expect("pid");
     let out = scratch.dry_run();
-    assert!(out.contains("reason=keepalive-restart"), "{out}");
+    assert!(out.contains("reason=keepalive-restart-consistent"), "{out}");
 }
 
 /// The absence of a previous record is evidence only where the wrapper could
@@ -490,4 +490,171 @@ fn no_read_falls_back_to_a_value_that_looks_measured() {
         wrapper.contains("reason=unknown"),
         "every unproven path must resolve to reason=unknown"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Evidence on the line, and the conclusion labelled a derivation
+// (PLA-297 round 3, 2026-08-30).
+//
+// Round 2 inverted the READING: every input yields a value the wrapper can
+// prove it read, or `unknown`. What no care at the read site can invert is the
+// record's IDENTITY — `stat`-after-read proves "I read a pid and an mtime
+// together", never "this mtime belongs to that pid". A replacement preserving
+// the mtime defeats it, and a fifth construction would defeat the fifth guard.
+//
+// So the claim changes rather than the guard. `boot` and `keepalive-restart`
+// are causal statements about the host that a boot time and a file mtime
+// cannot establish; the wrapper says only that its readings are CONSISTENT
+// with them, and prints those readings verbatim beside the inference so a
+// human auditor can see through a wrong input.
+
+#[cfg(target_os = "macos")]
+impl Scratch {
+    /// A `stat` that answers every look with one fixed epoch — the mtime is
+    /// then the test's, not the local timezone's, so the rendered ISO is
+    /// deterministic wherever the gate runs.
+    fn fixed_mtime(&self, secs: &str) {
+        self.stub("stat", &format!("#!/bin/sh\nprintf '{secs}\\n'\n"));
+    }
+}
+
+/// The line carries its inputs, not only its conclusion: the host boot time as
+/// read, the previous record's status, its pid and mtime as read, launchd's
+/// status raw AND decoded, the last-seen bound, and — explicitly — that
+/// nothing was unread. An auditor who distrusts the inference can redo it.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_decision_carries_its_evidence_verbatim() {
+    let scratch = Scratch::new("evidence");
+    scratch.ancient_pid_record("file");
+    scratch.fixed_mtime("946684800");
+    let out = scratch.dry_run();
+    for field in [
+        "prev_record=present",
+        "prev_pid=75738",
+        "prev_start_sec=946684800",
+        "prev_start=2000-01-01T00:00:00Z",
+        "prev_end_raw=15",
+        "prev_end=\"killed by signal 15 (SIGTERM)\"",
+        "last_seen=2026-08-29T14:18:19.162106Z",
+        "unproven=none",
+    ] {
+        assert!(out.contains(field), "evidence lacks {field:?}: {out}");
+    }
+    // The host boot time is the live host's, so only its shape is asserted —
+    // but it must be BOTH forms: the raw reading and its rendering.
+    assert!(out.contains("host_boot_sec="), "{out}");
+    assert!(out.contains("host_boot="), "{out}");
+    assert!(!out.contains("host_boot_sec=unknown"), "{out}");
+}
+
+/// `unproven=` is an observation, not an artifact of the unknown branch: a
+/// decision that rests on complete readings says so, in the same field the
+/// unknown lane uses to name what it could not read.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_unread_input_is_named_on_every_line_including_the_proven_one() {
+    let proven = Scratch::new("unproven-none");
+    proven.ancient_pid_record("file");
+    proven.fixed_mtime("946684800");
+    assert!(proven.dry_run().contains("unproven=none"));
+
+    let torn = Scratch::new("unproven-named");
+    torn.ancient_pid_record("dir");
+    let out = torn.dry_run();
+    assert!(out.contains("unproven=previous-start-record"), "{out}");
+    assert!(!out.contains("unproven=none"), "{out}");
+}
+
+/// The conclusion is labelled a derivation. A bare `boot` reads as an
+/// established fact about the host; `boot-consistent` reads as what it is —
+/// an inference from the two readings printed beside it. The same holds for
+/// its twin, which claims the host did NOT reboot from exactly those readings.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_conclusion_is_labelled_a_derivation_not_an_assertion() {
+    let scratch = Scratch::new("derivation");
+    scratch.ancient_pid_record("file");
+    scratch.fixed_mtime("946684800");
+    let out = scratch.dry_run();
+    assert!(out.contains("reason=boot-consistent"), "{out}");
+
+    // The previous start is later than any plausible host boot: the readings
+    // say this host never rebooted under it.
+    scratch.fixed_mtime("4102444800");
+    let out = scratch.dry_run();
+    assert!(out.contains("reason=keepalive-restart-consistent"), "{out}");
+}
+
+/// The vocabulary is the wrapper's, not only the printer's: the branches that
+/// write `ops.log` dispatch on the derived names too, so no line can be
+/// reached that words the same inference as a fact.
+#[test]
+fn no_branch_words_a_derivation_as_a_fact() {
+    let wrapper = read("soak-run.sh");
+    assert!(wrapper.contains("boot-consistent)"), "the boot branch is a derivation");
+    assert!(
+        wrapper.contains("keepalive-restart-consistent)"),
+        "the restart branch is a derivation"
+    );
+    for bare in ["    boot)", "    keepalive-restart)"] {
+        assert!(
+            !wrapper.contains(bare),
+            "a branch still asserts {bare:?} as established fact"
+        );
+    }
+}
+
+/// The evidence has to reach the file the audit actually reads. This drives
+/// the wrapper's REAL start path over a scratch root with a stub daemon: both
+/// the death line and the start line carry the same record, built once.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_ops_log_lines_carry_the_evidence_and_the_derivation() {
+    let scratch = Scratch::new("ops-log");
+    scratch.ancient_pid_record("file");
+    scratch.fixed_mtime("946684800");
+    std::fs::create_dir_all(scratch.root.join("bin")).expect("bin");
+    std::fs::write(scratch.root.join("bin/jinnd"), "#!/bin/sh\nexit 0\n").expect("stub daemon");
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(
+        scratch.root.join("bin/jinnd"),
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .expect("chmod");
+    std::fs::write(scratch.root.join("bin/jinnd.commit"), "3fd7b05\n").expect("commit");
+
+    let status = Command::new("/bin/sh")
+        .arg(soak_dir().join("soak-run.sh"))
+        .env("SOAK", &scratch.root)
+        .env("PATH", &scratch.path)
+        .status()
+        .expect("/bin/sh");
+    assert!(status.success(), "the wrapper failed on its real start path");
+
+    let ops = std::fs::read_to_string(scratch.root.join("logs/ops.log")).expect("ops.log");
+    let death = ops
+        .lines()
+        .find(|l| l.contains("previous jinnd"))
+        .unwrap_or_else(|| panic!("no death line: {ops}"));
+    let start = ops
+        .lines()
+        .find(|l| l.contains("started (launchd"))
+        .unwrap_or_else(|| panic!("no start line: {ops}"));
+    assert!(death.contains("boot-consistent"), "{death}");
+    assert!(
+        !death.contains("died with the host:"),
+        "the death line still asserts the cause: {death}"
+    );
+    assert!(start.contains("reason=boot-consistent"), "{start}");
+    for line in [death, start] {
+        for field in [
+            "prev_pid=75738",
+            "prev_start_sec=946684800",
+            "prev_end_raw=15",
+            "unproven=none",
+        ] {
+            assert!(line.contains(field), "{field:?} missing from: {line}");
+        }
+    }
 }
