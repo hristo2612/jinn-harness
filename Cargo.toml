@@ -18,6 +18,7 @@ members = [
     "plugins/engines/jinn-engine",
     "plugins/engines/jinn-engine-codex-wire",
     "plugins/engines/jinn-engine-claude-wire",
+    "plugins/sessions/jinn-session",
     "plugins/settings/jinn-settings",
     "tests/composition",
     "tools/api-kit",

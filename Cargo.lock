@@ -313,6 +313,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "jinn-session"
+version = "0.1.0"
+dependencies = [
+ "jinn-engine",
+ "jinn-settings",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jinn-settings"
 version = "0.1.0"
 dependencies = [

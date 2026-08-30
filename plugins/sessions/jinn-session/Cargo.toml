@@ -1,0 +1,23 @@
+# The sessions seam's SERVICE DEFINITION (AGENTS.md standing order 4): the
+# `jinn:session.<store-id>` contract's vocabulary, the durable journal's
+# record law, and the session/turn logic every store provider shares —
+# pure types + logic, no host calls, unit-tested here and compiled into
+# the guests and the host tools alike. A provider adds only where the
+# records live.
+[package]
+name = "jinn-session"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+# The ENGINE BINDING is the engines seam's fact, with one home there: a
+# session names an engine id, a model and an effort, and a provider
+# resolves `jinn:engine.<id>` from it. The wire law and the closed-surface
+# refusal come through it from `jinn-settings`, their own home.
+jinn-engine = { path = "../../engines/jinn-engine" }
+jinn-settings = { path = "../../settings/jinn-settings" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
