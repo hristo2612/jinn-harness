@@ -185,9 +185,8 @@ fn record_event(run_id: &str, kind: EventKind) {
 ///
 /// The clock refused.
 pub fn now_ms() -> Result<u64, WorkflowError> {
-    clock::now().map_err(|error| {
-        WorkflowError::new(ErrorCode::Failed, format!("clock now: {error:?}"))
-    })
+    clock::now()
+        .map_err(|error| WorkflowError::new(ErrorCode::Failed, format!("clock now: {error:?}")))
 }
 
 /// Schedules this store's next poll.
@@ -480,12 +479,7 @@ fn on_cancel(payload: &[u8]) -> Result<serde_json::Value, WorkflowError> {
             now,
         )?;
     }
-    end_run(
-        &request.run_id,
-        RunStatus::Cancelled,
-        Some(reason),
-        now,
-    )?;
+    end_run(&request.run_id, RunStatus::Cancelled, Some(reason), now)?;
     wake_at(now)?;
     run_of(&request.run_id)
 }
@@ -624,7 +618,9 @@ fn start_node(run_id: &str, node_id: &str, now: u64) -> Result<(), WorkflowError
     move_node(run_id, node_id, NodeState::Running, None, None, now)?;
     let node = node_spec(run_id, node_id)?;
     match node.kind {
-        NodeKind::Checkpoint => end_node(run_id, node_id, NodeState::Done, None, String::new(), now),
+        NodeKind::Checkpoint => {
+            end_node(run_id, node_id, NodeState::Done, None, String::new(), now)
+        }
         NodeKind::Dispatch => match &node.todo {
             Some(binding) => open_todo(run_id, &node, binding, now),
             None => end_node(
@@ -822,17 +818,14 @@ pub fn dispatch(operation: &str, payload: &[u8]) -> Answer {
                 .ok_or_else(|| {
                     WorkflowError::new(
                         ErrorCode::NotFound,
-                        format!(
-                            "{:?} is not a workflow in this store",
-                            request.workflow_id
-                        ),
+                        format!("{:?} is not a workflow in this store", request.workflow_id),
                     )
                 })
         }),
-        OP_LIST => Ok(serde_json::to_value(with_workflows(|workflows| {
-            workflows.list_workflows()
-        }))
-        .expect("encodes")),
+        OP_LIST => Ok(
+            serde_json::to_value(with_workflows(|workflows| workflows.list_workflows()))
+                .expect("encodes"),
+        ),
         OP_GET_RUN => {
             decode::<RunRequest>(payload, "get-run").and_then(|request| run_of(&request.run_id))
         }
@@ -911,9 +904,8 @@ pub fn describe(provider: &str, durable: bool) -> Answer {
 /// record carries it, and `get-run` reports it to whoever asks.
 fn recover_all() -> Result<(), WorkflowError> {
     let now = now_ms()?;
-    let run_ids: Vec<String> = with_workflows(|workflows| {
-        workflows.run_ids().map(str::to_owned).collect()
-    });
+    let run_ids: Vec<String> =
+        with_workflows(|workflows| workflows.run_ids().map(str::to_owned).collect());
     for run_id in run_ids {
         let recovery = with_workflows(|workflows| workflows.plan_recovery(&run_id, now));
         for change in &recovery.node_changes {

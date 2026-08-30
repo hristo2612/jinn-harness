@@ -117,6 +117,14 @@ Named here rather than left for a reader to discover.
   whole in its own `run-started` line. The digest is a label on it. Its
   stability also rests on `serde_json` rendering map keys in insertion
   order, which this workspace's lockfile gives it.
+- **A run is not RESUMED across a restart.** A fresh incarnation drives
+  nothing it did not start, so a run the daemon stopped mid-flight is
+  recorded `interrupted` and is then terminal — including its nodes that
+  had not started yet, which end `interrupted` with the run rather than
+  waiting for a driver that will never come. That is the conservative
+  answer and it is the recorded one; carrying a run across incarnations
+  would mean a store claiming to drive work it has no memory of. Running
+  the procedure again is a NEW run, which also pins its own revision.
 - **There is no retry and no DELETE.** A terminal node state is terminal
   and a terminal run status is terminal, so the honest way to run a step
   again is a NEW run; the ledger's ending is `cancelled`, recorded with a
