@@ -29,7 +29,7 @@ SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
 | `$SOAK/data/` | The daemon's data root: `cron/` (state, the append-only history log, per-fire run records), `health/` (the consumer's reports), and since the sixth bump `profile.json` (the daemon's watcher is non-recursive on the profile's directory, so the fibers' subdirectories never wake it) |
 | `$SOAK/data.inverses/` | The kernel's `jinn:fs` effect-retention store (since pin `41cb2f47`): one durable inverse per live revertible effect, keyed by effect id — the byte curve FINDINGS.md #8 asked for is measured here |
 | `$SOAK/logs/` | `jinnd.log`, `ops.log` (operator actions, one timestamped line each — restarts and the pin bump count toward the +7d audit) |
-| `$SOAK/run/` | `jinnd.pid`; the supervisor's two scratch files, `launchd.hostboot` (the host boot stamp the wrapper compares to tell a reboot from a crash restart) and `launchd.reason` (one word an operator drops to name a planned start; the wrapper consumes it) |
+| `$SOAK/run/` | `jinnd.pid` (pid and mtime are ONE previous-start record: the wrapper proves both or neither, then compares the mtime to `kern.boottime` to derive whether the readings are consistent with a reboot or with a crash restart); `launchd.reason` (one word an operator drops to name a planned start; the wrapper consumes it) |
 | `$SOAK/meta.json` | Start timestamp + pins, written once at soak start |
 
 ## Setup (how the runtime root is stood up)
@@ -100,11 +100,139 @@ are unchanged, and launchd keys `SuccessfulExit` on the daemon's own status.
 
 The reason vocabulary is what the +7d audit counts:
 
-| reason | means |
+| reason | means | the proof it rests on |
+|---|---|---|
+| `adopt` / `planned-start` | an operator start | the reason file, read — a report, not an inference |
+| `boot-consistent` | the readings are CONSISTENT with the daemon having died with the host | a readable `kern.boottime` AND a coherent `run/jinnd.pid` record, boot strictly later |
+| `keepalive-restart-consistent` | the readings are consistent with the opposite: the previous start belongs to THIS host boot, so the host did not reboot under the daemon | the same two readings, boot NOT later |
+| `first-supervised-start` | no record of a previous start | `run/` was enumerated and held no `jinnd.pid` — a proven absence |
+| `unknown` | the wrapper cannot prove why this start happened | — it derives nothing, and names the input it could not read |
+
+**Two of those say `-consistent`, and none says `boot`.** A reboot is a fact
+about the host; the wrapper's inputs are a sysctl reading and a file's mtime.
+From those it can derive that the readings line up with a reboot, never that
+one happened — and the gap stopped being pedantic when a record replaced
+between the two looks with its mtime preserved produced `reason=boot` at rc 0
+in ten runs out of ten (§Known limits). No care at the read site closes that:
+`stat`-after-read proves *I read a pid and an mtime together*, never *this
+mtime belongs to that pid*. The primitive cannot carry the claim, so the claim
+was retired and the derivation is labelled as one.
+
+**Every line carries the readings it rests on.** A label an auditor cannot see
+through is still an oracle, so the inference is followed by `evidence:` and the
+raw inputs — built once in the wrapper and printed by all three writers (the
+dry run, the death line, the start line), so they cannot drift apart:
+
+| field | what it is |
 |---|---|
-| `adopt` / `planned-start` | an operator start — the reason file was dropped first |
-| `boot` | first supervised start since this host booted (a reboot) |
-| `keepalive-restart` | same host boot, nobody asked: launchd replaced a daemon that exited uncleanly |
+| `host_boot_sec` / `host_boot` | `kern.boottime` as read, and its UTC rendering |
+| `prev_record` | `present` / `absent` (enumerated) / `unknown` (`run/` unenumerable) |
+| `prev_pid` | the previous pid as read |
+| `prev_start_sec` / `prev_start` | the record's mtime as read, and its UTC rendering |
+| `prev_end_raw` / `prev_end` / `prev_end_clean` | launchd's `LastExitStatus` verbatim, and the one decode of it |
+| `last_seen` | the daemon's final log timestamp — the duty gap's start |
+| `unproven` | the inputs that could not be READ, or `none` |
+
+`unproven` is computed before the decision, so it reads `none` on a proven
+lane rather than appearing only once the answer is already `unknown`. A
+provably absent record is not an unread one: absence lands in
+`prev_record=absent`, never in `unproven`. So a wrong input on 2026-09-04 is
+visible as a wrong input on the line beside the word, instead of hiding
+inside it.
+
+**A claim is derived from proof, never from the absence of a contradiction.**
+Three times running, a missing or unreadable input degraded into a value
+that made a positive claim true: a vanished stamp file wrote `boot` for a
+SIGTERM on a host that had not rebooted; an unreadable `kern.boottime`
+fell back to a zero epoch and would have written `host up since
+1970-01-01T00:00:00Z`; a torn record — the pid read, then the file gone
+before the `stat` — left the previous start at `0`, which makes
+`boottime > prev_start` trivially true, and answered `boot` at rc 0. So
+the default inverted (as jinnd M2-K9 inverted serial dispatch): each
+input reads into either a value the wrapper can prove it read or the
+literal `unknown` — no `0`, no empty string, no zero epoch, nothing a
+comparison would mistake for a measurement. Both derivations rest on the
+same two readings, so both need both sides proven; everything else,
+imagined or not, is `unknown` by construction rather than by a guard
+someone remembered to write. The pid
+and the previous start's mtime are ONE record, proven as one: the record
+is looked at twice with the read between, and a tear leaves both unknown.
+`first-supervised-start` is earned by a proven absence — an enumerated
+`run/` with nothing in it — and is never inferred from a read failure.
+
+The wrapper `exec`s the daemon, so nobody is standing beside it when it
+dies; for every unplanned reason it therefore writes the DEATH before the
+start line, from what launchd retained and what the daemon last said:
+
+```
+<ts> previous jinnd <pid> <how it ended>; DERIVED <reason>: <the inference>. evidence: <the table above>
+```
+
+— or, when the provenance is unproven, `<how it ended>, PROVENANCE UNKNOWN
+(could not read: <inputs>)`. The duty gap is `last_seen` → the new readiness
+line.
+
+**How it ended and `prev_end=` are one decode, so they cannot disagree.**
+`launchctl list`'s `LastExitStatus` is a wait status (a signal in the low
+seven bits, an exit code in the high byte); the wrapper decodes it ONCE into
+a kind, and the field, `prev_end_clean`, and the phrase the line opens with
+are all rendered from that — the phrase containing the field verbatim
+(`ended UNCLEAN: killed by signal 15 (SIGTERM)`, `ended CLEANLY: exit 0`,
+`ended, HOW UNKNOWN: end status unknown (launchd retained none)`).
+Round 3 wrote that phrase as a literal beside a separately-decoded field, and
+a real start with `LastExitStatus = 15` printed *"a daemon that ended on its
+own"* beside `prev_end="killed by signal 15 (SIGTERM)"` on one line at rc 0 —
+the same defect class as the three above, reached from the printing side: a
+statement made without its proof beside it drifts from the proof. The raw
+reading stays on the line, so a reader can re-decode it themselves. A signal
+has no sender here, in either place — nothing retains one (§Known limits).
+
+**The phrase says how the daemon ended, never whether it was asked to.** A
+wait status carries no agency: `exit 0` is precisely what a planned §Stop
+produces — an external SIGINT, handled, status 0 — so round 4's
+`ended CLEANLY, on its own: exit 0` was false on the daemon's most ordinary
+path, denying a signal that path always carries. The clause is deleted, not
+softened: the wrapper reads no sender and no evidence that there was none,
+and an unreadable fact gets no wording at all. Read agency, when you need it,
+from the §Stop entry in this log beside the death line — an operator stop is
+recorded there; nothing else is.
+
+To see the decision without starting anything:
+`SOAK_DRY_RUN=1 sh "$SOAK/bin/soak-run.sh"`. It prints `reason=<r>` and the
+same evidence record the `ops.log` lines carry, and touches nothing at all —
+against a runtime root that does not exist yet it therefore answers
+`reason=unknown … unproven=run-directory previous-start-record` rather than
+manufacturing the empty `run/` it would then have reasoned from.
+
+### Known limits (what the supervisor does NOT defend against)
+
+The threat model is an honest wrapper under ACCIDENTAL conditions: races,
+missing files, unreadable sysctls, torn records. It is not a forger.
+
+- **A previous-start record replaced between the wrapper's two looks with its
+  mtime preserved reads as coherent**, and yields `boot-consistent` from a pid
+  that is no longer readable — reproducible 10/10. `stat`-after-read cannot
+  establish that an mtime belongs to a pid, so no version of this wrapper
+  closes it. Reaching it requires a writer inside `$SOAK/run/` deliberately
+  forging records, and that writer can edit `ops.log` directly, so defending
+  the label against them buys nothing. What the evidence record buys instead
+  is visibility: the forged reading is printed (`prev_start=2000-01-01…`),
+  so the audit can see through the inference rather than inherit it.
+- **The sender of a SIGTERM is not recorded anywhere**, because nothing
+  retains it. `prev_end_raw`/`prev_end` say what the status was, never who
+  caused it. The 2026-08-29T14:18Z end stays unattributed (§The +7d audit).
+- **`LastExitStatus` is launchd's, not the record's.** It is the last status
+  launchd retained FOR THE LABEL, and nothing ties it to the pid in
+  `run/jinnd.pid`. In the ordinary supervised lane they are the same instance;
+  across an operator `bootout`/`bootstrap`, or a status launchd has since
+  dropped, they need not be. The wrapper prints both readings side by side
+  (`prev_pid=` and `prev_end_raw=`) and never asserts they describe one
+  process — the reason vocabulary rests on the boot time and the record's
+  mtime, never on the status.
+- **`last_seen` is the last timestamp in `jinnd.log`, not the moment of
+  death.** It is a lower bound on when the daemon was alive; the interval
+  between it and the death is unobserved by construction, since the wrapper
+  is not running while the daemon is.
 
 **Operator verbs** (`bootstrap`/`bootout`/`kickstart`, the modern `launchctl`
 lane — pick one lane and stay in it; never mix in `load`/`unload`):
@@ -264,9 +392,11 @@ KeepAlive restart, and the operator adds the before/after evidence line.
 
 An UNPLANNED restart needs no operator at all now: the daemon dies
 uncleanly, launchd relaunches it as soon as `ThrottleInterval` allows, and the
-wrapper's `reason=keepalive-restart` (or `reason=boot` after a host
-reboot) is the outage's own record. Annotate it when you next look —
-what died, and what the ledger shows on the other side.
+wrapper's `reason=keepalive-restart-consistent` (or `reason=boot-consistent`
+when the readings line up with a host reboot) is the outage's own record —
+opening with how the previous instance ended, decoded from launchd's retained
+status. Annotate it when you next look — what died, and what the ledger shows
+on the other side.
 
 ## Pin bump mid-soak
 
@@ -407,7 +537,13 @@ undo retention in RAM until pin `41cb2f47`, and from there the durable
 retention store `$SOAK/data.inverses/` plus the append-only history log,
 FINDINGS.md #8 closed), memory/disk footprint, restart/crash log — read straight off the
 `started (launchd; reason=...)` lines from the supervisor's adoption
-onward, `boot` and `keepalive-restart` counted as outages and
+onward, `boot-consistent`, `keepalive-restart-consistent` and `unknown`
+counted as outages (and the pre-2026-08-30 `boot` / `keepalive-restart`
+lines, which are the same lanes before the derivations were labelled as
+such — each start line now carries `evidence:`, so a doubted reason can be
+re-derived from the readings printed beside it)
+(an end nobody could prove the cause of is still an end — its line names
+the input that was unreadable, and that is the cue to go looking) and
 `adopt`/`planned-start` as planned (the 2026-08-28 host reboot counts as
 a crash, the clean stop/start cycle after the third bump and the
 supervisor adoption as planned restarts) — zero
