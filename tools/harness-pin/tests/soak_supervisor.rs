@@ -214,7 +214,6 @@ fn wrapper_dry_run_classifies_each_start() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-// ---------------------------------------------------------------------------
 // The inverted default (PLA-297, 2026-08-30).
 //
 // Three degradation paths in a row produced a confident `reason=boot` out of
@@ -492,7 +491,6 @@ fn no_read_falls_back_to_a_value_that_looks_measured() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // Evidence on the line, and the conclusion labelled a derivation
 // (PLA-297 round 3, 2026-08-30).
 //
@@ -665,7 +663,6 @@ fn the_ops_log_lines_carry_the_evidence_and_the_derivation() {
     }
 }
 
-// ---------------------------------------------------------------------------
 // One decode, one value (PLA-297 round 4, 2026-08-30).
 //
 // Round 3 decoded launchd's wait status into the `prev_end=` field and worded
@@ -811,7 +808,6 @@ fn the_previous_end_is_decoded_in_exactly_one_place() {
     );
 }
 
-// ---------------------------------------------------------------------------
 // A wait status is not a claim about agency (PLA-297 round 5, 2026-08-30).
 //
 // Round 4 made the narrative and the field one decode. It left the clean
