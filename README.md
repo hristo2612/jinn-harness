@@ -36,7 +36,21 @@ the fiber that loses it may never come back).
 The distribution's wire law now has one home (`jinn_settings::wire`)
 instead of two halves in two seams.
 
-### Phase 2.3 — kernel pin `3fd7b05` (M2-K8): the keystore, and engines.
+### Phase 2.4 — kernel pin `3a8e5c0` (M2-K9): sessions, the first seam that
+COMPOSES another. A definition (`jinn-session`) whose contract name
+carries the store id, so several stores are live at once; `jinn-session-fs`
+keeping one append-only JSONL journal per session over `jinn:fs` and
+replaying it honestly on activate; `jinn-session-memory` as the ephemeral
+store — a genuine use, and the swap proof. NEITHER spawns an engine:
+both inject the engines seam's DEFINITION and drive whatever answers,
+which is the layering the phase is for. The operator API gains the
+sessions surface, and `session-kit` builds the profile. Restart honesty is
+an ORDERING, not a recovery pass: the `turn-started` record lands before
+any engine is asked for anything, so a daemon killed mid-turn comes back
+with that turn `interrupted` and a reason — proven by SIGKILLing a daemon
+with a child-backed run in flight (`tests/composition/tests/sessions.rs`).
+
+Phase 2.3 — kernel pin `3fd7b05` (M2-K8): the keystore, and engines.
 The engines seam (`plugins/engines/`) is the third core-port seam: a
 definition (`jinn-engine`) whose contract name carries the engine id, so
 several providers are live at once; `jinn-engine-claude` and
@@ -83,6 +97,7 @@ iteration channel — kernel changes are never made here).
 | `tools/cron-kit` | Builds the cron seam's components + pinned profile; its library is the kit machinery every seam kit shares |
 | `tools/api-kit` | Builds the operator-API profile: the api trio beside the cron seam |
 | `tools/engine-kit` | Builds the engines profile: the engine providers and the probe beside the api trio |
+| `tools/session-kit` | Builds the sessions profile: the two store providers beside the engine providers |
 | `plugins/` | First-party plugin crates (wasm components) — land per phase, one seam triple at a time |
 | `profiles/` | Named plugin trees — a product is a profile |
 | `tests/composition` | Real-composition gates: boot generated profiles through the REAL pinned jinnd daemon |

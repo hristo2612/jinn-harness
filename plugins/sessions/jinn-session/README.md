@@ -30,6 +30,7 @@ Callers classify by the error's CASE — `invalid`, `not-found`, `refused`,
 | `send` | `{ "session-id", "message" }` | `TurnAccepted { session-id, turn-id }` — at once; the turn's progress arrives on the bus |
 | `get` | `{ "session-id" }` | `SessionRecord` — status, turns, the whole log |
 | `messages` | `{ "session-id", "offset", "limit" }` | `Page` — turns from `offset`, `next-offset` present only when there IS a next page |
+| `events` | `{ "session-id", "after"?, "limit"? }` | `EventPage` — the session's events after that SEQUENCE, plus the cursor to ask with next and the count the ring has dropped |
 | `list` | `{ "owner"?, "engine"? }` | the store's `SessionSummary` list |
 | `cancel` | `{ "session-id" }` | the record; the turn in flight ends `cancelled` |
 | `close` | `{ "session-id" }` | the record; `send` is refused afterwards |
@@ -117,6 +118,23 @@ both turns and sessions, the error `code`, and the journal's `kind`) and
 the settings seam's `{"$secret": ...}` reference. Closed means REFUSES,
 through the one shared `jinn_settings::closed`, so unknown content is a
 loud error naming the surface — never a drop, never a guess.
+
+## The event feed is a cursor, not a stream
+
+`events` answers a page from a SEQUENCE, and a reader polls it. That is a
+bound, not an unfinished stream. An open response would have to be held
+across the HTTP provider's readiness wakes and pushed into from inside a
+caller's dispatch — the nested-dispatch class this repo keeps finding
+(`FINDINGS.md` #4, and #32 at this pin). A cursor is honest about what it
+is: `after` is a sequence, so a reader never misses an event it has not
+seen and never re-reads one it has, and `next-after` is always answered
+because a caught-up reader still needs a cursor to ask again with.
+
+The ring is bounded (`EVENT_RING`) and every page reports how many events
+have been DROPPED from its front. A feed that lost history says so;
+silence would let a gap pass for a quiet session. The record a reader
+should not lose is the `messages` log and, in a durable store, the
+journal — the feed is a tail, not the truth.
 
 ## `Sessions` — the shared registry
 
