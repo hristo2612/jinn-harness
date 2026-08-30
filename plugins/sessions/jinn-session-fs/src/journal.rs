@@ -90,10 +90,37 @@ pub fn closed(session_id: &str, at_ms: u64) -> Result<(), SessionError> {
 /// that quietly skipped a corrupt session would answer `list` with a
 /// short answer and no one would know a session was missing.
 ///
+/// **A torn tail is healed.** The reader admits an unterminated last line
+/// as absence, but leaving those bytes in place would make the NEXT
+/// append land on the end of the partial line — turning a tolerable tear
+/// into an unreadable hole, and a session that came back fine into one
+/// that refuses to replay at the boot after. `jinn:fs` can append and it
+/// can rewrite, but it cannot drop a suffix (`FINDINGS.md` #34), so a
+/// document that replayed with a torn tail is rewritten to its whole
+/// prefix. No RECORD is lost: by the reader's own law those bytes were
+/// never a record. The count is reported by `describe`.
+///
+/// **A document with no record is absence — and absence is three things,
+/// not one.** Reading it as absence is only the first
+/// (`jinn_session::journal::replay` answers `None`, so no session is
+/// installed out of bytes that were never a record). The second is the
+/// BYTES: they are dropped, so nothing can ever be appended onto them.
+/// The third is the ID: the document is named for one, and a `create`
+/// that minted it again would write the new session's first record into
+/// that same document. So the id is RESERVED — the registry moves past it
+/// without installing anything. Each is counted by `describe`; together
+/// they are why an accepted absence cannot become corruption
+/// (`FINDINGS.md` #36).
+///
+/// A drop is the ONLY repair here. Nothing in this path completes,
+/// synthesizes or infers a record: a document that held none still holds
+/// none after it runs.
+///
 /// # Errors
 ///
-/// The directory is unreadable for any reason but absence, or a document
-/// in it does not replay.
+/// The directory is unreadable for any reason but absence, a document in
+/// it does not replay, or a document this store had to repair could not
+/// be written.
 pub fn adopt_all(config: &StoreConfig) -> Result<(), SessionError> {
     let dir = config.dir.clone().unwrap_or_else(|| DEFAULT_DIR.to_owned());
     let entries = match fs::list(&dir) {
@@ -134,13 +161,67 @@ pub fn adopt_all(config: &StoreConfig) -> Result<(), SessionError> {
         // empty spec, sitting `idle` — out of bytes that were never a
         // record. See `FINDINGS.md` #36.
         let Some(replayed) = replayed else {
+            record_less(&path, &bytes, &session_id)?;
             continue;
         };
+        if replayed.torn_tail_bytes > 0 {
+            heal(&path, &bytes, replayed.torn_tail_bytes)?;
+        }
         let mut held = SESSIONS.lock().unwrap();
         held.as_mut()
             .expect("activate holds the registry")
             .adopt(&session_id, replayed);
     }
+    Ok(())
+}
+
+/// Rewrites a document to its whole prefix, dropping a torn tail. See
+/// `adopt_all`'s doc for why the bytes are droppable and the write is not
+/// an edit of history.
+fn heal(path: &str, bytes: &[u8], torn: usize) -> Result<(), SessionError> {
+    let whole = &bytes[..bytes.len().saturating_sub(torn)];
+    fs::write(path, whole, "").map_err(|error| {
+        SessionError::new(
+            ErrorCode::Failed,
+            format!("the torn tail of {path:?} could not be healed: {error:?}"),
+        )
+    })?;
+    *crate::store::HEALED_TAILS.lock().unwrap() += 1;
+    Ok(())
+}
+
+/// Answers one document this store read and found no record in: the bytes
+/// go, the id is spoken for, and the count says both happened.
+///
+/// The document is REMOVED rather than emptied. Every byte in it is a
+/// byte the reader's own law says was never a record, so nothing that is
+/// a record is lost — and a name that is gone cannot be appended onto by
+/// any later writer, which an empty file left in place still can. The id
+/// is reserved in the same breath, so the registry never mints it even
+/// though its document no longer exists: two independent reasons the next
+/// `create` cannot land in an absent session's place, and neither leaning
+/// on the other.
+///
+/// # Errors
+///
+/// The document could not be removed. That fails the activation rather
+/// than leaving a store running over bytes it has decided to append past.
+fn record_less(path: &str, bytes: &[u8], session_id: &str) -> Result<(), SessionError> {
+    if !bytes.is_empty() {
+        fs::remove(path, "").map_err(|error| {
+            SessionError::new(
+                ErrorCode::Failed,
+                format!("the record-less document {path:?} could not be dropped: {error:?}"),
+            )
+        })?;
+    }
+    SESSIONS
+        .lock()
+        .unwrap()
+        .as_mut()
+        .expect("activate holds the registry")
+        .reserve(session_id);
+    *crate::store::RECORD_LESS_DOCUMENTS.lock().unwrap() += 1;
     Ok(())
 }
 

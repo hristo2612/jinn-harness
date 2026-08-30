@@ -87,6 +87,19 @@ pub static DEFERRED: Mutex<Vec<SessionEvent>> = Mutex::new(Vec::new());
 /// Refused emits since activation. Never fatal — the feed and the record
 /// still hold the event — and never silent: `describe` reports it.
 pub static EMIT_FAILURES: Mutex<u64> = Mutex::new(0);
+/// Journals whose torn TAIL was dropped on adoption. Bytes that were
+/// never a record, discarded out loud rather than in silence — a durable
+/// store's `describe` reports it, and an ephemeral store's is always 0.
+pub static HEALED_TAILS: Mutex<u64> = Mutex::new(0);
+/// How many documents this store read and found NO complete record in.
+///
+/// A daemon killed inside a document's very first append leaves bytes
+/// that were never a record. Those documents are absence: nothing is
+/// adopted from them and nothing is written into them. They are counted
+/// so a store that declined to make a record out of a document SAYS SO,
+/// and a reader gets evidence of the absence instead of the absence of
+/// evidence (`FINDINGS.md` #36).
+pub static RECORD_LESS_DOCUMENTS: Mutex<u64> = Mutex::new(0);
 
 /// The config this incarnation activated with.
 ///
@@ -566,6 +579,14 @@ pub fn describe(provider: &str, durable: bool) -> Answer {
         serde_json::json!(*EMIT_FAILURES.lock().unwrap()),
     );
     extra.insert("poll-ms".to_owned(), serde_json::json!(config.poll_ms));
+    extra.insert(
+        "healed-tails".to_owned(),
+        serde_json::json!(*HEALED_TAILS.lock().unwrap()),
+    );
+    extra.insert(
+        "documents-without-a-record".to_owned(),
+        serde_json::json!(*RECORD_LESS_DOCUMENTS.lock().unwrap()),
+    );
     extra.insert(
         "driving".to_owned(),
         serde_json::json!(DRIVING.lock().unwrap().len()),
