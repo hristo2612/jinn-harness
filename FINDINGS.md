@@ -1472,3 +1472,79 @@ mechanism is named in source (`jinnd-events/src/dispatch.rs`,
 `jinnd-wasm/src/topics.rs`). The test that produces it stays in the
 suite, `#[ignore]`d and naming this entry — nothing in its body is
 relaxed.
+
+---
+
+## 33. An append-only log over `jinn:fs` grows the fiber's effect journal without bound — one entry per line, for the life of the incarnation
+
+**Where the harness hit it.** The sessions seam's durable store
+(`plugins/sessions/jinn-session-fs`) keeps one append-only JSONL journal
+per session and writes one line per event: `created`, `turn-started`,
+`turn-ended`, `closed`. Every one of those is a `jinn:fs` `append`.
+
+**The contract's own words.** `kernel-pin/wit/plugin.wit`, `fs.append`:
+
+> Effect class: revertible — inverse = truncate to the prior length, or
+> restore prior absence (the shape for guest-kept logs). Keyed and
+> journaled as `write`. […] The registered effect joins the calling
+> fiber's journal: teardown withdraws it LIFO with the rest of the
+> fiber's contribution (R5, I1).
+
+So the append is designed for exactly this shape ("the shape for
+guest-kept logs") and each one leaves a journal entry that lives until
+the fiber's teardown. A store driving a busy session writes four lines
+per turn; a long-lived instance therefore accumulates effect-journal
+entries in proportion to TOTAL TURNS SERVED, not to anything bounded —
+and the whole point of a durable store is that its incarnation is
+long-lived.
+
+**Why this is the kernel's question and not the harness's.** Nothing the
+guest can do changes it. Batching lines into fewer, larger appends trades
+the growth rate for a worse tear window and a coarser crash boundary —
+the ordering that makes restart honesty work (`turn-started` on disk
+before any engine is asked for anything) requires the append to happen at
+that exact point. Writing whole documents with `write` instead of
+`append` is worse on every axis: it registers an effect too, and it
+rewrites the entire log per line.
+
+**What a card would decide.** Whether an append to a path a fiber has
+already appended to should COALESCE with its existing journal entry (one
+truncate-to-prior-length inverse per (fiber, path) is sufficient — the
+first one's prior length is the only one an unwind needs), or whether the
+`log` effect class should be journaled differently from `write` at all.
+Coalescing looks correct and cheap: LIFO unwind of N appends to one path
+truncates to N different lengths, and only the earliest matters.
+
+**What the harness does meanwhile.** Nothing — no workaround, no side
+door. The sessions suite's journals are short-lived and the growth is
+invisible at that scale, which is precisely why this is filed on the
+CONTRACT rather than on an observation.
+
+*Evidence grade:* **derived, not measured.** This is read off the pinned
+contract's own text and the kernel's stated journaling rule, and it is
+consistent with what `FINDINGS.md` #22 recorded about the commit path.
+The harness has NOT measured a journal growing, has not observed a
+failure, and does not claim a threshold — the sessions suite's sessions
+are too short to produce one. Read as a contract question worth a card,
+not as a reproduced defect. A card should start by measuring it.
+
+---
+
+## What the sessions seam could NOT prove, and says so
+
+Recorded here because the honest limit of a proof belongs beside the
+frictions, not buried in a test:
+
+- **A vendor engine under a session was not driven in this round.** The
+  "same spec over another engine" proof runs over two genuinely different
+  engine PROVIDER SHAPES that exist on every host — the answering echo
+  provider and the same package in its child-spawning shape, which drives
+  a real process through `jinn:process`. A metered vendor CLI would prove
+  the same layering and is absent exactly where the proof must run (CI,
+  and an independent verification that declines to spend inference). The
+  binding is the same one field either way.
+- **The event feed is polled, not pushed.** `GET …/events?after=N` is a
+  cursor read, and that is a bound rather than an unfinished stream: an
+  open response would have to be pushed into from inside a caller's
+  dispatch, which is entry #4's and #32's class. Named in
+  `plugins/sessions/jinn-session/README.md`.
