@@ -223,15 +223,21 @@ case "$end_kind" in
 esac
 # The narrative the ops.log lines open with. It is the same decode worded
 # for a reader, and it CONTAINS the field verbatim — the one construction
-# under which the prose cannot say something the field denies. Note what
-# it does not say: a signal has no sender here, because nothing retains
-# one (SOAK.md §Known limits).
+# under which the prose cannot say something the field denies.
+#
+# Note what it does not say, and why the clause that used to be here is
+# GONE rather than softened. A wait status proves how the process ended,
+# never whether something asked it to: `wait` rc 0 is exactly what the
+# pinned daemon's planned stop produces — an external SIGINT, handled,
+# exit 0 (SOAK.md §Stop) — so `ended CLEANLY, on its own: exit 0` was not
+# an unprovable claim but a FALSE one, denying a signal on the very path
+# that always carries one. Agency is a different reading and nothing here
+# retains it: no sender, and no evidence that there was none. An
+# unreadable fact gets no wording, not a hedged one. If the reading is
+# ever wanted it arrives with its own proof, and a clause with it.
 case "$prev_end_clean" in
-    yes)     prev_end_phrase="ended CLEANLY, on its own: $prev_end" ;;
-    no)      case "$end_kind" in
-                 signal) prev_end_phrase="ended UNCLEAN: $prev_end" ;;
-                 *)      prev_end_phrase="ended UNCLEAN, on its own: $prev_end" ;;
-             esac ;;
+    yes)     prev_end_phrase="ended CLEANLY: $prev_end" ;;
+    no)      prev_end_phrase="ended UNCLEAN: $prev_end" ;;
     *)       prev_end_phrase="ended, HOW UNKNOWN: $prev_end" ;;
 esac
 esc=$(printf '\033')

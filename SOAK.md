@@ -177,8 +177,8 @@ line.
 seven bits, an exit code in the high byte); the wrapper decodes it ONCE into
 a kind, and the field, `prev_end_clean`, and the phrase the line opens with
 are all rendered from that — the phrase containing the field verbatim
-(`ended UNCLEAN: killed by signal 15 (SIGTERM)`, `ended CLEANLY, on its own:
-exit 0`, `ended, HOW UNKNOWN: end status unknown (launchd retained none)`).
+(`ended UNCLEAN: killed by signal 15 (SIGTERM)`, `ended CLEANLY: exit 0`,
+`ended, HOW UNKNOWN: end status unknown (launchd retained none)`).
 Round 3 wrote that phrase as a literal beside a separately-decoded field, and
 a real start with `LastExitStatus = 15` printed *"a daemon that ended on its
 own"* beside `prev_end="killed by signal 15 (SIGTERM)"` on one line at rc 0 —
@@ -186,6 +186,16 @@ the same defect class as the three above, reached from the printing side: a
 statement made without its proof beside it drifts from the proof. The raw
 reading stays on the line, so a reader can re-decode it themselves. A signal
 has no sender here, in either place — nothing retains one (§Known limits).
+
+**The phrase says how the daemon ended, never whether it was asked to.** A
+wait status carries no agency: `exit 0` is precisely what a planned §Stop
+produces — an external SIGINT, handled, status 0 — so round 4's
+`ended CLEANLY, on its own: exit 0` was false on the daemon's most ordinary
+path, denying a signal that path always carries. The clause is deleted, not
+softened: the wrapper reads no sender and no evidence that there was none,
+and an unreadable fact gets no wording at all. Read agency, when you need it,
+from the §Stop entry in this log beside the death line — an operator stop is
+recorded there; nothing else is.
 
 To see the decision without starting anything:
 `SOAK_DRY_RUN=1 sh "$SOAK/bin/soak-run.sh"`. It prints `reason=<r>` and the
