@@ -1644,7 +1644,10 @@ demand.
 on adoption: a replay that reports `torn_tail_bytes > 0` is followed by a
 full `fs::write` of the whole prefix
 (`plugins/todos/jinn-todo-fs/src/journal.rs::heal`), and `describe`
-reports `healed-tails` so bytes are never discarded in silence. No record
+reports `healed-tails` so bytes are never discarded in silence. The same
+workaround now sits in all THREE durable stores — the workflows store from
+phase 2.6, and the sessions store from its round 3, where its absence had
+left this fuse live (#36's round-3 section). No record
 is lost — by the reader's own law those bytes were never a record — but
 this is a REWRITE of an append-only document, and it costs the whole
 document's bytes per heal. On a long-lived ledger that is the wrong shape
@@ -1874,12 +1877,92 @@ implied.** These are LIMITS this round did not close:
 4. **`next_seq` answers `0` for an unknown run**
    (`plugins/workflows/jinn-workflow/src/workflows.rs:758`), which is
    also a legitimate first sequence number.
-5. **The sessions fs store does not HEAL a torn tail at all**
-   (`plugins/sessions/jinn-session-fs/src/journal.rs:97`), unlike the
-   todos and workflows stores — so #34's fuse-into-a-hole is reachable
-   there on the boot after a tear. Now that a record-less document is not
-   adopted, the tear is no longer fabricated INTO anything, but the
-   document still degrades.
+5. ~~**The sessions fs store does not HEAL a torn tail at all**~~ —
+   CLOSED in round 3, and the sentence that followed it was WRONG. See
+   the round-3 section below: "the tear is no longer fabricated INTO
+   anything" was derived from the absence of a contradiction, and the
+   contradiction existed one call away.
+
+### Round 3: recognising absence is HALF of it — the bytes and the id are the other half
+
+**The eighth instance, and the first to bite the FIX for the class.**
+Round 2's fix above is correct as far as it goes and every claim made for
+it holds. What it did not do is finish the answer. A document that READS
+as absent is not yet a clean slate: it still has BYTES on disk and it is
+still NAMED for an id. In `jinn-session-fs` the skip left both, so
+`Sessions::create` minted `default-1` again and appended the real
+`created` record after the stray `{`. The two fused into one undecodable
+line and the next replay refused:
+
+```
+create response ... "session-id":"default-1"
+journal after create: "{{\"api-version\"..."
+next replay: Err("journal line 1: key must be a string at line 1 column 2")
+REPRO_RC=101
+```
+
+An ACCEPTED ABSENCE became CORRUPTION — #34's fuse mechanism, reached
+through a different door. Round 2 had even written limit 5 above naming
+the missing heal, and then concluded from it that "the tear is no longer
+fabricated INTO anything". That conclusion was drawn from the absence of a
+contradiction. This is the class biting its own fix.
+
+**What round 3 established, seam by seam, rather than assumed.** The same
+live reproduction was written for all three stores. Every one was red, and
+they were red differently:
+
+- **sessions** — the bytes survived (`the incomplete bytes survived the
+  boot: "{"`), the id was reused (`default-2`), and there was no heal at
+  all (`healed-tails: Null`). Three separate assertions, three separate
+  faults.
+- **todos** — the bytes were dropped, but a record-less document was
+  counted as `healed-tails: 1` with no `documents-without-a-record` at
+  all: a store reporting a repair it did not make. The id was not
+  reserved.
+- **workflows** — the bytes were dropped, and the id was reused anyway
+  (`a new run was handed the record-less document's id: default-r2`).
+
+Neither todos nor workflows corrupted anything, because each had already
+emptied the file before the reuse. That is safety BY DERIVATION — exactly
+the reasoning round 2's `record_less` doc wrote down, and exactly what
+this entry is about.
+
+**The rule the fix encodes, in all three seams.** An absence is three
+things, and each is proven separately:
+
+1. **The reading** — round 2's: a typed absence, no sentinel to read a
+   status off.
+2. **The BYTES** — the document is REMOVED, whole. Every byte in it is one
+   the reader's own law says was never a record, so nothing that is a
+   record is lost, and a name that is gone cannot be appended onto. A drop
+   is the only permitted repair; nothing synthesizes, completes or infers.
+3. **The ID** — reserved (`Sessions::reserve`, `Todos::reserve`,
+   `Workflows::reserve_run` / `reserve_workflow`), so the mint moves past
+   an id whose document held no record without installing anything. Two
+   independent reasons the next create cannot land in an absent record's
+   place, neither leaning on the other.
+
+A torn tail on a document that DOES hold records is still healed to its
+whole prefix (#34's workaround), and is counted apart from a record-less
+document, because a trimmed tail leaves the records that were there and a
+record-less document had none.
+
+**Proven by**, one live reproduction per seam against the pinned daemon,
+plus a unit proof of the reservation in each definition crate:
+`tests/composition/tests/sessions.rs::a_record_less_session_document_is_dropped_and_never_appended_onto`,
+`::the_id_of_a_record_less_document_is_never_handed_to_a_new_session`,
+`::a_torn_tail_is_healed_and_the_turn_before_it_survives`,
+`tests/composition/tests/todos.rs::the_id_of_a_record_less_document_is_never_handed_to_a_new_todo`,
+and `tests/composition/tests/workflows.rs::the_id_of_a_record_less_document_is_never_handed_to_a_new_run`.
+
+**The process lesson, recorded because it cost a round.** Round 2 found
+the same class live in the two seams below workflows and fixed it there in
+passing — the right instinct. But those sibling fixes rode on the primary
+fix's evidence and got none of their own: no failing test first, no live
+reproduction. The primary fix was verified and correct; the sibling was
+neither, and it shipped a new defect with a shorter fuse. **A sibling fix
+gets its own red test and its own live reproduction, or it is carded
+separately and left alone.**
 
 **The capability that would retire it — PROPOSED, NOT BUILT.** One shared
 typed replay outcome, in a single crate every store consumes, that makes
