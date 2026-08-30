@@ -139,7 +139,13 @@ fn record(port: u16, store: &str, todo: &str) -> serde_json::Value {
 
 /// Moves one Todo's status; answers the raw response so a proof can read
 /// a REFUSAL as well as a move.
-fn update(port: u16, store: &str, todo: &str, status: &str, actor: &str) -> composition::api::Response {
+fn update(
+    port: u16,
+    store: &str,
+    todo: &str,
+    status: &str,
+    actor: &str,
+) -> composition::api::Response {
     post(
         port,
         &format!("/v1/todos/{store}/{todo}/status"),
@@ -328,7 +334,16 @@ fn the_same_todo_store_dispatches_over_another_engine_by_the_binding_alone() {
         &format!("/v1/todos/{DEFAULT_STORE}/{spawned}/dispatch"),
         &serde_json::json!({ "store": SESSION_STORE, "engine": { "engine": DEFAULT_ENGINE } }),
     );
-    assert_eq!(again.status, 409, "{}", again.raw);
+    assert_ne!(again.status, 200, "{}", again.raw);
+    assert_eq!(again.body["error"]["code"], "refused", "{}", again.raw);
+    assert!(
+        again.body["error"]["detail"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("in flight"),
+        "{}",
+        again.raw
+    );
     daemon.interrupt();
 }
 
@@ -344,13 +359,21 @@ fn an_illegal_status_transition_is_refused_typed_and_ledgered() {
     // A producer closing their own work: `executing -> done` is not a
     // move this ledger makes.
     let refused = update(port, DEFAULT_STORE, &todo, "done", "the producer");
-    assert_ne!(refused.status, 200, "an illegal move is refused: {}", refused.raw);
+    assert_ne!(
+        refused.status, 200,
+        "an illegal move is refused: {}",
+        refused.raw
+    );
     // TYPED, and naming the attempt as DATA — not only in the prose.
-    assert_eq!(refused.body["error"]["from"], "executing", "{}", refused.raw);
+    assert_eq!(
+        refused.body["error"]["from"], "executing",
+        "{}",
+        refused.raw
+    );
     assert_eq!(refused.body["error"]["to"], "done", "{}", refused.raw);
     assert_eq!(refused.body["error"]["code"], "refused", "{}", refused.raw);
-    let message = refused.body["error"]["message"].as_str().unwrap_or_default();
-    assert!(message.contains("executing -> done"), "{}", refused.raw);
+    let detail = refused.body["error"]["detail"].as_str().unwrap_or_default();
+    assert!(detail.contains("executing -> done"), "{}", refused.raw);
 
     // NOT silently accepted, and NOT coerced to a neighbouring status.
     let after = record(port, DEFAULT_STORE, &todo);
@@ -410,8 +433,14 @@ fn both_stores_are_live_at_once_and_a_todo_is_routed_by_its_store() {
     // Each store answers for its OWN Todos and knows nothing of the
     // other's — the routing is the store id in the path, and the kernel's
     // one-provider-per-contract-name slot behind it.
-    assert_eq!(record(port, DEFAULT_STORE, &durable)["store"], DEFAULT_STORE);
-    assert_eq!(record(port, MEMORY_STORE, &ephemeral)["store"], MEMORY_STORE);
+    assert_eq!(
+        record(port, DEFAULT_STORE, &durable)["store"],
+        DEFAULT_STORE
+    );
+    assert_eq!(
+        record(port, MEMORY_STORE, &ephemeral)["store"],
+        MEMORY_STORE
+    );
     let crossed = get(port, &format!("/v1/todos/{MEMORY_STORE}/{durable}"));
     assert_eq!(crossed.status, 404, "{}", crossed.raw);
     // Their durability declarations differ, and so does what is on disk.
@@ -577,15 +606,28 @@ fn a_dispatch_in_flight_when_the_daemon_dies_comes_back_interrupted_with_a_reaso
         recovered["status"], "blocked",
         "never eternally executing: {recovered}"
     );
-    assert_eq!(recovered["status-reason"], BLOCKED_REASON, "{recovered}");
-    // History is NOT rewritten to make that true: what was declared is
-    // still exactly what the journal says.
-    assert_eq!(recovered["declared-status"], "executing", "{recovered}");
-    assert_eq!(
-        recovered["history"].as_array().map(Vec::len),
-        Some(1),
-        "{recovered}"
+    assert!(
+        recovered.get("status-reason").is_none(),
+        "once the recovery is recorded the two statuses AGREE, so there is \
+         nothing to explain away: {recovered}"
     );
+    // The recovery is RECORDED, not merely derived: the declared status
+    // moved too, so the ledger a caller can act on and the status a
+    // reader is shown are the same status.
+    assert_eq!(recovered["declared-status"], "blocked", "{recovered}");
+    // And it is a NEW event appended after the ones already there —
+    // history is append-only, and the move that started the work is
+    // still readable exactly as it was written.
+    let history = recovered["history"].as_array().expect("a history");
+    assert_eq!(history.len(), 2, "{recovered}");
+    assert_eq!(history[0]["from"], "backlog", "{recovered}");
+    assert_eq!(history[0]["to"], "executing", "{recovered}");
+    assert_eq!(history[1]["from"], "executing", "{recovered}");
+    assert_eq!(history[1]["to"], "blocked", "{recovered}");
+    assert_eq!(history[1]["note"], BLOCKED_REASON, "{recovered}");
+    // Nobody asked for the recovery, and the record says so rather than
+    // naming a principal that did not act.
+    assert!(history[1].get("actor").is_none(), "{recovered}");
 
     // A dispatch that DID finish is still done — the restart is not a
     // blanket verdict.
@@ -598,14 +640,24 @@ fn a_dispatch_in_flight_when_the_daemon_dies_comes_back_interrupted_with_a_reaso
     let after_crash = journal(&daemon, &live).expect("the journal survived");
     assert_untorn(&after_crash, "the live Todo, after the crash");
     assert!(after_crash.len() >= document.len());
+    assert_eq!(
+        kinds(&after_crash),
+        vec![
+            "created",
+            "status-changed",
+            "dispatch-started",
+            "status-changed"
+        ],
+        "the recovery is a line, appended after the dispatch it explains"
+    );
 
     // And the recovered Todo is USABLE: `blocked -> executing` is a legal
-    // move and a new dispatch runs on it, which is what makes the
-    // interruption a state and not a tombstone.
-    assert_eq!(
-        update(port, DEFAULT_STORE, &live, "executing", "planner").status,
-        200
-    );
+    // move FROM WHERE THE RECORD SAYS IT IS, and a new dispatch runs on
+    // it — which is what makes the interruption a state and not a
+    // tombstone. A fold alone would have failed here, with the ledger
+    // refusing a move an operator was shown as available.
+    let resumed = update(port, DEFAULT_STORE, &live, "executing", "planner");
+    assert_eq!(resumed.status, 200, "{}", resumed.raw);
     dispatch(port, DEFAULT_STORE, &live, DEFAULT_ENGINE);
     let again = settled(&daemon, port, DEFAULT_STORE, &live);
     assert_eq!(last_dispatch(&again)["status"], "done", "{again}");
@@ -618,7 +670,10 @@ fn a_torn_tail_is_absence_and_the_todo_before_it_survives() {
         return;
     };
     let todo = create(port, DEFAULT_STORE, "work with a torn tail");
-    assert_eq!(update(port, DEFAULT_STORE, &todo, "executing", "planner").status, 200);
+    assert_eq!(
+        update(port, DEFAULT_STORE, &todo, "executing", "planner").status,
+        200
+    );
     let path = daemon.data(&format!("todos/{todo}.jsonl"));
     let whole = std::fs::read(&path).expect("a journal");
     assert_untorn(&whole, "before the tear");
@@ -638,7 +693,15 @@ fn a_torn_tail_is_absence_and_the_todo_before_it_survives() {
         "the tear is absence, not damage: {recovered}"
     );
     assert_eq!(recovered["history"].as_array().map(Vec::len), Some(1));
-    // And the store is fully usable: the next move appends past the tear.
+    // The store says what it discarded rather than dropping bytes in
+    // silence.
+    assert_eq!(
+        described(port, DEFAULT_STORE)["describe"]["extra"]["healed-tails"],
+        1
+    );
+    // And the store is fully usable: the next move appends onto a HEALED
+    // document, so a tolerable tear never becomes an unreadable hole at
+    // the boot after.
     assert_eq!(
         update(port, DEFAULT_STORE, &todo, "in-review", "planner").status,
         200
@@ -702,14 +765,22 @@ fn a_tree_and_a_list_answer_the_company_view_of_the_ledger() {
     let tree = get(port, &format!("/v1/todos/{DEFAULT_STORE}/{root_todo}/tree"));
     assert_eq!(tree.status, 200, "{}", tree.raw);
     assert_eq!(tree.body["root"]["todo-id"], root_todo.as_str());
-    assert_eq!(tree.body["root"]["children"][0]["todo-id"], child_id.as_str());
+    assert_eq!(
+        tree.body["root"]["children"][0]["todo-id"],
+        child_id.as_str()
+    );
 
     // `roots-only` is the objective view, and `total` still says how many
     // Todos the store holds — a filtered answer is never read as a short
     // store.
     let roots = get(port, &format!("/v1/todos/{DEFAULT_STORE}?roots-only=true"));
     assert_eq!(roots.status, 200, "{}", roots.raw);
-    assert_eq!(roots.body["todos"].as_array().map(Vec::len), Some(1), "{}", roots.raw);
+    assert_eq!(
+        roots.body["todos"].as_array().map(Vec::len),
+        Some(1),
+        "{}",
+        roots.raw
+    );
     assert_eq!(roots.body["total"], 2, "{}", roots.raw);
 
     // A comment is recorded with its actor, and an ANONYMOUS one records

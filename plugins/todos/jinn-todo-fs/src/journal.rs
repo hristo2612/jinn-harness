@@ -114,10 +114,29 @@ pub fn dispatch_ended(todo_id: &str, dispatch: &Dispatch, at_ms: u64) -> Result<
 /// that quietly skipped a corrupt Todo would answer `list` short and no
 /// one would know a piece of work was missing.
 ///
+/// # Two things this does BESIDES reading
+///
+/// **A torn tail is healed.** The reader admits an unterminated last line
+/// as absence, but leaving those bytes in place would make the NEXT
+/// append land on the end of the partial line — turning a tolerable tear
+/// into an unreadable hole, and a Todo that came back fine into one that
+/// refuses to replay at the boot after. So a document that replayed with
+/// a torn tail is rewritten to its whole prefix. No RECORD is lost: by
+/// the reader's own law those bytes were never a record. The count is
+/// reported by `describe`, so a store that discarded bytes says so.
+///
+/// **An interrupted dispatch is recovered ON THE RECORD.** After
+/// adopting, `Todos::recover` turns the fold into a real status-changed
+/// line — a NEW event appended after the ones already there, never an
+/// edit of one — so the ledger a caller can act on and the status a
+/// reader is shown are the same status. See its doc for why the fold
+/// alone is not enough.
+///
 /// # Errors
 ///
-/// The directory is unreadable for any reason but absence, or a document
-/// in it does not replay.
+/// The directory is unreadable for any reason but absence, a document in
+/// it does not replay, a healed document could not be written back, or
+/// the recovery line could not be appended.
 pub fn adopt_all(config: &StoreConfig) -> Result<(), TodoError> {
     let dir = config.dir.clone().unwrap_or_else(|| DEFAULT_DIR.to_owned());
     let entries = match fs::list(&dir) {
@@ -153,12 +172,48 @@ pub fn adopt_all(config: &StoreConfig) -> Result<(), TodoError> {
                 format!("the journal {path:?} does not replay: {error}"),
             )
         })?;
+        if replayed.torn_tail_bytes > 0 {
+            heal(&path, &bytes, replayed.torn_tail_bytes)?;
+        }
+        {
+            let mut held = TODOS.lock().unwrap();
+            held.as_mut()
+                .expect("activate holds the registry")
+                .adopt(&todo_id, replayed);
+        }
+        recover(&todo_id)?;
+    }
+    Ok(())
+}
+
+/// Rewrites a document to its whole prefix, dropping a torn tail. See
+/// `adopt_all`'s doc for why the bytes are droppable and the write is not
+/// an edit of history.
+fn heal(path: &str, bytes: &[u8], torn: usize) -> Result<(), TodoError> {
+    let whole = &bytes[..bytes.len().saturating_sub(torn)];
+    fs::write(path, whole, "").map_err(|error| {
+        TodoError::new(
+            ErrorCode::Failed,
+            format!("the torn tail of {path:?} could not be healed: {error:?}"),
+        )
+    })?;
+    *crate::store::HEALED_TAILS.lock().unwrap() += 1;
+    Ok(())
+}
+
+/// Records the recovery an adopted Todo owes, if any.
+fn recover(todo_id: &str) -> Result<(), TodoError> {
+    let now = crate::store::now_ms()?;
+    let change = {
         let mut held = TODOS.lock().unwrap();
         held.as_mut()
             .expect("activate holds the registry")
-            .adopt(&todo_id, replayed);
+            .recover(todo_id, now)
+    };
+    match change {
+        Some(change) => status_changed(todo_id, &change, now),
+        None => Ok(()),
     }
-    Ok(())
 }
 
 /// The last segment of a listed path.

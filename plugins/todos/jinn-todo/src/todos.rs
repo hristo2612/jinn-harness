@@ -257,6 +257,38 @@ impl Todos {
         }
     }
 
+    /// The RECOVERY an adopted Todo owes, applied as a real move.
+    ///
+    /// [`reported_status`] is the fold: a Todo whose dispatch replayed
+    /// `interrupted` READS `blocked` rather than `executing`. But a fold
+    /// alone leaves the ledger unusable — the declared status is still
+    /// `executing`, so an operator who reads `blocked` and asks for
+    /// `blocked -> executing` is refused a move the record does not know
+    /// it is in. So a durable store, after adopting, calls this: the fold
+    /// becomes a status-changed record like any other, carrying the
+    /// dispatch's reason as its note.
+    ///
+    /// That is not a rewrite. It is a NEW event appended after the ones
+    /// that were already there — the whole history stays readable, and a
+    /// reader can see both that the work was started and that the daemon
+    /// died on it. Answers the change to journal, or `None` when the Todo
+    /// owes nothing.
+    pub fn recover(&mut self, todo_id: &str, now_ms: u64) -> Option<StatusChange> {
+        let live = self.live.get(todo_id)?;
+        let (folded, reason) = reported_status(live.declared, live.dispatches.last());
+        if folded == live.declared {
+            return None;
+        }
+        match self.update(todo_id, folded, None, reason, now_ms) {
+            // The fold only ever produces a move the table admits (the
+            // debug assertion in `reported_status`), so a refusal here is
+            // unreachable; it is answered as "nothing to record" rather
+            // than by a panic in a recovery path.
+            Ok(Moved::Changed(change)) => Some(change),
+            Ok(Moved::Refused(..)) | Err(_) => None,
+        }
+    }
+
     /// Adds one comment and mints its id.
     ///
     /// # Errors

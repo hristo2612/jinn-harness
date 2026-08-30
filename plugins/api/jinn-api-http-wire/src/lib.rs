@@ -35,15 +35,27 @@ impl Request {
     }
 }
 
-/// Query pairs as a JSON object: integers become numbers, everything else
-/// stays a string (the seam's numeric fields are `u64`/`u32`).
+/// Query pairs as a JSON object: integers become numbers, `true`/`false`
+/// become booleans, everything else stays a string.
+///
+/// The two coercions are the seam's scalar kinds and nothing more. A
+/// query is the only way a READ carries a parameter (a read never takes a
+/// body), so a seam field that is a `bool` — `roots-only` on the todos
+/// surface — is unreachable over HTTP unless this codec can produce one.
+/// The coercion is deliberately NOT generous: `"yes"`, `"1"` and `"True"`
+/// stay strings and are refused by the seam that reads them, because a
+/// codec that guessed at intent would make a typo mean `true`.
 #[must_use]
 pub fn query_json(pairs: &[(String, String)]) -> serde_json::Value {
     let mut object = serde_json::Map::new();
     for (key, value) in pairs {
-        let json = value
-            .parse::<u64>()
-            .map_or_else(|_| serde_json::Value::String(value.clone()), Into::into);
+        let json = match value.as_str() {
+            "true" => serde_json::Value::Bool(true),
+            "false" => serde_json::Value::Bool(false),
+            other => other
+                .parse::<u64>()
+                .map_or_else(|_| serde_json::Value::String(value.clone()), Into::into),
+        };
         object.insert(key.clone(), json);
     }
     serde_json::Value::Object(object)
@@ -328,5 +340,38 @@ mod tests {
             unavailable, failed,
             "the environment gate is not flattened into a generic failure"
         );
+    }
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::query_json;
+
+    fn pairs(input: &[(&str, &str)]) -> Vec<(String, String)> {
+        input
+            .iter()
+            .map(|(key, value)| ((*key).to_owned(), (*value).to_owned()))
+            .collect()
+    }
+
+    #[test]
+    fn a_query_carries_the_seams_scalar_kinds_and_guesses_at_nothing() {
+        let json = query_json(&pairs(&[
+            ("limit", "10"),
+            ("roots-only", "true"),
+            ("archived", "false"),
+            ("department", "platform"),
+            ("nearly", "True"),
+            ("numeric", "1"),
+        ]));
+        assert_eq!(json["limit"], 10);
+        assert_eq!(json["roots-only"], true);
+        assert_eq!(json["archived"], false);
+        assert_eq!(json["department"], "platform");
+        // A codec that guessed would make a typo mean `true`, and `1`
+        // mean it too. Both stay what they are, and the seam that reads
+        // them refuses them.
+        assert_eq!(json["nearly"], "True");
+        assert_eq!(json["numeric"], 1);
     }
 }

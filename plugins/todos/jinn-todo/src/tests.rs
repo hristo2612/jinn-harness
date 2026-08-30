@@ -166,6 +166,64 @@ fn a_todo_whose_dispatch_was_interrupted_never_reads_as_still_executing() {
 }
 
 #[test]
+fn the_recovery_is_a_new_event_and_makes_the_ledger_usable_again() {
+    // The fold alone leaves the ledger unusable: a reader is shown
+    // `blocked` while the RECORD still stands at `executing`, so the move
+    // the reader is offered is refused by the table. `recover` closes
+    // that by making the fold a real, recorded move.
+    let document = document(&[
+        created_line("port the ledger"),
+        moved(Status::Backlog, Status::Executing, 20),
+        Record::dispatch_started(
+            &Dispatch {
+                dispatch_id: "default-1-d1".to_owned(),
+                ..Dispatch::default()
+            },
+            30,
+        ),
+    ]);
+    let mut todos = store();
+    todos.adopt("default-1", replay(&document).expect("replays"));
+    // Before recovery: the fold reports blocked and explains itself.
+    let folded = todos.record("default-1").expect("a record");
+    assert_eq!(folded.status, Status::Blocked);
+    assert_eq!(folded.declared_status, Status::Executing);
+
+    let change = todos.recover("default-1", 40).expect("a recovery");
+    assert_eq!(
+        (change.from, change.to),
+        (Status::Executing, Status::Blocked)
+    );
+    assert_eq!(change.note.as_deref(), Some(INTERRUPTED_STATUS_REASON));
+    // Nobody asked for it, and the record says so rather than naming a
+    // principal that did not act.
+    assert_eq!(change.actor, None);
+
+    let after = todos.record("default-1").expect("a record");
+    assert_eq!(after.status, Status::Blocked);
+    assert_eq!(after.declared_status, Status::Blocked);
+    // The two agree, so there is nothing left to explain away.
+    assert_eq!(after.status_reason, None);
+    // APPEND-ONLY: the move that started the work is still exactly as it
+    // was written, and the recovery is a new line after it.
+    assert_eq!(after.history.len(), 2);
+    assert_eq!(
+        (after.history[0].from, after.history[0].to),
+        (Status::Backlog, Status::Executing)
+    );
+    // And the ledger is usable: the move a reader is now offered is one
+    // the table admits from where the record actually stands.
+    assert!(matches!(
+        todos.update("default-1", Status::Executing, None, None, 50),
+        Ok(Moved::Changed(_))
+    ));
+    // A Todo that owes nothing recovers nothing — no empty line is
+    // appended to a history that did not change.
+    let (mut clean, todo) = one("nothing to recover");
+    assert!(clean.recover(&todo, 60).is_none());
+}
+
+#[test]
 fn running_is_unreachable_from_a_document() {
     // Every dispatch line a document can hold, replayed: none produces a
     // dispatch this incarnation claims to be driving.
