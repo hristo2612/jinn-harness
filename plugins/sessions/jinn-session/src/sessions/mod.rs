@@ -280,6 +280,14 @@ impl Sessions {
         Ok(turn.clone())
     }
 
+    /// Drops a session this registry minted but could not durably
+    /// record. Only that: a session whose `created` line did not land
+    /// never existed, and leaving it live would give a caller an id that
+    /// no restart can find.
+    pub fn forget(&mut self, session_id: &str) {
+        self.live.remove(session_id);
+    }
+
     /// Closes a session for good.
     ///
     /// # Errors
