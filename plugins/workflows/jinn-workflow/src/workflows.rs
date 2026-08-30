@@ -722,10 +722,19 @@ impl Workflows {
             node.state = NodeState::Interrupted;
             node.reason = Some(INTERRUPTED_NODE_REASON.to_owned());
         }
-        // A run whose nodes are now all terminal ends with the reason
-        // those nodes give; one that still has pending nodes it will
-        // never drive ends INTERRUPTED, because a fresh incarnation
-        // drives nothing it did not start.
+        // The one run that ends anything but INTERRUPTED is the one that
+        // had already finished every node cleanly and only lacked its
+        // closing line — there, `done` is a claim every node's own
+        // terminal record justifies.
+        //
+        // Every other run ends `interrupted`, INCLUDING one whose nodes
+        // all ended with a failure among them. `run_ending` would derive
+        // `failed` there, and this deliberately does not use it: what the
+        // journal proves is that the nodes ended, not that the daemon
+        // would have closed the run on that verdict, and a status is only
+        // as strong as the line behind it. The nodes' own reason is
+        // carried through, so nothing about WHY is lost — only the claim
+        // that the run reached its own conclusion.
         recovery.run_end = Some(match run_ending(&nodes) {
             Some((RunStatus::Done, _)) if recovery.node_changes.is_empty() => {
                 (RunStatus::Done, String::new())
