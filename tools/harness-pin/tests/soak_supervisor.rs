@@ -664,3 +664,146 @@ fn the_ops_log_lines_carry_the_evidence_and_the_derivation() {
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// One decode, one value (PLA-297 round 4, 2026-08-30).
+//
+// Round 3 decoded launchd's wait status into the `prev_end=` field and worded
+// the ops.log narrative separately, as a literal. On a real start path with
+// `LastExitStatus = 15` the two met on one line, at rc 0:
+//
+//   previous jinnd 75738 ended UNCLEAN; DERIVED keepalive-restart-consistent:
+//   … launchd is relaunching a daemon that ended on its own …
+//   prev_end="killed by signal 15 (SIGTERM)"
+//
+// "ended on its own" and "killed by signal 15" are the same line disagreeing
+// with itself. An auditor reading it on 2026-09-04 learns only that the
+// wrapper does not know what it is saying — which is the whole defect class
+// this packet exists to close, arrived at from the printing side instead of
+// the reading side.
+//
+// The fix is not a check that the two agree. It is that there is only one of
+// them: the status is decoded ONCE into a kind, and the field, the narrative
+// phrase and the clean/unclean token are all rendered from that single
+// dispatch — the phrase EMBEDDING the field, so disagreement is not guarded
+// against but unrepresentable.
+
+#[cfg(target_os = "macos")]
+impl Scratch {
+    /// launchd retained this `LastExitStatus` for the label.
+    fn launchctl_status(&self, raw: &str) {
+        self.stub(
+            "launchctl",
+            &format!("#!/bin/sh\nprintf '{{\\n\\t\"LastExitStatus\" = {raw};\\n}};\\n'\n"),
+        );
+    }
+
+    /// launchd retained nothing at all — a label it has never run, or a
+    /// status it has since dropped.
+    fn launchctl_retains_nothing(&self) {
+        self.stub("launchctl", "#!/bin/sh\nexit 1\n");
+    }
+
+    /// The REAL start path over a stub daemon; returns the death line the
+    /// audit reads. The dry run prints only the evidence record, so the
+    /// narrative can only be caught here — which is where it hid.
+    fn death_line(&self) -> String {
+        std::fs::create_dir_all(self.root.join("bin")).expect("bin");
+        let daemon = self.root.join("bin/jinnd");
+        std::fs::write(&daemon, "#!/bin/sh\nexit 0\n").expect("stub daemon");
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&daemon, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        let status = Command::new("/bin/sh")
+            .arg(soak_dir().join("soak-run.sh"))
+            .env("SOAK", &self.root)
+            .env("PATH", &self.path)
+            .status()
+            .expect("/bin/sh");
+        assert!(status.success(), "the wrapper failed on its real start path");
+        let ops = std::fs::read_to_string(self.root.join("logs/ops.log")).expect("ops.log");
+        ops.lines()
+            .find(|l| l.contains("previous jinnd"))
+            .unwrap_or_else(|| panic!("no death line: {ops}"))
+            .to_owned()
+    }
+}
+
+/// Across the whole exit-status space — a signal death, a clean exit, a dirty
+/// exit, and no retained status at all — the prose the line opens with and the
+/// `prev_end=` field it carries are the same decode. The narrative is asserted
+/// to END with the decoded field verbatim: it does not merely agree with it,
+/// it is rendered from it.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_narrative_and_the_decoded_status_cannot_disagree() {
+    // (retained status, the decode it must produce, wordings that would
+    // contradict that decode if the prose were written independently)
+    let cases: [(Option<&str>, &str, &[&str]); 4] = [
+        // The blocker, verbatim: this line said "ended on its own".
+        (
+            Some("15"),
+            "killed by signal 15 (SIGTERM)",
+            &["on its own", "CLEANLY"],
+        ),
+        // A clean exit. Calling it UNCLEAN is the same defect mirrored.
+        (Some("0"), "exit 0", &["UNCLEAN", "killed by signal"]),
+        // The daemon exited by itself, badly: 3 in the high byte.
+        (Some("768"), "exit 3", &["killed by signal", "CLEANLY"]),
+        // Nothing retained: neither clean nor killed may be claimed.
+        (
+            None,
+            "end status unknown (launchd retained none)",
+            &["UNCLEAN", "CLEANLY", "killed by signal"],
+        ),
+    ];
+    for (raw, field, contradictions) in cases {
+        let tag = raw.unwrap_or("none");
+        let scratch = Scratch::new(&format!("agree-{tag}"));
+        scratch.ancient_pid_record("file");
+        match raw {
+            Some(raw) => scratch.launchctl_status(raw),
+            None => scratch.launchctl_retains_nothing(),
+        }
+        let line = scratch.death_line();
+        // The narrative is everything before the derivation clause.
+        let head = line
+            .split("; DERIVED")
+            .next()
+            .expect("split")
+            .split(", PROVENANCE")
+            .next()
+            .expect("split");
+        assert!(
+            head.ends_with(field),
+            "the narrative does not render the decoded status {field:?}: {head}"
+        );
+        assert!(
+            line.contains(&format!("prev_end=\"{field}\"")),
+            "the field disagrees with the narrative: {line}"
+        );
+        for wrong in contradictions {
+            assert!(
+                !head.contains(wrong),
+                "status {tag} narrated as {wrong:?}: {head}"
+            );
+        }
+    }
+}
+
+/// One decode, in one place. Each `ops.log` line renders the phrase that
+/// decode produced; none words the previous end for itself. There is nothing
+/// left for a second statement to disagree with.
+#[test]
+fn the_previous_end_is_decoded_in_exactly_one_place() {
+    let wrapper = read("soak-run.sh");
+    assert_eq!(
+        wrapper.matches("killed by signal $").count(),
+        1,
+        "the wait status is decoded in more than one place"
+    );
+    assert_eq!(
+        wrapper.matches("\"$prev_end_phrase\"").count(),
+        3,
+        "every ops.log line must render the one decoded phrase"
+    );
+}
