@@ -106,6 +106,68 @@ answered `reason=boot` 5 times out of 5.
 The law this leaves behind, for every oracle we write after it: **a claim
 is derived from proof, never from the absence of a contradiction.**
 
+## The fourth instance, and why the claim moved instead of the guard (2026-08-30)
+
+The inversion held for what it covered, and the verifier found what it did
+not. A previous-start record REPLACED between the wrapper's two looks with
+its mtime preserved reads as perfectly coherent — same mtime both times, a
+pid read in between — and returned `reason=boot` at rc 0 in 10 runs out of
+10, from a pid no longer readable at that path.
+
+Round 2 inverted the *reading*: every input yields a value the wrapper can
+prove it read, or `unknown`. What it cannot invert is the record's
+*identity*. `stat`-after-read establishes "I read a pid and an mtime
+together"; it never establishes "this mtime belongs to that pid". On a
+filesystem where a file can be replaced with its mtime preserved, no amount
+of care at the read site closes that, and a fifth guard would have met a
+fifth construction. The primitive cannot deliver what the acceptance asked
+of it.
+
+So the fix moved up a level — the same law applied to itself. **`boot` is a
+causal claim about the host that the wrapper cannot prove from these inputs,
+so it stops being a claim.**
+
+- The derivation is labelled as one: `boot-consistent`, and its twin
+  `keepalive-restart-consistent`. The twin is renamed for the same reason,
+  not for symmetry: it claims the host did *not* reboot, from exactly the
+  same two readings, so it is exactly as derived. Both `ops.log` branches
+  dispatch on the new names, so no line can reach the file wording the
+  inference as a fact. `first-supervised-start` and the operator reasons
+  keep their names — a proven absence and a file read are observations, not
+  derivations.
+- **Every line carries the readings the answer rests on**: the boot time raw
+  and rendered, the record's status, its pid and mtime as read, launchd's
+  status raw and decoded, the last-seen bound, and the names of whatever was
+  unreadable. Built once in the wrapper and printed by all three writers —
+  the dry run, the death line, the start line — because three constructions
+  of one record is three chances to drift.
+- `unproven` moved before the decision and now reads `none` on a proven
+  lane. A field that only appears once the answer is already `unknown` tells
+  an auditor nothing about the answers that are not. And a provably absent
+  record is not an unread one, so absence is reported as
+  `prev_record=absent` and never as an unproven input.
+
+**Why this is a fix and not a shrug.** The forged construction still reaches
+the derivation — it answers `boot-consistent`. But the line now reads
+`prev_start_sec=946684800 prev_start=2000-01-01T00:00:00Z`, and no soak start
+happened in 2000. The wrong input is *visible as a wrong input*, beside the
+inference it produced, to a human auditor on 2026-09-04 who does not have to
+trust the word to check the answer. That is the property the label alone
+could never have.
+
+**The threat model, stated (it should have been stated three rounds ago).**
+An honest wrapper under accidental conditions: races, missing files,
+unreadable sysctls, torn records. Not a forger with write access to
+`$SOAK/run/` — an adversary who can preserve an mtime while swapping a record
+can edit `ops.log` directly, so hardening the label against them buys
+nothing. The residual defect is named in SOAK.md §Known limits rather than
+defended against, which is where a limit belongs once you have decided not to
+close it.
+
+Round 2's work is untouched by all of this: the vanished-record probe still
+answers `unknown` 20 times out of 20, and the seven per-input degradation
+proofs are green at 19 passed / 0 failed.
+
 ## What is deliberately NOT claimed
 
 The sender of the SIGTERM is unknown. jetsam is ruled out by the signal
@@ -128,8 +190,10 @@ bug must not create a discontinuity to install itself.
 `tools/harness-pin/tests/soak_supervisor.rs` drives the wrapper in dry-run
 mode over scratch roots with stub `launchctl`, `sysctl` and `stat` binaries:
 every reason branch, the decoded previous end, the last-seen bound, the
-reason file surviving a dry run, one degradation case per input, and the
-construction itself (no read may fall back to a value that looks measured).
+reason file surviving a dry run, one degradation case per input, the
+construction itself (no read may fall back to a value that looks measured),
+the evidence record on the dry run AND — over a scratch root with a stub
+daemon, on the wrapper's real start path — on both `ops.log` lines.
 It earned its keep twice before shipping — catching a greedy `sec =` parse
 that matched `usec`, and holding the `boot` and `keepalive-restart` lanes
 green through the inversion, so honesty did not cost the wrapper its
