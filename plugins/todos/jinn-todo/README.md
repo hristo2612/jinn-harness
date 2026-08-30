@@ -83,7 +83,8 @@ A record carries `declared-status` (the `to` of the last status line —
 history, verbatim) and `status` (what the store reports now). They differ
 only while a Todo's dispatch replayed `interrupted` and its recovery has
 not yet been recorded; `reported_status` is that fold, in one place, and
-`Todos::recover` is what turns it into a real line. See
+`Todos::plan_recovery` is what turns it into a real line — journalled
+first, committed after, like every other move. See
 `plugins/todos/README.md` for why the fold alone is not enough.
 
 ## Attribution

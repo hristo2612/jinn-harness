@@ -53,9 +53,18 @@ table (`jinn-todo/src/status.rs`):
 
 A refused move is typed (`refused`, with `from` and `to` as DATA beside
 the message), and it is RECORDED — journal line, bus event, and a row on
-the Todo — before the caller is told. `Todos::update` answers
+the Todo — before the caller is told. `Todos::plan_update` answers
 `Moved::Refused` carrying the record, so there is no code path that
 refuses without recording.
+
+## The order a store writes in
+
+Every mutation is `plan_*` (touches nothing), then the journal, then
+`commit_*` (folds a record that is already durable). The state a store
+reports is therefore the state its log holds: an append that refuses
+leaves the reported status where it was, and a restart replays what the
+live view was already saying. `plugins/todos/store-core/README.md` shows
+the three calls; the law is in `jinn_todo::Todos`'s module doc.
 
 ## Honesty after a crash
 

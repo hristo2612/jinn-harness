@@ -28,7 +28,7 @@ provider remembering. A status move is legal or REFUSED from an
 explicit table that is nowhere near any-status-to-any-status (a
 producer does not close their own work; a terminal status has no
 exit), the refusal is typed with the attempted `from -> to` as DATA,
-and `Todos::update` answers a refusal carrying its own record — so no
+and `Todos::plan_update` answers a refusal carrying its own record — so no
 code path refuses without recording. A dispatch reads back `done` only
 where a terminal record was written; a started dispatch with no ending
 replays `interrupted` with a reason, and `running` cannot be produced
