@@ -1,0 +1,23 @@
+# The todos seam's SERVICE DEFINITION (AGENTS.md standing order 4): the
+# `jinn:todo.<store-id>` contract's vocabulary, the status law and its
+# explicit legal-transition table, the append-only journal's record law,
+# and the ledger logic every store provider shares — pure types + logic,
+# no host calls, unit-tested here and compiled into the guests and the
+# host tools alike. A provider adds only where the records live.
+[package]
+name = "jinn-todo"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+# The DISPATCH is the sessions seam's fact, with one home there: a Todo
+# names a session store and an engine binding, and a provider drives
+# `jinn:session.<store>`. The wire law and the closed-surface refusal
+# come through it from `jinn-settings`, their own home.
+jinn-session = { path = "../../sessions/jinn-session" }
+jinn-settings = { path = "../../settings/jinn-settings" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
