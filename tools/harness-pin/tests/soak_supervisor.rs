@@ -719,7 +719,10 @@ impl Scratch {
             .env("PATH", &self.path)
             .status()
             .expect("/bin/sh");
-        assert!(status.success(), "the wrapper failed on its real start path");
+        assert!(
+            status.success(),
+            "the wrapper failed on its real start path"
+        );
         let ops = std::fs::read_to_string(self.root.join("logs/ops.log")).expect("ops.log");
         ops.lines()
             .find(|l| l.contains("previous jinnd"))
