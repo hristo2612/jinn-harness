@@ -71,6 +71,7 @@ dependencies = [
  "jinn-cron",
  "jinn-session",
  "jinn-settings",
+ "jinn-todo",
  "rusqlite",
  "serde_json",
 ]

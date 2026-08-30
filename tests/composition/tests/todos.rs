@@ -1,0 +1,743 @@
+//! The todos seam's real-composition gate (AGENTS.md standing order 3):
+//! every proof boots the todos profile — the two Todo stores OVER the two
+//! session stores over the engine providers, with the api trio, the
+//! settings pair and the cron seam — through the REAL pinned `jinnd`
+//! daemon in the operator layout, and drives it as an operator would:
+//! plain HTTP on loopback, with evidence from the journals on disk.
+//!
+//! This is the THREE-LAYER seam, and the composition is what most of the
+//! proofs are about:
+//!
+//! - **A Todo dispatched to a session runs on an engine**, with each hop
+//!   reached by DEFINITION: `jinn:todo.<store>` -> `jinn:session.<store>`
+//!   -> `jinn:engine.<id>`.
+//! - **The engine swaps** by one field of a dispatch, with both stores
+//!   untouched and neither aware of which provider answered.
+//! - **The Todo store swaps** by a profile edit, with the API, the
+//!   sessions seam and the engines untouched.
+//! - **Both Todo stores are live at once**, routed per Todo.
+//! - **A third store joins** a live daemon by profile edit alone.
+//!
+//! And the ones that are not about composition at all — the LEDGER
+//! HONESTY this seam owes:
+//!
+//! - **An illegal status transition REFUSES**, typed, naming the
+//!   attempted `from -> to`, and the attempt is on the record.
+//! - **A dispatch in flight when the daemon is KILLED** comes back
+//!   recorded `interrupted` WITH A REASON, and the Todo reads `blocked`
+//!   rather than eternally `executing` — while its declared history is
+//!   not rewritten.
+//! - **History is append-only**, and a torn TAIL is absence rather than
+//!   corruption.
+//!
+//! Self-skips LOUDLY when no jinnd checkout holding the pinned commit is
+//! reachable (KERNEL-PIN.md Gate 2).
+
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+use composition::api::{get, post};
+use composition::daemon::{jinnd_source, pinned_commit, pinned_daemon};
+use composition::kit::{artifact_hash, entry_mut, fresh_todo_root, Daemon};
+
+/// The switchable Todo store slot's entry id and the store id it serves.
+const DEFAULT_ID: &str = "jinn-todo-default";
+/// See [`DEFAULT_ID`].
+const DEFAULT_STORE: &str = "default";
+/// The coexistence half's store id. Its ENTRY id is not named here: no
+/// proof edits that entry — the swap proof moves the switchable slot ONTO
+/// its package instead, which is the edit an operator actually makes.
+const MEMORY_STORE: &str = "memory";
+/// The extension proof's entry — NOT in the base document.
+const SCRATCH_ID: &str = "jinn-todo-scratch";
+/// See [`SCRATCH_ID`].
+const SCRATCH_STORE: &str = "scratch";
+/// The API entry, whose grants and settings the extension proof edits.
+const API_ID: &str = "jinn-api-http";
+
+/// The SESSION store every dispatch is sent to — the middle layer.
+const SESSION_STORE: &str = "default";
+/// The engine every proof that is not about engines runs on.
+const DEFAULT_ENGINE: &str = "default";
+/// The SECOND engine, and a genuinely different provider shape — the echo
+/// package driving a real child through `jinn:process`. A run on it stays
+/// live for tens of seconds, which is what makes it both the "another
+/// engine" proof and the mid-flight one.
+const SPAWN_ENGINE: &str = "spawn";
+
+/// The reason an interrupted dispatch carries, from its one home.
+const INTERRUPTED_REASON: &str = jinn_todo::journal::INTERRUPTED_REASON;
+/// The reason a Todo blocked by one carries, from its one home.
+const BLOCKED_REASON: &str = jinn_todo::INTERRUPTED_STATUS_REASON;
+
+/// How long a dispatch may take to settle before a proof fails. Generous:
+/// the suite runs several daemons at once, and this seam polls THROUGH a
+/// seam that polls.
+const DISPATCH_DEADLINE: Duration = Duration::from_secs(120);
+
+/// The pinned daemon binary, or a LOUD skip.
+fn gate() -> Option<&'static PathBuf> {
+    static BINARY: OnceLock<Option<PathBuf>> = OnceLock::new();
+    BINARY
+        .get_or_init(|| {
+            let commit = pinned_commit().expect("KERNEL-PIN.md parses");
+            let Some(source) = jinnd_source(&commit) else {
+                eprintln!(
+                    "SKIPPED (loudly): real-composition gate found no jinnd checkout holding \
+                     pinned commit {commit} — set JINND_DIR, add a sibling ../jinnd, or set \
+                     JINND_CLONE_URL (KERNEL-PIN.md Gate 2 discipline)"
+                );
+                return None;
+            };
+            Some(pinned_daemon(&source, &commit).expect("the pinned daemon builds"))
+        })
+        .as_ref()
+}
+
+/// Boots a fresh todos root and waits for readiness AND the API's first
+/// answer.
+fn booted(name: &str) -> Option<(Daemon, u16, PathBuf)> {
+    let binary = gate()?;
+    let (root, port) = fresh_todo_root(name);
+    let daemon = Daemon::boot_operator(binary, &root);
+    daemon.await_ready();
+    let health = get(port, "/v1/health");
+    assert_eq!(health.status, 200, "{}", health.raw);
+    Some((daemon, port, root))
+}
+
+/// Re-boots over an EXISTING root — the restart lane. Same profile, same
+/// port, same journals.
+fn reboot(root: &Path) -> Daemon {
+    let binary = gate().expect("the gate held on the first boot");
+    let daemon = Daemon::boot_operator(binary, root);
+    daemon.await_ready();
+    daemon
+}
+
+/// Records one Todo and answers its id.
+fn create(port: u16, store: &str, title: &str) -> String {
+    let created = post(
+        port,
+        &format!("/v1/todos/{store}"),
+        &serde_json::json!({ "title": title, "acceptance": "it is done", "actor": "planner" }),
+    );
+    assert_eq!(created.status, 200, "{}", created.raw);
+    created.body["todo-id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a Todo id: {}", created.raw))
+        .to_owned()
+}
+
+/// One Todo's record.
+fn record(port: u16, store: &str, todo: &str) -> serde_json::Value {
+    let read = get(port, &format!("/v1/todos/{store}/{todo}"));
+    assert_eq!(read.status, 200, "{}", read.raw);
+    read.body
+}
+
+/// Moves one Todo's status; answers the raw response so a proof can read
+/// a REFUSAL as well as a move.
+fn update(port: u16, store: &str, todo: &str, status: &str, actor: &str) -> composition::api::Response {
+    post(
+        port,
+        &format!("/v1/todos/{store}/{todo}/status"),
+        &serde_json::json!({ "status": status, "actor": actor }),
+    )
+}
+
+/// Dispatches one Todo to a session on `engine`; answers the record.
+fn dispatch(port: u16, store: &str, todo: &str, engine: &str) -> serde_json::Value {
+    let sent = post(
+        port,
+        &format!("/v1/todos/{store}/{todo}/dispatch"),
+        &serde_json::json!({
+            "store": SESSION_STORE,
+            "engine": { "engine": engine },
+            "actor": "planner"
+        }),
+    );
+    assert_eq!(sent.status, 200, "{}", sent.raw);
+    sent.body
+}
+
+/// The last dispatch of a Todo record.
+fn last_dispatch(record: &serde_json::Value) -> serde_json::Value {
+    record["dispatches"]
+        .as_array()
+        .and_then(|dispatches| dispatches.last())
+        .cloned()
+        .unwrap_or_else(|| panic!("a dispatch: {record}"))
+}
+
+/// Polls until a Todo's last dispatch reaches a terminal status, and
+/// answers the whole record.
+fn settled(daemon: &Daemon, port: u16, store: &str, todo: &str) -> serde_json::Value {
+    let deadline = Instant::now() + DISPATCH_DEADLINE;
+    loop {
+        let read = record(port, store, todo);
+        match last_dispatch(&read)["status"].as_str() {
+            Some("running") | None => {}
+            Some(_) => return read,
+        }
+        assert!(
+            Instant::now() < deadline,
+            "the dispatch of {todo} never settled\n--- daemon log ---\n{}",
+            daemon.log()
+        );
+        std::thread::sleep(Duration::from_millis(150));
+    }
+}
+
+/// One store's `describe`, from the store list.
+fn described(port: u16, store: &str) -> serde_json::Value {
+    let list = get(port, "/v1/todos");
+    assert_eq!(list.status, 200, "{}", list.raw);
+    list.body["stores"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a store list: {}", list.raw))
+        .iter()
+        .find(|entry| entry["store"] == store)
+        .unwrap_or_else(|| panic!("store {store:?} in the list: {}", list.raw))
+        .clone()
+}
+
+/// The durable store's journal for one Todo, as raw bytes.
+fn journal(daemon: &Daemon, todo: &str) -> Option<Vec<u8>> {
+    std::fs::read(daemon.data(&format!("todos/{todo}.jsonl"))).ok()
+}
+
+/// The `kind`s a journal document holds, in order.
+fn kinds(bytes: &[u8]) -> Vec<String> {
+    bytes
+        .split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| serde_json::from_slice::<serde_json::Value>(line).ok())
+        .filter_map(|record| record["kind"].as_str().map(str::to_owned))
+        .collect()
+}
+
+/// Asserts a journal document is WHOLE: every line decodes, and the last
+/// byte is the terminator that makes a short write detectable.
+fn assert_untorn(bytes: &[u8], what: &str) {
+    assert!(!bytes.is_empty(), "{what}: an empty journal");
+    assert_eq!(
+        bytes.last().copied(),
+        Some(b'\n'),
+        "{what}: the document does not end on a line terminator, so its tail is torn"
+    );
+    for (index, line) in bytes.split(|byte| *byte == b'\n').enumerate() {
+        if line.is_empty() {
+            continue;
+        }
+        serde_json::from_slice::<serde_json::Value>(line).unwrap_or_else(|error| {
+            panic!(
+                "{what}: journal line {} does not decode ({error}): {:?}",
+                index + 1,
+                String::from_utf8_lossy(line)
+            )
+        });
+    }
+}
+
+#[test]
+fn a_todo_dispatched_to_a_session_runs_over_the_engine_it_named() {
+    let Some((daemon, port, _root)) = booted("todos-three-layer") else {
+        return;
+    };
+    let todo = create(port, DEFAULT_STORE, "port the ledger");
+    // Recorded, and it opens where every Todo opens.
+    let opened = record(port, DEFAULT_STORE, &todo);
+    assert_eq!(opened["status"], "backlog");
+    assert_eq!(opened["declared-status"], "backlog");
+
+    // The dispatch: three layers, each hop reached by DEFINITION.
+    let sent = dispatch(port, DEFAULT_STORE, &todo, DEFAULT_ENGINE);
+    assert_eq!(
+        sent["status"], "executing",
+        "a dispatch IS the work starting: {sent}"
+    );
+    let settled = settled(&daemon, port, DEFAULT_STORE, &todo);
+    let landed = last_dispatch(&settled);
+    assert_eq!(landed["status"], "done", "{settled}");
+    assert_eq!(landed["session-store"], SESSION_STORE);
+    assert_eq!(landed["engine"], DEFAULT_ENGINE);
+    // `done` claims the work was carried out and the answer is whole:
+    // the echo engine answers with the prompt, so the Todo's own title
+    // came back through the session and the engine both.
+    let answer = landed["answer"].as_str().unwrap_or_default();
+    assert!(
+        answer.contains("port the ledger"),
+        "the engine's answer reached the Todo through the session: {settled}"
+    );
+
+    // The MIDDLE layer is really there: the session the dispatch opened
+    // is readable on the sessions surface, and knows the Todo it serves.
+    let session_id = landed["session-id"].as_str().expect("a session id");
+    let session = get(port, &format!("/v1/sessions/{SESSION_STORE}/{session_id}"));
+    assert_eq!(session.status, 200, "{}", session.raw);
+    assert_eq!(session.body["engine"], DEFAULT_ENGINE);
+    assert_eq!(session.body["metadata"]["todo-id"], todo.as_str());
+
+    // And the durable store wrote it down, whole and in order.
+    let document = journal(&daemon, &todo).expect("the durable store wrote a journal");
+    assert_untorn(&document, "the settled Todo");
+    assert_eq!(
+        kinds(&document),
+        vec![
+            "created",
+            "status-changed",
+            "dispatch-started",
+            "dispatch-ended"
+        ],
+        "the dispatch is recorded STARTED before it is recorded ended"
+    );
+    daemon.interrupt();
+}
+
+#[test]
+fn the_same_todo_store_dispatches_over_another_engine_by_the_binding_alone() {
+    let Some((daemon, port, _root)) = booted("todos-engine-swap") else {
+        return;
+    };
+    // Two Todos in the SAME store, dispatched to the SAME session store,
+    // differing in exactly one field: the engine binding. Neither store's
+    // package nor its config moves.
+    let echoed = create(port, DEFAULT_STORE, "over the echo engine");
+    let spawned = create(port, DEFAULT_STORE, "over the child-backed engine");
+    dispatch(port, DEFAULT_STORE, &echoed, DEFAULT_ENGINE);
+    let settled = settled(&daemon, port, DEFAULT_STORE, &echoed);
+    assert_eq!(last_dispatch(&settled)["status"], "done", "{settled}");
+
+    // The second engine is a genuinely different provider shape — it
+    // spawns a real child through `jinn:process`. Neither the Todo store
+    // nor the session store knows that, and neither needs a change.
+    dispatch(port, DEFAULT_STORE, &spawned, SPAWN_ENGINE);
+    daemon.eventually("the child-backed dispatch to be in flight", || {
+        last_dispatch(&record(port, DEFAULT_STORE, &spawned))["status"] == "running"
+    });
+    let live = record(port, DEFAULT_STORE, &spawned);
+    assert_eq!(last_dispatch(&live)["engine"], SPAWN_ENGINE);
+    // The engine each Todo ran on is recorded PER DISPATCH, so the two
+    // are told apart by their binding and not by their store.
+    assert_eq!(last_dispatch(&settled)["engine"], DEFAULT_ENGINE);
+    // A second dispatch while one is in flight is refused, not queued.
+    let again = post(
+        port,
+        &format!("/v1/todos/{DEFAULT_STORE}/{spawned}/dispatch"),
+        &serde_json::json!({ "store": SESSION_STORE, "engine": { "engine": DEFAULT_ENGINE } }),
+    );
+    assert_eq!(again.status, 409, "{}", again.raw);
+    daemon.interrupt();
+}
+
+#[test]
+fn an_illegal_status_transition_is_refused_typed_and_ledgered() {
+    let Some((daemon, port, _root)) = booted("todos-illegal-transition") else {
+        return;
+    };
+    let todo = create(port, DEFAULT_STORE, "port the ledger");
+    let moved = update(port, DEFAULT_STORE, &todo, "executing", "the producer");
+    assert_eq!(moved.status, 200, "{}", moved.raw);
+
+    // A producer closing their own work: `executing -> done` is not a
+    // move this ledger makes.
+    let refused = update(port, DEFAULT_STORE, &todo, "done", "the producer");
+    assert_ne!(refused.status, 200, "an illegal move is refused: {}", refused.raw);
+    // TYPED, and naming the attempt as DATA — not only in the prose.
+    assert_eq!(refused.body["error"]["from"], "executing", "{}", refused.raw);
+    assert_eq!(refused.body["error"]["to"], "done", "{}", refused.raw);
+    assert_eq!(refused.body["error"]["code"], "refused", "{}", refused.raw);
+    let message = refused.body["error"]["message"].as_str().unwrap_or_default();
+    assert!(message.contains("executing -> done"), "{}", refused.raw);
+
+    // NOT silently accepted, and NOT coerced to a neighbouring status.
+    let after = record(port, DEFAULT_STORE, &todo);
+    assert_eq!(after["status"], "executing", "{after}");
+    assert_eq!(after["declared-status"], "executing", "{after}");
+
+    // LEDGERED: the attempt is on the Todo's record, and in its journal,
+    // and on its event feed.
+    assert_eq!(after["refused"][0]["from"], "executing", "{after}");
+    assert_eq!(after["refused"][0]["to"], "done", "{after}");
+    assert_eq!(after["refused"][0]["actor"], "the producer", "{after}");
+    let document = journal(&daemon, &todo).expect("a journal");
+    assert_untorn(&document, "the Todo whose move was refused");
+    assert!(
+        kinds(&document).contains(&"transition-refused".to_owned()),
+        "the refusal is durable: {:?}",
+        kinds(&document)
+    );
+    daemon.eventually("the refusal to reach the feed", || {
+        let feed = get(
+            port,
+            &format!("/v1/todos/{DEFAULT_STORE}/{todo}/events?limit=100"),
+        );
+        feed.body["events"]
+            .as_array()
+            .is_some_and(|events| events.iter().any(|e| e["kind"] == "transition-refused"))
+    });
+
+    // And the LEGAL route to done still works, so the table is a route
+    // and not a wall.
+    assert_eq!(
+        update(port, DEFAULT_STORE, &todo, "in-review", "the producer").status,
+        200
+    );
+    let closed = update(port, DEFAULT_STORE, &todo, "done", "the reviewer");
+    assert_eq!(closed.status, 200, "{}", closed.raw);
+    let done = record(port, DEFAULT_STORE, &todo);
+    assert_eq!(done["status"], "done");
+    // History is APPEND-ONLY: three moves, in order, none rewritten.
+    let history = done["history"].as_array().expect("a history");
+    assert_eq!(history.len(), 3, "{done}");
+    assert_eq!(history[0]["to"], "executing");
+    assert_eq!(history[2]["actor"], "the reviewer");
+    // A terminal Todo is terminal.
+    let reopened = update(port, DEFAULT_STORE, &todo, "executing", "the producer");
+    assert_ne!(reopened.status, 200, "{}", reopened.raw);
+    daemon.interrupt();
+}
+
+#[test]
+fn both_stores_are_live_at_once_and_a_todo_is_routed_by_its_store() {
+    let Some((daemon, port, _root)) = booted("todos-coexist") else {
+        return;
+    };
+    let durable = create(port, DEFAULT_STORE, "durable work");
+    let ephemeral = create(port, MEMORY_STORE, "throwaway work");
+    // Each store answers for its OWN Todos and knows nothing of the
+    // other's — the routing is the store id in the path, and the kernel's
+    // one-provider-per-contract-name slot behind it.
+    assert_eq!(record(port, DEFAULT_STORE, &durable)["store"], DEFAULT_STORE);
+    assert_eq!(record(port, MEMORY_STORE, &ephemeral)["store"], MEMORY_STORE);
+    let crossed = get(port, &format!("/v1/todos/{MEMORY_STORE}/{durable}"));
+    assert_eq!(crossed.status, 404, "{}", crossed.raw);
+    // Their durability declarations differ, and so does what is on disk.
+    assert_eq!(described(port, DEFAULT_STORE)["describe"]["durable"], true);
+    assert_eq!(described(port, MEMORY_STORE)["describe"]["durable"], false);
+    dispatch(port, MEMORY_STORE, &ephemeral, DEFAULT_ENGINE);
+    settled(&daemon, port, MEMORY_STORE, &ephemeral);
+    assert!(
+        journal(&daemon, &ephemeral).is_none(),
+        "the ephemeral store wrote nothing, which is its whole contract"
+    );
+    assert!(journal(&daemon, &durable).is_some());
+    daemon.interrupt();
+}
+
+#[test]
+fn the_store_swaps_by_a_profile_edit_with_every_layer_below_untouched() {
+    let Some((daemon, port, root)) = booted("todos-store-swap") else {
+        return;
+    };
+    let before = create(port, DEFAULT_STORE, "before the swap");
+    dispatch(port, DEFAULT_STORE, &before, DEFAULT_ENGINE);
+    settled(&daemon, port, DEFAULT_STORE, &before);
+    assert_eq!(described(port, DEFAULT_STORE)["describe"]["durable"], true);
+    assert!(journal(&daemon, &before).is_some());
+
+    // The swap: ONE entry's package and hash. The API entry, the SESSION
+    // stores, the engine entries and the store id are not touched — so
+    // the contract name stays `jinn:todo.default` and every consumer
+    // keeps its grant.
+    let ephemeral = artifact_hash(&root, "jinn-todo-memory");
+    daemon.edit_profile_restarting(DEFAULT_ID, |document| {
+        let entry = entry_mut(document, DEFAULT_ID);
+        entry["package"] = serde_json::json!("todos/jinn-todo-memory");
+        entry["hash"] = serde_json::json!(ephemeral);
+        // The ephemeral store reads no `dir`; leaving the grant would be
+        // authority it has no use for.
+        let grants = entry["config"]["grants"].as_array_mut().expect("grants");
+        grants.retain(|grant| grant["contract"] != "jinn:fs");
+        entry["config"]["data"]
+            .as_object_mut()
+            .expect("data")
+            .remove("dir");
+    });
+
+    daemon.eventually("the swapped store to declare itself ephemeral", || {
+        described(port, DEFAULT_STORE)["describe"]["durable"] == serde_json::json!(false)
+    });
+    let after = create(port, DEFAULT_STORE, "after the swap");
+    dispatch(port, DEFAULT_STORE, &after, DEFAULT_ENGINE);
+    let settled = settled(&daemon, port, DEFAULT_STORE, &after);
+    assert_eq!(last_dispatch(&settled)["status"], "done", "{settled}");
+    assert!(
+        journal(&daemon, &after).is_none(),
+        "the swapped-in store writes nothing"
+    );
+    // Every layer BELOW is untouched: the same session store and the same
+    // engine answered before and after, through a ledger that changed
+    // underneath them.
+    assert_eq!(last_dispatch(&settled)["engine"], DEFAULT_ENGINE);
+    assert_eq!(get(port, "/v1/sessions").status, 200);
+    assert_eq!(get(port, "/v1/engines").status, 200);
+    daemon.interrupt();
+}
+
+#[test]
+fn a_third_store_joins_a_live_daemon_by_a_profile_edit_alone() {
+    let Some((daemon, port, root)) = booted("todos-extension") else {
+        return;
+    };
+    // Not here yet, and refused by the API without a kernel call.
+    let missing = get(port, &format!("/v1/todos/{SCRATCH_STORE}"));
+    assert_eq!(missing.status, 404, "{}", missing.raw);
+
+    let ephemeral = artifact_hash(&root, "jinn-todo-memory");
+    let session_grant = serde_json::json!(format!("jinn:session.{SESSION_STORE}"));
+    daemon.edit_profile(|document| {
+        // The new store: its own contract name, its own entry, no change
+        // to the definition and no new artifact.
+        document["entries"]
+            .as_array_mut()
+            .expect("entries")
+            .push(serde_json::json!({
+                "id": SCRATCH_ID,
+                "package": "todos/jinn-todo-memory",
+                "hash": ephemeral,
+                "config": {
+                    "grants": [format!("jinn:todo.{SCRATCH_STORE}"), "jinn:clock", session_grant],
+                    "data": { "store": SCRATCH_STORE, "poll-ms": 250 }
+                }
+            }));
+        // The API may route to it only because the profile SAYS so.
+        let api = entry_mut(document, API_ID);
+        api["config"]["grants"]
+            .as_array_mut()
+            .expect("grants")
+            .push(serde_json::json!(format!("jinn:todo.{SCRATCH_STORE}")));
+        api["config"]["data"]["todo-stores"]
+            .as_array_mut()
+            .expect("todo-stores")
+            .push(serde_json::json!(SCRATCH_STORE));
+    });
+
+    daemon.eventually("the third store to answer", || {
+        get(port, &format!("/v1/todos/{SCRATCH_STORE}")).status == 200
+    });
+    let todo = create(port, SCRATCH_STORE, "work in the scratch ledger");
+    dispatch(port, SCRATCH_STORE, &todo, DEFAULT_ENGINE);
+    let settled = settled(&daemon, port, SCRATCH_STORE, &todo);
+    assert_eq!(last_dispatch(&settled)["status"], "done", "{settled}");
+    assert_eq!(settled["store"], SCRATCH_STORE);
+    // The stores it joined are still there and still routed apart.
+    assert_eq!(described(port, DEFAULT_STORE)["describe"]["durable"], true);
+    assert_eq!(described(port, MEMORY_STORE)["describe"]["durable"], false);
+    daemon.interrupt();
+}
+
+#[test]
+fn a_dispatch_in_flight_when_the_daemon_dies_comes_back_interrupted_with_a_reason() {
+    let Some((daemon, port, root)) = booted("todos-restart-honesty") else {
+        return;
+    };
+    // A finished dispatch first, so the restart has to tell the two
+    // apart: the honest answer is not "everything is interrupted".
+    let finished = create(port, DEFAULT_STORE, "work that completed");
+    dispatch(port, DEFAULT_STORE, &finished, DEFAULT_ENGINE);
+    settled(&daemon, port, DEFAULT_STORE, &finished);
+
+    // Now one that is genuinely in flight: the child-backed engine's run
+    // lives for tens of seconds, so the kill lands mid-dispatch rather
+    // than in a race with the answer.
+    let live = create(port, DEFAULT_STORE, "work the daemon died on");
+    dispatch(port, DEFAULT_STORE, &live, SPAWN_ENGINE);
+    daemon.eventually("the dispatch to be in flight", || {
+        last_dispatch(&record(port, DEFAULT_STORE, &live))["status"] == "running"
+    });
+    // The journal already holds the started dispatch — that ordering is
+    // what the whole proof rests on, and it is checked BEFORE the kill so
+    // a failure here is not confused with one after it.
+    let document = journal(&daemon, &live).expect("a journal for a started dispatch");
+    assert_untorn(&document, "the live Todo, before the kill");
+    assert!(
+        kinds(&document).contains(&"dispatch-started".to_owned())
+            && !kinds(&document).contains(&"dispatch-ended".to_owned()),
+        "started, not ended: {:?}",
+        kinds(&document)
+    );
+
+    // The CRASH path: SIGKILL, no chance to write anything on the way out.
+    daemon.kill();
+    let daemon = reboot(&root);
+
+    let recovered = record(port, DEFAULT_STORE, &live);
+    // The DISPATCH is recorded interrupted, with a reason.
+    let interrupted = last_dispatch(&recovered);
+    assert_eq!(
+        interrupted["status"], "interrupted",
+        "a dispatch the daemon died on is interrupted, never eternally running: {recovered}"
+    );
+    assert_eq!(interrupted["reason"], INTERRUPTED_REASON, "{recovered}");
+    // And the TODO does not read as still executing.
+    assert_eq!(
+        recovered["status"], "blocked",
+        "never eternally executing: {recovered}"
+    );
+    assert_eq!(recovered["status-reason"], BLOCKED_REASON, "{recovered}");
+    // History is NOT rewritten to make that true: what was declared is
+    // still exactly what the journal says.
+    assert_eq!(recovered["declared-status"], "executing", "{recovered}");
+    assert_eq!(
+        recovered["history"].as_array().map(Vec::len),
+        Some(1),
+        "{recovered}"
+    );
+
+    // A dispatch that DID finish is still done — the restart is not a
+    // blanket verdict.
+    let survived = record(port, DEFAULT_STORE, &finished);
+    assert_eq!(last_dispatch(&survived)["status"], "done", "{survived}");
+    assert_eq!(survived["status"], "executing", "{survived}");
+
+    // The log is not torn, and a crash does not shorten an append-only
+    // log.
+    let after_crash = journal(&daemon, &live).expect("the journal survived");
+    assert_untorn(&after_crash, "the live Todo, after the crash");
+    assert!(after_crash.len() >= document.len());
+
+    // And the recovered Todo is USABLE: `blocked -> executing` is a legal
+    // move and a new dispatch runs on it, which is what makes the
+    // interruption a state and not a tombstone.
+    assert_eq!(
+        update(port, DEFAULT_STORE, &live, "executing", "planner").status,
+        200
+    );
+    dispatch(port, DEFAULT_STORE, &live, DEFAULT_ENGINE);
+    let again = settled(&daemon, port, DEFAULT_STORE, &live);
+    assert_eq!(last_dispatch(&again)["status"], "done", "{again}");
+    daemon.interrupt();
+}
+
+#[test]
+fn a_torn_tail_is_absence_and_the_todo_before_it_survives() {
+    let Some((daemon, port, root)) = booted("todos-torn-tail") else {
+        return;
+    };
+    let todo = create(port, DEFAULT_STORE, "work with a torn tail");
+    assert_eq!(update(port, DEFAULT_STORE, &todo, "executing", "planner").status, 200);
+    let path = daemon.data(&format!("todos/{todo}.jsonl"));
+    let whole = std::fs::read(&path).expect("a journal");
+    assert_untorn(&whole, "before the tear");
+    daemon.kill();
+
+    // A short write: the last line, unterminated, exactly what a torn
+    // append would leave. The reader must admit it as ABSENCE — the Todo
+    // reads back at its last WHOLE line, and the store comes up.
+    let mut torn = whole.clone();
+    torn.extend_from_slice(br#"{"kind":"status-changed","at-ms":9,"from":"exec"#);
+    std::fs::write(&path, &torn).expect("write the torn journal");
+
+    let daemon = reboot(&root);
+    let recovered = record(port, DEFAULT_STORE, &todo);
+    assert_eq!(
+        recovered["declared-status"], "executing",
+        "the tear is absence, not damage: {recovered}"
+    );
+    assert_eq!(recovered["history"].as_array().map(Vec::len), Some(1));
+    // And the store is fully usable: the next move appends past the tear.
+    assert_eq!(
+        update(port, DEFAULT_STORE, &todo, "in-review", "planner").status,
+        200
+    );
+    daemon.eventually("the appended move to be durable", || {
+        std::fs::read(&path).is_ok_and(|bytes| {
+            kinds(&bytes)
+                .iter()
+                .filter(|kind| *kind == "status-changed")
+                .count()
+                >= 2
+        })
+    });
+    daemon.interrupt();
+}
+
+#[test]
+fn an_ephemeral_store_keeps_nothing_across_a_restart_and_says_so() {
+    let Some((daemon, port, root)) = booted("todos-ephemeral-restart") else {
+        return;
+    };
+    let todo = create(port, MEMORY_STORE, "throwaway work");
+    assert_eq!(described(port, MEMORY_STORE)["describe"]["todos"], 1);
+
+    daemon.kill();
+    let daemon = reboot(&root);
+
+    // Gone, and answered as gone — `not-found`, never an empty Todo that
+    // would read as one which merely has no history.
+    let after = get(port, &format!("/v1/todos/{MEMORY_STORE}/{todo}"));
+    assert_eq!(after.status, 404, "{}", after.raw);
+    assert_eq!(described(port, MEMORY_STORE)["describe"]["todos"], 0);
+    // The DURABLE store in the same composition kept its own, so this is
+    // a property of the store and not of the restart.
+    assert_eq!(described(port, DEFAULT_STORE)["describe"]["durable"], true);
+    daemon.interrupt();
+}
+
+#[test]
+fn a_tree_and_a_list_answer_the_company_view_of_the_ledger() {
+    let Some((daemon, port, _root)) = booted("todos-tree") else {
+        return;
+    };
+    let root_todo = create(port, DEFAULT_STORE, "the objective");
+    let child = post(
+        port,
+        &format!("/v1/todos/{DEFAULT_STORE}"),
+        &serde_json::json!({ "title": "a deliverable", "parent": root_todo,
+                             "department": "platform" }),
+    );
+    assert_eq!(child.status, 200, "{}", child.raw);
+    let child_id = child.body["todo-id"].as_str().expect("an id").to_owned();
+    // A parent that is not here is a typed refusal, not a dangling edge.
+    let orphan = post(
+        port,
+        &format!("/v1/todos/{DEFAULT_STORE}"),
+        &serde_json::json!({ "title": "an orphan", "parent": "default-999" }),
+    );
+    assert_eq!(orphan.status, 404, "{}", orphan.raw);
+
+    let tree = get(port, &format!("/v1/todos/{DEFAULT_STORE}/{root_todo}/tree"));
+    assert_eq!(tree.status, 200, "{}", tree.raw);
+    assert_eq!(tree.body["root"]["todo-id"], root_todo.as_str());
+    assert_eq!(tree.body["root"]["children"][0]["todo-id"], child_id.as_str());
+
+    // `roots-only` is the objective view, and `total` still says how many
+    // Todos the store holds — a filtered answer is never read as a short
+    // store.
+    let roots = get(port, &format!("/v1/todos/{DEFAULT_STORE}?roots-only=true"));
+    assert_eq!(roots.status, 200, "{}", roots.raw);
+    assert_eq!(roots.body["todos"].as_array().map(Vec::len), Some(1), "{}", roots.raw);
+    assert_eq!(roots.body["total"], 2, "{}", roots.raw);
+
+    // A comment is recorded with its actor, and an ANONYMOUS one records
+    // that nobody was declared rather than inventing a principal.
+    let commented = post(
+        port,
+        &format!("/v1/todos/{DEFAULT_STORE}/{child_id}/comments"),
+        &serde_json::json!({ "body": "started", "actor": "planner" }),
+    );
+    assert_eq!(commented.status, 200, "{}", commented.raw);
+    let anonymous = post(
+        port,
+        &format!("/v1/todos/{DEFAULT_STORE}/{child_id}/comments"),
+        &serde_json::json!({ "body": "and continued" }),
+    );
+    assert_eq!(anonymous.status, 200, "{}", anonymous.raw);
+    let read = record(port, DEFAULT_STORE, &child_id);
+    assert_eq!(read["comments"][0]["actor"], "planner", "{read}");
+    assert!(
+        read["comments"][1].get("actor").is_none(),
+        "absence is not a principal: {read}"
+    );
+    // A BLANK actor is refused rather than recorded as one.
+    let blank = post(
+        port,
+        &format!("/v1/todos/{DEFAULT_STORE}/{child_id}/comments"),
+        &serde_json::json!({ "body": "anon", "actor": "  " }),
+    );
+    assert_ne!(blank.status, 200, "{}", blank.raw);
+    daemon.interrupt();
+}

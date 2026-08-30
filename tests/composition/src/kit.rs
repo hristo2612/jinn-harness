@@ -132,6 +132,51 @@ pub fn shared_session_kit() -> &'static Path {
     })
 }
 
+/// Builds the TODOS kit (the two Todo stores over the two session stores,
+/// over the engine providers, with the api trio, the settings pair and
+/// the cron seam) once per process. One poll period serves both store
+/// seams: a Todo's dispatch polls a session, which polls its engine.
+pub fn shared_todo_kit() -> &'static Path {
+    static KIT: OnceLock<PathBuf> = OnceLock::new();
+    KIT.get_or_init(|| {
+        let root = workspace_root().join("target/composition/todo-kit");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("kit cache dir");
+        let status = Command::new("cargo")
+            .args(["run", "-p", "todo-kit", "--", "kit"])
+            .arg(&root)
+            .args(["--port", &KIT_PORT.to_string()])
+            .args(["--poll-ms", &SESSION_POLL_MS.to_string()])
+            .args(["--probe-every-ms", &JOB_PERIOD_MS.to_string()])
+            .args(["--every-ms", &JOB_PERIOD_MS.to_string()])
+            .args(["--tick-ms", &TICK_MS.to_string()])
+            .current_dir(workspace_root())
+            .status()
+            .expect("cargo run -p todo-kit");
+        assert!(status.success(), "the todo kit builds");
+        root
+    })
+}
+
+/// A fresh scratch root holding a copy of the shared TODO kit, its HTTP
+/// provider re-pointed at a free loopback port. A restart proof re-boots
+/// over the SAME root, so the port stays with it.
+#[must_use]
+pub fn fresh_todo_root(name: &str) -> (PathBuf, u16) {
+    let root = copy_kit(shared_todo_kit(), name);
+    let port = free_port();
+    let path = root.join("profile.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("profile")).expect("profile parses");
+    set_provider_port(&mut document, "jinn-api-http", port);
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&document).expect("encodes"),
+    )
+    .expect("profile");
+    (root, port)
+}
+
 /// The store poll period the suite kits with: fine enough that a turn
 /// settles well inside a test's deadline, no finer than the kernel's own
 /// 250 ms alarm-resolution floor for a bare `jinn:clock` grant — asking
