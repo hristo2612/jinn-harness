@@ -771,3 +771,48 @@ fn an_input_the_pinned_revision_does_not_declare_is_refused_at_start() {
     registry.commit_start(&plan, NOW);
     assert_eq!(registry.run(&plan.run_id).expect("a run").input, input);
 }
+
+#[test]
+fn a_document_whose_only_run_started_is_torn_holds_no_run_at_all() {
+    // The daemon was killed INSIDE the very first append. What is on
+    // disk is one byte that was never a record — and a run is a positive
+    // reading, so this document holds no run to report.
+    let (_, definition) = defined(two_lane_spec("lane"));
+    let whole = crashed_document(&definition);
+    let torn = whole[..1].to_vec();
+
+    let document = journal::replay(&torn).expect("a torn first line is absence, not damage");
+    assert_eq!(
+        document,
+        journal::RunDocument::Absent {
+            torn_tail_bytes: 1
+        },
+        "one byte of noise is absence and nothing else"
+    );
+    assert!(
+        document.run().is_none(),
+        "no complete `run-started` was read, so there is no run"
+    );
+
+    // An empty document is the same absence, with nothing to discard.
+    assert_eq!(
+        journal::replay(&[]).expect("an empty document is absence"),
+        journal::RunDocument::Absent {
+            torn_tail_bytes: 0
+        }
+    );
+}
+
+#[test]
+fn a_run_no_node_ever_ran_cannot_be_ended_done() {
+    // `done` is the claim that the procedure was CARRIED OUT. Over an
+    // empty set of nodes that claim is vacuously true and factually
+    // unfounded, which is exactly the shape a fabricated run takes. A
+    // spec with no nodes is refused at `define` (`spec.rs`), so this is
+    // the second lock on a door that should already be shut.
+    assert_eq!(
+        run_ending(&[]),
+        None,
+        "nothing recorded proves an ending"
+    );
+}

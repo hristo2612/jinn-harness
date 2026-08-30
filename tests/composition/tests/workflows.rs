@@ -728,6 +728,73 @@ fn a_torn_tail_is_absence_and_the_run_before_it_survives() {
     daemon.interrupt();
 }
 
+#[test]
+fn a_run_document_holding_no_record_is_absence_and_boot_writes_nothing_into_it() {
+    let Some((daemon, port, root)) = booted("workflows-no-record") else {
+        return;
+    };
+    // A real run first, so this proves what the store does with THIS
+    // document rather than what an empty store does with nothing.
+    let (workflow, _) = define(
+        port,
+        DEFAULT_STORE,
+        &one_node_spec("a run that really happened", DEFAULT_ENGINE),
+    );
+    let run_id = start(port, DEFAULT_STORE, &workflow);
+    settled(&daemon, port, DEFAULT_STORE, &run_id);
+
+    // What a daemon killed INSIDE its very first append leaves behind:
+    // bytes that were never a record. Manufactured behind the daemon's
+    // back for the same reason the torn-tail proof is — `jinn:fs` writes
+    // whole documents (`FINDINGS.md` #22) — so this proves the READER,
+    // not that the kernel tears.
+    let absent = "default-r999";
+    let path = daemon.data(&format!("workflows/runs/{absent}.jsonl"));
+    daemon.kill();
+    std::fs::write(&path, b"{").expect("write the record-less journal");
+    let daemon = reboot(&root);
+
+    // ABSENCE, answered as absence. A run is a POSITIVE reading: without
+    // one complete `run-started` record there is nothing to report, and
+    // the one answer that must never come back is a status.
+    let read = get(port, &format!("/v1/workflows/{DEFAULT_STORE}/runs/{absent}"));
+    assert_eq!(
+        read.status, 404,
+        "one byte that was never a record answered as a run: {}",
+        read.raw
+    );
+
+    // And the heal CREATED nothing. A heal may drop incomplete bytes; it
+    // may never write, complete or infer a record. The document that
+    // held none still holds none.
+    let after = std::fs::read(&path).expect("the healed journal");
+    assert_eq!(
+        kinds(&after),
+        Vec::<String>::new(),
+        "boot wrote a record into a document that held none: {:?}",
+        String::from_utf8_lossy(&after)
+    );
+    assert!(
+        after.is_empty(),
+        "the incomplete bytes survived the heal: {:?}",
+        String::from_utf8_lossy(&after)
+    );
+
+    // The store SAW the document and declined to make a run of it, and
+    // says so — evidence of absence, not absence of evidence.
+    let described = described(port, DEFAULT_STORE);
+    assert!(
+        described["describe"]["extra"]["run-documents-without-a-record"]
+            .as_u64()
+            .is_some_and(|seen| seen >= 1),
+        "a store that discards a whole document says so: {described}"
+    );
+
+    // The run that really happened is untouched by any of it.
+    assert_eq!(run(port, DEFAULT_STORE, &run_id)["status"], "done");
+    daemon.interrupt();
+}
+
 // ---- swap, coexistence, extension ------------------------------------
 
 #[test]
