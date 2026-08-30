@@ -45,6 +45,18 @@ serving a `running` no durable line justifies. That is the sessions seam's
 `running` defect and the todos seam's `executing` defect answered one
 layer up, proven red-first rather than assumed inherited.
 
+**A document that reads as absent is not yet a clean slate.** All three
+durable stores answer a record-less document — the one a daemon killed
+inside its very first append leaves — with three things rather than one:
+the typed reading that installs nothing, the BYTES dropped so no later
+writer can append onto them, and the ID reserved so the next mint cannot
+hand it out again. Recognising the absence and stopping there is what
+turned an accepted absence into a journal that refused to replay, one
+seam down and in the lines that recognised it
+(`docs/notes/2026-08-31-absence-is-three-things.md`, `FINDINGS.md` #36).
+The sessions store also HEALS a torn tail now, which it never did, and
+each store counts a healed tail apart from a record-less document.
+
 **The pin was NOT bumped, on evidence.** jinnd's M2-K10 refuses a
 reply-expecting dispatch that would close a cycle; nothing in this
 four-layer stack can close one, because the profile's grant graph — which
