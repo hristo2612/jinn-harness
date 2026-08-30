@@ -592,7 +592,10 @@ fn the_conclusion_is_labelled_a_derivation_not_an_assertion() {
 #[test]
 fn no_branch_words_a_derivation_as_a_fact() {
     let wrapper = read("soak-run.sh");
-    assert!(wrapper.contains("boot-consistent)"), "the boot branch is a derivation");
+    assert!(
+        wrapper.contains("boot-consistent)"),
+        "the boot branch is a derivation"
+    );
     assert!(
         wrapper.contains("keepalive-restart-consistent)"),
         "the restart branch is a derivation"
@@ -630,7 +633,10 @@ fn the_ops_log_lines_carry_the_evidence_and_the_derivation() {
         .env("PATH", &scratch.path)
         .status()
         .expect("/bin/sh");
-    assert!(status.success(), "the wrapper failed on its real start path");
+    assert!(
+        status.success(),
+        "the wrapper failed on its real start path"
+    );
 
     let ops = std::fs::read_to_string(scratch.root.join("logs/ops.log")).expect("ops.log");
     let death = ops
