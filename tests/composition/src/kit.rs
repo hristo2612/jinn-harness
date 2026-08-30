@@ -106,6 +106,58 @@ pub fn shared_engine_kit() -> &'static Path {
     })
 }
 
+/// Builds the SESSIONS kit (the two store providers beside the engine
+/// providers, the api trio, the settings pair and the cron seam) once per
+/// process. The poll period is the store's, and it is short so a turn
+/// settles inside a test's deadline.
+pub fn shared_session_kit() -> &'static Path {
+    static KIT: OnceLock<PathBuf> = OnceLock::new();
+    KIT.get_or_init(|| {
+        let root = workspace_root().join("target/composition/session-kit");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("kit cache dir");
+        let status = Command::new("cargo")
+            .args(["run", "-p", "session-kit", "--", "kit"])
+            .arg(&root)
+            .args(["--port", &KIT_PORT.to_string()])
+            .args(["--poll-ms", &SESSION_POLL_MS.to_string()])
+            .args(["--probe-every-ms", &JOB_PERIOD_MS.to_string()])
+            .args(["--every-ms", &JOB_PERIOD_MS.to_string()])
+            .args(["--tick-ms", &TICK_MS.to_string()])
+            .current_dir(workspace_root())
+            .status()
+            .expect("cargo run -p session-kit");
+        assert!(status.success(), "the session kit builds");
+        root
+    })
+}
+
+/// The store poll period the suite kits with: fine enough that a turn
+/// settles well inside a test's deadline, no finer than the kernel's own
+/// 250 ms alarm-resolution floor for a bare `jinn:clock` grant — asking
+/// for less would not make the answer arrive sooner.
+pub const SESSION_POLL_MS: u64 = 250;
+
+/// A fresh scratch root holding a copy of the shared SESSION kit, its
+/// HTTP provider re-pointed at a free loopback port. Answers the root and
+/// that port, as [`fresh_api_root`] does. A restart proof re-boots over
+/// the SAME root, so the port stays with it.
+#[must_use]
+pub fn fresh_session_root(name: &str) -> (PathBuf, u16) {
+    let root = copy_kit(shared_session_kit(), name);
+    let port = free_port();
+    let path = root.join("profile.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("profile")).expect("profile parses");
+    set_provider_port(&mut document, "jinn-api-http", port);
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&document).expect("encodes"),
+    )
+    .expect("profile");
+    (root, port)
+}
+
 /// A fresh scratch root holding a copy of the shared engine kit, its HTTP
 /// provider re-pointed at a free loopback port. Answers the root and that
 /// port, as [`fresh_api_root`] does.

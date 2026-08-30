@@ -69,6 +69,7 @@ dependencies = [
  "harness-pin",
  "jinn-api",
  "jinn-cron",
+ "jinn-session",
  "jinn-settings",
  "rusqlite",
  "serde_json",
