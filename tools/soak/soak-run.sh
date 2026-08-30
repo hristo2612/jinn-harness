@@ -50,15 +50,39 @@ fi
 #
 # The reason vocabulary (what the +7d audit counts):
 #   adopt|planned-start     the operator asked for it (a reason file,
-#                           dropped by SOAK.md's planned-start step)
-#   boot                    the host booted AFTER the previous start: the
-#                           daemon died with the host
-#   keepalive-restart       same host boot, nobody asked: launchd replaced
-#                           a daemon that ended uncleanly
+#                           dropped by SOAK.md's planned-start step) — a
+#                           report of what the file said, not an inference
+#   boot-consistent         the readings are CONSISTENT with the daemon
+#                           having died with the host: a boot time later
+#                           than the previous start
+#   keepalive-restart-consistent
+#                           the readings are consistent with the opposite —
+#                           previous start on THIS host boot, launchd's
+#                           retained status unclean
 #   first-supervised-start  the run directory was enumerable and held no
 #                           record: that ABSENCE is the evidence
 #   unknown                 anything else, including everything not yet
 #                           imagined — see below
+#
+# --- Why two of those say `-consistent`, and none says `boot`.
+#
+# `boot` is a causal claim about the HOST. The wrapper's inputs are a
+# sysctl reading and a file's mtime; from those it can derive that the
+# readings line up with a reboot, never that a reboot happened. The
+# distinction stopped being pedantic the moment a record replaced between
+# the two looks — mtime preserved — produced `reason=boot` at rc 0 in
+# 10 runs out of 10. No care at the read site fixes that: `stat`-after-read
+# proves "I read a pid and an mtime together", never "this mtime belongs to
+# that pid". The primitive cannot carry the claim, so the claim is retired
+# and the DERIVATION is labelled as one.
+#
+# Which is only half of it. A label an auditor cannot see through is still
+# an oracle. So every line the wrapper writes carries its INPUTS verbatim
+# beside the inference — the boot time as read (raw and rendered), the
+# record's status, its pid and mtime as read, launchd's status raw and
+# decoded, the last-seen bound, and the names of whatever was unreadable.
+# A wrong input is then visible as a wrong input on 2026-09-04, instead of
+# hiding inside a confident word.
 #
 # --- Why `unknown` exists, and why it is the default.
 #
@@ -72,11 +96,13 @@ fi
 # So the default inverts. Each input below is read into either a value the
 # wrapper can prove it read, or the literal `unknown`. No `0`, no empty
 # string, no zero epoch: nothing a later comparison would mistake for a
-# measurement. `boot` (and equally `keepalive-restart`, which claims the
-# host did NOT reboot) is then reachable only with proof from BOTH sides,
-# and every other path — unreadable, missing, torn, ambiguous, unimagined —
-# falls through to `unknown` by construction rather than by a guard someone
-# remembered to write.
+# measurement. Both derivations above rest on the same two readings — one
+# says the host rebooted under the daemon, the other says it did not — so
+# both are reachable only with proof from BOTH sides, and every other path
+# — unreadable, missing, torn, ambiguous, unimagined — falls through to
+# `unknown` by construction rather than by a guard someone remembered to
+# write. That inversion is round 2's and it stays; round 3 adds what it
+# could not supply, which is the evidence beside the answer.
 #
 # A claim is derived from proof, never from the absence of a contradiction.
 
@@ -131,12 +157,25 @@ if [ "$prev_record" = present ]; then
         prev_pid=$pid
     fi
 fi
+# What the two readings CANNOT establish, stated once so no reader assumes
+# otherwise: that the mtime and the pid came from the same record. A record
+# replaced between the looks with its mtime preserved reads as coherent here.
+# That takes a writer inside `$SOAK/run/` forging records — an adversary who
+# can edit `ops.log` directly, so the label buys nothing against them
+# (SOAK.md §Known limits). Against the accidental cases this wrapper is for —
+# races, missing files, unreadable sysctls, torn records — the pair holds.
+if [ "$prev_start" = unknown ]; then
+    prev_start_at=unknown
+else
+    prev_start_at=$(date -u -r "$prev_start" +%FT%TZ 2>/dev/null || printf unknown)
+fi
 
 # launchd's LastExitStatus is a wait status: a signal in the low seven
 # bits, an exit code in the high byte (the table form of `launchctl list`
 # shows a signal as a negative number; the detail form as positive).
 raw=$(launchctl list "$label" 2>/dev/null | sed -n 's/.*"LastExitStatus" = \(-*[0-9]*\);.*/\1/p')
 signal_name() { kill -l "$1" 2>/dev/null || echo '?'; }
+prev_end_raw=${raw:-unknown}
 case "${raw:-}" in
     '') prev_end="end status unknown (launchd retained none)" ;;
     -*) prev_end="killed by signal ${raw#-} (SIG$(signal_name "${raw#-}"))" ;;
@@ -158,24 +197,40 @@ if [ -f "$reason_file" ]; then
     operator_reason=$(cat "$reason_file" 2>/dev/null || printf unknown)
     [ -n "$operator_reason" ] || operator_reason=unknown
 fi
+# What could not be read is an OBSERVATION, so it is computed before the
+# decision and reported on every line — `unproven=none` on the proven lane
+# included. A field that only appears when the answer is already `unknown`
+# tells an auditor nothing about the answers that are not.
+# A provably absent record is not an unread one: absence that the wrapper
+# enumerated is evidence, and `prev_record=absent` is where it is reported.
 unproven=
+[ "$boot_sec" != unknown ] || unproven="$unproven host-boot-time"
+[ "$prev_record" != unknown ] || unproven="$unproven run-directory"
+if [ "$prev_record" != absent ] && [ "$prev_start" = unknown ]; then
+    unproven="$unproven previous-start-record"
+fi
+unproven=${unproven# }
+unproven=${unproven:-none}
+
 if [ "$operator_reason" != unknown ]; then
     reason=$operator_reason
 elif [ "$prev_record" = absent ]; then
     reason=first-supervised-start
 elif [ "$boot_sec" != unknown ] && [ "$prev_start" != unknown ]; then
     if [ "$boot_sec" -gt "$prev_start" ]; then
-        reason=boot
+        reason=boot-consistent
     else
-        reason=keepalive-restart
+        reason=keepalive-restart-consistent
     fi
 else
     reason=unknown
-    [ "$boot_sec" != unknown ] || unproven="$unproven host-boot-time"
-    [ "$prev_record" != unknown ] || unproven="$unproven run-directory"
-    [ "$prev_start" != unknown ] || unproven="$unproven previous-start-record"
-    unproven=${unproven# }
 fi
+
+# Built ONCE, printed everywhere: the dry run, the death line and the start
+# line are three views of one record, so they cannot drift apart.
+evidence=$(printf 'host_boot_sec=%s host_boot=%s prev_record=%s prev_pid=%s prev_start_sec=%s prev_start=%s prev_end_raw=%s prev_end="%s" last_seen=%s unproven=%s' \
+    "$boot_sec" "$boot_at" "$prev_record" "$prev_pid" "$prev_start" "$prev_start_at" \
+    "$prev_end_raw" "$prev_end" "$last_seen" "$unproven")
 
 # Dry run (the harness-pin gate, and an operator checking the decision):
 # print it, touch nothing, start nothing. An unproven decision names what
@@ -184,10 +239,7 @@ fi
 # with `run-directory` unproven, where it used to manufacture the empty
 # directory it then reasoned from.)
 if [ "${SOAK_DRY_RUN:-}" = 1 ]; then
-    printf 'reason=%s prev_pid=%s prev_end="%s" last_seen=%s host_boot=%s' \
-        "$reason" "$prev_pid" "$prev_end" "$last_seen" "$boot_at"
-    [ -z "$unproven" ] || printf ' unproven=%s' "$unproven"
-    printf '\n'
+    printf 'reason=%s %s\n' "$reason" "$evidence"
     exit 0
 fi
 rm -f "$reason_file"
@@ -196,24 +248,27 @@ rm -f "$reason_file"
 exec >>"$SOAK/logs/jinnd.log" 2>&1
 
 now=$(date -u +%FT%TZ)
+# Each line states the DERIVATION as a derivation ("readings are consistent
+# with"), then hands over the readings. The audit counts the word; a reader
+# who doubts it re-derives the answer from the same evidence, on the spot.
 case "$reason" in
-    boot)
-        printf '%s previous jinnd %s died with the host (unplanned): last log line %s; host booted %s; launchd last status: %s\n' \
-            "$now" "$prev_pid" "$last_seen" "$boot_at" "$prev_end" >>"$SOAK/logs/ops.log" ;;
-    keepalive-restart)
-        printf '%s previous jinnd %s ended UNCLEAN (unplanned; host up since %s): %s; last log line %s; KeepAlive relaunching\n' \
-            "$now" "$prev_pid" "$boot_at" "$prev_end" "$last_seen" >>"$SOAK/logs/ops.log" ;;
+    boot-consistent)
+        printf '%s previous jinnd %s ended; DERIVED boot-consistent: the readings are consistent with the daemon having died with the host (an inference from the evidence below, not an observation of a reboot). evidence: %s\n' \
+            "$now" "$prev_pid" "$evidence" >>"$SOAK/logs/ops.log" ;;
+    keepalive-restart-consistent)
+        printf '%s previous jinnd %s ended UNCLEAN; DERIVED keepalive-restart-consistent: the readings are consistent with the previous start belonging to THIS host boot, so launchd is relaunching a daemon that ended on its own (an inference, not an observation). evidence: %s\n' \
+            "$now" "$prev_pid" "$evidence" >>"$SOAK/logs/ops.log" ;;
     unknown)
         # Something ended and the wrapper cannot prove what: it says so,
-        # names the input it could not read, and claims neither a boot nor
-        # a same-boot restart. This line is the audit's cue to go looking.
-        printf '%s previous jinnd %s ended, PROVENANCE UNKNOWN (could not read: %s): %s; last log line %s; host boot %s\n' \
-            "$now" "$prev_pid" "$unproven" "$prev_end" "$last_seen" "$boot_at" >>"$SOAK/logs/ops.log" ;;
+        # names the input it could not read, and derives nothing at all.
+        # This line is the audit's cue to go looking.
+        printf '%s previous jinnd %s ended, PROVENANCE UNKNOWN (could not read: %s). evidence: %s\n' \
+            "$now" "$prev_pid" "$unproven" "$evidence" >>"$SOAK/logs/ops.log" ;;
 esac
 
 pin=$(cat "$SOAK/bin/jinnd.commit" 2>/dev/null || echo unknown)
-printf '%s started (launchd; reason=%s): jinnd %s (pin %s)\n' \
-    "$(date -u +%FT%TZ)" "$reason" "$$" "$pin" >>"$SOAK/logs/ops.log"
+printf '%s started (launchd; reason=%s): jinnd %s (pin %s) evidence: %s\n' \
+    "$(date -u +%FT%TZ)" "$reason" "$$" "$pin" "$evidence" >>"$SOAK/logs/ops.log"
 printf '%s\n' "$$" >"$SOAK/run/jinnd.pid"
 
 exec "$SOAK/bin/jinnd" \
