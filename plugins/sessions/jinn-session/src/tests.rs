@@ -431,3 +431,35 @@ fn a_document_whose_only_created_line_is_torn_holds_no_session_at_all() {
     );
     assert_eq!(replay(&[]).expect("an empty document is absence"), None);
 }
+
+#[test]
+fn an_id_whose_document_held_no_record_is_never_minted_again() {
+    // Recognising absence is only HALF of the answer. A document that
+    // replays as absence is not adopted, so nothing here advances the
+    // mint past its id — and the very next `create` hands that id to a
+    // new session, whose first record lands in the file the absent one
+    // left behind. Reserving is the other half, and it is the half that
+    // turned an accepted absence into corruption one layer down
+    // (`FINDINGS.md` #36).
+    let mut sessions = Sessions::new("default");
+    sessions.reserve("default-1");
+    let created = sessions.create(spec("echo"), 10);
+    assert_eq!(
+        created.session_id, "default-2",
+        "the id of a record-less document was minted again"
+    );
+    // Reserving installs NOTHING: the absence stays an absence, and the
+    // registry is not one session heavier for having seen the document.
+    assert_eq!(sessions.ids().count(), 1);
+    assert!(sessions.record("default-1").is_none());
+}
+
+#[test]
+fn a_reserved_id_from_another_store_moves_nothing() {
+    // The counter is per store. A stray document named for a different
+    // store is not this store's id and must not burn one of its numbers.
+    let mut sessions = Sessions::new("default");
+    sessions.reserve("memory-9");
+    sessions.reserve("not-a-number");
+    assert_eq!(sessions.create(spec("echo"), 10).session_id, "default-1");
+}

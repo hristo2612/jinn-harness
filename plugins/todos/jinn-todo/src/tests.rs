@@ -811,3 +811,40 @@ fn a_document_whose_only_created_line_is_torn_holds_no_todo_at_all() {
     );
     assert_eq!(replay(&[]).expect("an empty document is absence"), None);
 }
+
+#[test]
+fn an_id_whose_document_held_no_record_is_never_minted_again() {
+    // Recognising absence is only HALF of the answer. A document holding
+    // no complete record is not adopted, so nothing advances the mint
+    // past its id — and the next `create` hands that id to a new Todo
+    // whose first record lands in the file the absent one left behind.
+    // Reserving is the other half (`FINDINGS.md` #36).
+    let mut todos = store();
+    todos.reserve("default-1");
+    let planned = todos
+        .plan_create(&spec("work after an absence"), 10)
+        .expect("a spec this seam records");
+    assert_eq!(
+        planned.todo_id, "default-2",
+        "the id of a record-less document was minted again"
+    );
+    // Reserving installs NOTHING: the registry is not one Todo heavier
+    // for having seen a document it made no record of.
+    assert_eq!(todos.ids().count(), 0);
+}
+
+#[test]
+fn a_reserved_id_from_another_store_moves_nothing() {
+    // The counter is per store. A stray document named for a different
+    // store is not this store's id and must not burn one of its numbers.
+    let mut todos = store();
+    todos.reserve("memory-9");
+    todos.reserve("not-a-number");
+    assert_eq!(
+        todos
+            .plan_create(&spec("the first"), 10)
+            .expect("a spec this seam records")
+            .todo_id,
+        "default-1"
+    );
+}

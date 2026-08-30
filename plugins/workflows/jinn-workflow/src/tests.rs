@@ -814,3 +814,46 @@ fn a_run_no_node_ever_ran_cannot_be_ended_done() {
     // the second lock on a door that should already be shut.
     assert_eq!(run_ending(&[]), None, "nothing recorded proves an ending");
 }
+
+#[test]
+fn an_id_whose_document_held_no_record_is_never_minted_again() {
+    // Recognising absence is only HALF of the answer. A document holding
+    // no complete record is not adopted, so nothing advances the mint
+    // past its id — and the next mint hands that id out again, to a run
+    // whose first record would land in the file the absent one left
+    // behind. Reserving is the other half (`FINDINGS.md` #36).
+    let (mut registry, definition) = defined(two_lane_spec("the reserved lane"));
+    registry.reserve_run("default-r1");
+    let run = started(&mut registry, &definition.workflow_id, None);
+    assert_eq!(
+        run, "default-r2",
+        "the id of a record-less run document was minted again"
+    );
+
+    let mut fresh = Workflows::new("default");
+    fresh.reserve_workflow("default-w1");
+    let next = fresh
+        .plan_define(&two_lane_spec("the reserved lane"), None, NOW)
+        .expect("a spec this seam records");
+    assert_eq!(
+        next.workflow_id, "default-w2",
+        "the id of a record-less workflow document was minted again"
+    );
+    // Reserving installs NOTHING on either lane.
+    assert_eq!(fresh.workflow_ids().count(), 0);
+    assert_eq!(fresh.run_ids().count(), 0);
+}
+
+#[test]
+fn a_reserved_id_from_another_store_moves_nothing() {
+    // The counters are per store and per lane. Another store's name, a
+    // name with no number, and the OTHER lane's prefix all move nothing.
+    let (mut registry, definition) = defined(two_lane_spec("the reserved lane"));
+    registry.reserve_run("memory-r9");
+    registry.reserve_run("default-w9");
+    registry.reserve_run("not-a-number");
+    assert_eq!(
+        started(&mut registry, &definition.workflow_id, None),
+        "default-r1"
+    );
+}

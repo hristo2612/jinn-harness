@@ -150,6 +150,27 @@ impl Workflows {
         self.runs.keys().map(String::as_str)
     }
 
+    /// Moves the RUN counter past `run_id` without installing anything,
+    /// so a later `start` cannot mint it.
+    ///
+    /// This is the half of the absence answer that is not about reading.
+    /// A document holding no complete record is not adopted — correctly,
+    /// there is no run in it — but the id it was NAMED for is then still
+    /// free, and the next `start` hands it out; the store's next record
+    /// would land in that document (`FINDINGS.md` #36).
+    pub fn reserve_run(&mut self, run_id: &str) {
+        Self::mint_past(&mut self.minted_runs, &format!("{}-r", self.store), run_id);
+    }
+
+    /// [`Workflows::reserve_run`] for the definitions lane.
+    pub fn reserve_workflow(&mut self, workflow_id: &str) {
+        Self::mint_past(
+            &mut self.minted_workflows,
+            &format!("{}-w", self.store),
+            workflow_id,
+        );
+    }
+
     fn mint_past(counter: &mut u64, prefix: &str, id: &str) {
         if let Some(minted) = id
             .strip_prefix(prefix)
