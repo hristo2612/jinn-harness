@@ -19,7 +19,7 @@
 //! family by name (`jinn_workflow::journal::replay_workflow` and
 //! `replay`).
 
-use jinn_workflow::journal::{replay, replay_workflow, Record};
+use jinn_workflow::journal::{replay, replay_workflow, Record, RunDocument};
 use jinn_workflow::{
     Definition, ErrorCode, NodeChange, NodeRun, RefusedChange, RunStatus, Started, WorkflowError,
 };
@@ -159,6 +159,14 @@ pub fn run_ended(
 /// never a record. The count is reported by `describe`, so a store that
 /// discarded bytes says so.
 ///
+/// **A document with no record is absence, and is not adopted.** A
+/// daemon killed inside its very first append leaves bytes that were
+/// never a record; `jinn_workflow::journal::replay` answers
+/// `RunDocument::Absent` for it and this reads that answer literally. No
+/// run is installed, so no recovery is planned and nothing is appended:
+/// the document that held no record still holds none after boot. The
+/// count is reported by `describe` (`FINDINGS.md` #36).
+///
 /// **What it does NOT do is recover.** The recovery every adopted run
 /// owes is the shared store's, immediately after this answers and before
 /// the contract is provided — one home for that ordering, and the same
@@ -180,21 +188,58 @@ pub fn adopt_all(config: &StoreConfig) -> Result<(), WorkflowError> {
         if torn > 0 {
             heal(&path, &bytes, torn)?;
         }
+        // No complete `defined` record is no WORKFLOW — not a workflow
+        // with nothing in it. Adopting the empty vector would install an
+        // id that answers `get-workflow` with `latest-revision: 0`: a
+        // workflow nobody defined, which is the same fabrication as a run
+        // nobody started.
+        if revisions.is_empty() {
+            record_less();
+            continue;
+        }
         with_registry(|workflows| workflows.adopt_workflow(&id, revisions));
     }
     for (id, path, bytes) in documents(&format!("{root}/{RUN_DIR}"))? {
-        let replayed = replay(&bytes).map_err(|error| {
+        let document = replay(&bytes).map_err(|error| {
             WorkflowError::new(
                 ErrorCode::Failed,
                 format!("the journal {path:?} does not replay: {error}"),
             )
         })?;
-        if replayed.torn_tail_bytes > 0 {
-            heal(&path, &bytes, replayed.torn_tail_bytes)?;
+        if document.torn_tail_bytes() > 0 {
+            heal(&path, &bytes, document.torn_tail_bytes())?;
         }
-        with_registry(|workflows| workflows.adopt_run(&id, replayed));
+        // The typed absence, honoured. `RunDocument::Absent` carries no
+        // `Replayed`, so there is nothing here to adopt even by mistake —
+        // and because nothing is adopted, `recover_all` plans nothing for
+        // it and no line is ever written into the document. That is the
+        // whole guarantee: a heal DROPS bytes and never creates a record.
+        match document {
+            RunDocument::Absent { .. } => record_less(),
+            RunDocument::Run(replayed) => {
+                with_registry(|workflows| workflows.adopt_run(&id, *replayed));
+            }
+        }
     }
     Ok(())
+}
+
+/// Counts one document this store read and found no record in.
+///
+/// It is not adopted and it is not an error: a daemon killed inside its
+/// very first append leaves exactly this, and the honest reading of it is
+/// that nothing was ever recorded there. It is COUNTED because a store
+/// that declines to make a record out of a document should say so — a
+/// reader asking `describe` gets evidence of the absence rather than the
+/// absence of evidence.
+///
+/// The document keeps its name and is left where it is (empty, after the
+/// heal). The id is therefore never handed to a different run behind an
+/// operator's back: the registry's counter only ever advances past ids it
+/// ADOPTED, so a fresh mint may reuse this one — onto a document that
+/// now holds nothing, which is precisely a fresh run's starting state.
+fn record_less() {
+    *crate::store::RECORD_LESS_DOCUMENTS.lock().unwrap() += 1;
 }
 
 /// Every journal in one directory, as `(id, path, bytes)`. An absent

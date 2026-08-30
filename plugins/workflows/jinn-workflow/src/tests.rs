@@ -7,6 +7,17 @@ use super::*;
 
 const NOW: u64 = 1_000;
 
+/// The run a document PROVES, or a failure naming the document that
+/// proved none. Every proof that goes on to read a status says so here
+/// first: `journal::replay` hands back a `RunDocument`, and only the
+/// `Run` half carries anything to read.
+fn replayed_run(document: &[u8]) -> journal::Replayed {
+    journal::replay(document)
+        .expect("a replay")
+        .into_run()
+        .expect("this document proves a run")
+}
+
 fn checkpoint(id: &str) -> NodeSpec {
     NodeSpec {
         id: id.to_owned(),
@@ -391,7 +402,7 @@ fn a_node_left_running_by_a_crash_comes_back_recorded_interrupted_with_a_reason(
 
     // The replay says what the document SAYS — including `running`,
     // because inventing a line nobody wrote is not a reader's job.
-    let replayed = journal::replay(&document).expect("a replay");
+    let replayed = replayed_run(&document);
     assert_eq!(replayed.status, RunStatus::Running);
     assert_eq!(
         replayed
@@ -436,7 +447,7 @@ fn a_node_left_running_by_a_crash_comes_back_recorded_interrupted_with_a_reason(
 
     // And the NEXT boot reads a run that is interrupted, with a reason,
     // with its whole history intact — and nothing declared `running`.
-    let again = journal::replay(&document).expect("a replay");
+    let again = replayed_run(&document);
     assert_eq!(again.status, RunStatus::Interrupted);
     assert!(
         again.open_nodes().is_empty(),
@@ -473,7 +484,7 @@ fn a_torn_tail_is_absence_and_a_hole_anywhere_earlier_is_refused() {
     // A tail written short reads as ABSENCE: the run before it survives.
     let mut torn = whole.clone();
     torn.truncate(whole.len() - 10);
-    let replayed = journal::replay(&torn).expect("a torn tail is absence");
+    let replayed = replayed_run(&torn);
     assert!(
         replayed.torn_tail_bytes > 0,
         "the discarded bytes are reported"
@@ -526,12 +537,7 @@ fn an_append_onto_a_torn_tail_makes_a_hole_the_reader_refuses() {
         .map_or(0, |last| last + 1);
     let mut healed = torn[..healed_len].to_vec();
     healed.extend(ending.line());
-    assert_eq!(
-        journal::replay(&healed)
-            .expect("a healed document replays")
-            .status,
-        RunStatus::Interrupted
-    );
+    assert_eq!(replayed_run(&healed).status, RunStatus::Interrupted);
 }
 
 #[test]
@@ -784,9 +790,7 @@ fn a_document_whose_only_run_started_is_torn_holds_no_run_at_all() {
     let document = journal::replay(&torn).expect("a torn first line is absence, not damage");
     assert_eq!(
         document,
-        journal::RunDocument::Absent {
-            torn_tail_bytes: 1
-        },
+        journal::RunDocument::Absent { torn_tail_bytes: 1 },
         "one byte of noise is absence and nothing else"
     );
     assert!(
@@ -797,9 +801,7 @@ fn a_document_whose_only_run_started_is_torn_holds_no_run_at_all() {
     // An empty document is the same absence, with nothing to discard.
     assert_eq!(
         journal::replay(&[]).expect("an empty document is absence"),
-        journal::RunDocument::Absent {
-            torn_tail_bytes: 0
-        }
+        journal::RunDocument::Absent { torn_tail_bytes: 0 }
     );
 }
 
@@ -810,9 +812,5 @@ fn a_run_no_node_ever_ran_cannot_be_ended_done() {
     // unfounded, which is exactly the shape a fabricated run takes. A
     // spec with no nodes is refused at `define` (`spec.rs`), so this is
     // the second lock on a door that should already be shut.
-    assert_eq!(
-        run_ending(&[]),
-        None,
-        "nothing recorded proves an ending"
-    );
+    assert_eq!(run_ending(&[]), None, "nothing recorded proves an ending");
 }

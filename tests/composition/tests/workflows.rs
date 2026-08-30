@@ -757,7 +757,10 @@ fn a_run_document_holding_no_record_is_absence_and_boot_writes_nothing_into_it()
     // ABSENCE, answered as absence. A run is a POSITIVE reading: without
     // one complete `run-started` record there is nothing to report, and
     // the one answer that must never come back is a status.
-    let read = get(port, &format!("/v1/workflows/{DEFAULT_STORE}/runs/{absent}"));
+    let read = get(
+        port,
+        &format!("/v1/workflows/{DEFAULT_STORE}/runs/{absent}"),
+    );
     assert_eq!(
         read.status, 404,
         "one byte that was never a record answered as a run: {}",
@@ -784,7 +787,7 @@ fn a_run_document_holding_no_record_is_absence_and_boot_writes_nothing_into_it()
     // says so — evidence of absence, not absence of evidence.
     let described = described(port, DEFAULT_STORE);
     assert!(
-        described["describe"]["extra"]["run-documents-without-a-record"]
+        described["describe"]["extra"]["documents-without-a-record"]
             .as_u64()
             .is_some_and(|seen| seen >= 1),
         "a store that discards a whole document says so: {described}"

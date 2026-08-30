@@ -265,13 +265,23 @@ pub struct WorkflowList {
 /// How a run ENDS, given its nodes — derived from what is recorded and
 /// nothing else.
 ///
-/// `None` while any node can still move: the run is not over and nothing
-/// is claimed. [`RunStatus::Done`] — the claim that the procedure was
+/// `None` while any node can still move, and `None` over no nodes at all:
+/// the run is not over, or nothing was ever recorded to end, and in
+/// neither case is anything claimed. [`RunStatus::Done`] — the claim that the procedure was
 /// carried out — requires that every node that RAN reached `done`. A
 /// skipped node is not a failure (an edge routed past it, which is the
 /// graph working); an interrupted or failed or cancelled one is.
 #[must_use]
 pub fn run_ending(nodes: &[NodeRun]) -> Option<(RunStatus, Option<String>)> {
+    // Over an EMPTY set every node reached `done` vacuously, and `done`
+    // is the strongest claim this seam makes. Nothing recorded justifies
+    // it, so nothing is claimed. A spec with no nodes is refused at
+    // `define` (`crate::spec`), which makes this the second lock on a
+    // door that is already shut — and the one that holds if a run is ever
+    // assembled from something other than a definition.
+    if nodes.is_empty() {
+        return None;
+    }
     if nodes.iter().any(|node| !node.state.is_terminal()) {
         return None;
     }

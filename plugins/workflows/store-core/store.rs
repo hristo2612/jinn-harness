@@ -135,6 +135,16 @@ pub static EMIT_FAILURES: Mutex<u64> = Mutex::new(0);
 /// store's `describe` reports it, and an ephemeral store's is always 0.
 pub static HEALED_TAILS: Mutex<u64> = Mutex::new(0);
 
+/// How many documents this store read and found NO complete record in.
+///
+/// A daemon killed inside a document's very first append leaves bytes
+/// that were never a record. Those documents are absence: nothing is
+/// adopted from them, nothing is recovered for them, and nothing is
+/// written into them. They are counted so a store that declined to make a
+/// record out of a document SAYS SO, and a reader gets evidence of the
+/// absence instead of the absence of evidence (`FINDINGS.md` #36).
+pub static RECORD_LESS_DOCUMENTS: Mutex<u64> = Mutex::new(0);
+
 /// The config this incarnation activated with.
 ///
 /// # Panics
@@ -866,6 +876,10 @@ pub fn describe(provider: &str, durable: bool) -> Answer {
         serde_json::json!(*HEALED_TAILS.lock().unwrap()),
     );
     extra.insert(
+        "documents-without-a-record".to_owned(),
+        serde_json::json!(*RECORD_LESS_DOCUMENTS.lock().unwrap()),
+    );
+    extra.insert(
         "driving".to_owned(),
         serde_json::json!(DRIVING.lock().unwrap().len()),
     );
@@ -959,6 +973,7 @@ pub fn activate(config_bytes: &[u8]) -> Result<StoreConfig, String> {
     *DEFERRED.lock().unwrap() = Vec::new();
     *EMIT_FAILURES.lock().unwrap() = 0;
     *HEALED_TAILS.lock().unwrap() = 0;
+    *RECORD_LESS_DOCUMENTS.lock().unwrap() = 0;
     *CONFIG.lock().unwrap() = Some(config.clone());
     journal::adopt_all(&config).map_err(|error| error.message)?;
     recover_all().map_err(|error| error.message)?;

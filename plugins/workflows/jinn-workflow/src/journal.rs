@@ -53,6 +53,15 @@
 //! clean stop. (`FINDINGS.md` #34 is the kernel side: `jinn:fs` cannot
 //! drop a suffix, so a store that tolerates a tail has to rewrite the
 //! document to stay readable.)
+//!
+//! And a document that holds no complete record AT ALL — a daemon killed
+//! inside its very first append — is the absence of the RUN, not an
+//! empty run. [`replay`] answers [`RunDocument::Absent`], which carries
+//! no [`Replayed`] to read a status off; the store adopts nothing, plans
+//! no recovery, and appends no line. What the alternative costs is
+//! `FINDINGS.md` #36: one byte of noise read back as a live run, ENDED
+//! `done` by the next boot, and served over HTTP as a completed run that
+//! never existed.
 
 use serde::{Deserialize, Serialize};
 
@@ -375,7 +384,66 @@ pub fn replay_workflow(document: &[u8]) -> Result<(Vec<Definition>, usize), Stri
     Ok((revisions, torn_tail_bytes))
 }
 
+/// What a RUN document replayed into.
+///
+/// A run is a POSITIVE reading and this type is what makes it one. It
+/// exists where a complete `run-started` record was READ, and nowhere
+/// else; there is no variant that carries a default [`Replayed`], so no
+/// caller can be handed a run with an empty id, revision `0` and a
+/// status, and no `heal` or recovery can be planned for one. The
+/// alternative — the shape this seam shipped and this type removes — is a
+/// document holding one byte of noise replaying as a live run and being
+/// ENDED by the next boot: a completed run fabricated out of absence.
+#[derive(Clone, Debug, PartialEq)]
+pub enum RunDocument {
+    /// The document holds NO complete record: an unterminated tail and
+    /// nothing before it, or no bytes at all. This is absence. It is not
+    /// a run in any state, and the one thing it may never become is a run
+    /// with a status.
+    Absent {
+        /// The trailing bytes that were never a record, reported so a
+        /// store that discards them says so.
+        torn_tail_bytes: usize,
+    },
+    /// A run, proven by its own complete `run-started` record.
+    Run(Box<Replayed>),
+}
+
+impl RunDocument {
+    /// The run this document proves, or `None` where it proves none.
+    #[must_use]
+    pub fn run(&self) -> Option<&Replayed> {
+        match self {
+            Self::Absent { .. } => None,
+            Self::Run(replayed) => Some(replayed),
+        }
+    }
+
+    /// The run this document proves, taken by value.
+    #[must_use]
+    pub fn into_run(self) -> Option<Replayed> {
+        match self {
+            Self::Absent { .. } => None,
+            Self::Run(replayed) => Some(*replayed),
+        }
+    }
+
+    /// The trailing bytes that were never a record, in either case.
+    #[must_use]
+    pub fn torn_tail_bytes(&self) -> usize {
+        match self {
+            Self::Absent { torn_tail_bytes } => *torn_tail_bytes,
+            Self::Run(replayed) => replayed.torn_tail_bytes,
+        }
+    }
+}
+
 /// Replays a RUN document.
+///
+/// A document with no complete record replays as
+/// [`RunDocument::Absent`] — never as a run, however empty. See the
+/// module doc's *Absence and corruption* section: absence and damage are
+/// different answers, and so are absence and a run.
 ///
 /// # Errors
 ///
@@ -384,7 +452,7 @@ pub fn replay_workflow(document: &[u8]) -> Result<(Vec<Definition>, usize), Stri
 /// move that is illegal or begins from the wrong state, a line naming a
 /// node the pinned spec does not contain, a `run-ended` claiming a
 /// non-terminal status, or a second ending after one already landed.
-pub fn replay(document: &[u8]) -> Result<Replayed, String> {
+pub fn replay(document: &[u8]) -> Result<RunDocument, String> {
     let (body, torn_tail_bytes) = split_tail(document);
     let mut replayed = Replayed {
         torn_tail_bytes,
@@ -408,7 +476,14 @@ pub fn replay(document: &[u8]) -> Result<Replayed, String> {
         opened = true;
         apply(&mut replayed, record, line_no)?;
     }
-    Ok(replayed)
+    // The positive proof, and the whole of it: a `run-started` record was
+    // read WHOLE. Without one there is no run here to report, and a
+    // default `Replayed` — id `""`, revision 0, status `running` — is a
+    // sentinel that passes for a real reading. It is not returned.
+    if !opened {
+        return Ok(RunDocument::Absent { torn_tail_bytes });
+    }
+    Ok(RunDocument::Run(Box::new(replayed)))
 }
 
 fn split_tail(document: &[u8]) -> (&[u8], usize) {
