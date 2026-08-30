@@ -18,12 +18,14 @@ members = [
     "plugins/engines/jinn-engine",
     "plugins/engines/jinn-engine-codex-wire",
     "plugins/engines/jinn-engine-claude-wire",
+    "plugins/sessions/jinn-session",
     "plugins/settings/jinn-settings",
     "tests/composition",
     "tools/api-kit",
     "tools/cron-kit",
     "tools/engine-kit",
     "tools/harness-pin",
+    "tools/session-kit",
 ]
 
 [workspace.package]

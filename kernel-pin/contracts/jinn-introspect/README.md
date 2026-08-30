@@ -1,9 +1,29 @@
-# jinn:introspect 0.1.0
+# jinn:introspect 0.2.0
 
 The read-only composition contract (M2-K7; harness finding 19). A status
-or health plugin answers `fiber`, `state`, `incarnation`, `provisions`,
-`registrations`, and `readiness` from the kernel's own knowledge instead
-of probing.
+or health plugin answers `fiber`, `state`, `incarnation`, `unserved`,
+`provisions`, `registrations`, and `readiness` from the kernel's own
+knowledge instead of probing.
+
+## 0.2.0 (M2-K9, harness finding 31)
+
+Additive: `entry` gains `unserved`. It names what the entry's live
+incarnation already owes — `restarting` (a replacement is scheduled),
+`gone` (disposal is owed, and disposal is terminal), `suspended`, or
+`stalled` (a change nothing will schedule from here: a withdrawn
+dependency, an activation not retried against an unchanged environment
+per R9, or a terminal fiber) — and is absent when the entry can serve.
+That is exactly the window in which a reply-expecting `events.emit`
+selecting one of its listeners is refused, with the `kernel-error` case
+of the same name.
+
+Four answers rather than a bit because they are four different next
+moves: only `restarting` promises a replacement, so only `restarting`
+means "retry after it lands", and the kernel answers it only where it can
+genuinely schedule one. A caller told to wait on a `gone` or `stalled`
+target would wait forever. Callers ASK here instead of discovering the state by
+stalling on it; the refusal and this field are read from one snapshot
+source, so they never disagree.
 
 ## Grant
 

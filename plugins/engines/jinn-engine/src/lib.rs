@@ -67,95 +67,21 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-pub use jinn_settings::{closed, is_secret_ref, SecretRef, SECRET_REF_KEY, SECRET_REF_SURFACE};
+use jinn_settings::{additive, closed_value_space, optional};
+pub use jinn_settings::{
+    closed, decode_with_rest, encode_with_rest, is_secret_ref, put, required, Additive, Extensions,
+    SecretRef, SECRET_REF_KEY, SECRET_REF_SURFACE,
+};
 
 #[cfg(test)]
 mod additivity_tests;
 #[cfg(test)]
 mod tests;
 
-/// Additive JSON: fields a newer peer sends survive a round trip.
-pub type Extensions = serde_json::Map<String, serde_json::Value>;
-
-/// The rest map, reachable uniformly. Every wire type in this seam
-/// implements it, which is what lets `additivity_tests` walk the whole
-/// inventory through one property instead of one example per type.
-pub trait Additive {
-    /// What this value carried that its version could not read.
-    fn rest(&self) -> &Extensions;
-}
-
-/// Decoding half of the additivity law (module doc), written once.
-///
-/// `known` reads the fields this version understands, REMOVING them from
-/// the map; whatever is left is the rest, kept verbatim. Because the
-/// known fields are removed, a key can never be in both halves — the two
-/// can never disagree, and neither can clobber the other on the way out.
-///
-/// # Errors
-///
-/// Whatever `known` refuses: a required field absent or ill-typed.
-fn decode_with_rest<T>(
-    mut map: Extensions,
-    known: impl FnOnce(&mut Extensions) -> Result<T, String>,
-) -> Result<(T, Extensions), String> {
-    let value = known(&mut map)?;
-    Ok((value, map))
-}
-
-/// Encoding half of the same law: the fields this version knows, then the
-/// rest re-emitted unchanged. `or_insert` rather than `insert` so a
-/// known field always wins — decoding makes the overlap impossible, and
-/// this keeps a hand-built value from lying about its own shape.
-fn encode_with_rest(mut known: Extensions, rest: &Extensions) -> Extensions {
-    for (name, value) in rest {
-        known.entry(name.clone()).or_insert_with(|| value.clone());
-    }
-    known
-}
-
-/// `impl Additive` for a type whose rest map is a derived `extra`.
-macro_rules! additive {
-    ($($type:ty),* $(,)?) => {
-        $(impl Additive for $type {
-            fn rest(&self) -> &Extensions {
-                &self.extra
-            }
-        })*
-    };
-}
-
-/// A CLOSED VALUE SPACE, decoded through the ONE shared refusal
-/// ([`closed`], whose home is the crate that first declared a closed wire
-/// surface). An enum has nowhere to put a value it cannot name, so it
-/// refuses — never a default, never the nearest known variant, and never
-/// a drop.
-///
-/// It is hand-written rather than derived for exactly one reason: serde's
-/// own refusal names the admitted variants but not the SURFACE that
-/// refused, and an operator reading `effort` refused wants to know it was
-/// `effort`. The hazard a hand-written table carries — a name here
-/// disagreeing with what `Serialize` emits — is closed by
-/// `every_closed_variant_round_trips_through_its_own_encoding`.
-macro_rules! closed_value_space {
-    ($type:ty, $surface:literal, { $($name:literal => $variant:expr),+ $(,)? }) => {
-        impl<'de> Deserialize<'de> for $type {
-            fn deserialize<D: serde::Deserializer<'de>>(
-                deserializer: D,
-            ) -> Result<Self, D::Error> {
-                let named = String::deserialize(deserializer)?;
-                match named.as_str() {
-                    $($name => Ok($variant),)+
-                    _ => Err(closed(
-                        $surface,
-                        &format!("the value `{named}`"),
-                        &[$($name),+].join(" | "),
-                    )),
-                }
-            }
-        }
-    };
-}
+// The additivity law and the closed-surface refusal are the
+// distribution's, not this seam's: their one home is `jinn_settings::wire`
+// (AGENTS.md §One home per fact), re-exported above so this seam names
+// them as its own vocabulary without owning a second copy.
 
 /// The answer envelope's version (additive within `0.x`).
 pub const API_VERSION: &str = "0.1";
@@ -586,28 +512,6 @@ const KNOWN_KINDS: [&str; 8] = [
     "truncated",
 ];
 
-/// A field the shape requires; absent is a decode error.
-fn field<T: serde::de::DeserializeOwned>(map: &mut Extensions, name: &str) -> Result<T, String> {
-    let value = map
-        .remove(name)
-        .ok_or_else(|| format!("an event of this kind carries {name:?}"))?;
-    serde_json::from_value(value).map_err(|error| format!("event field {name:?}: {error}"))
-}
-
-/// A field whose absence has a meaning of its own (`None`, `false`, an
-/// empty usage) rather than being an error.
-fn optional<T: serde::de::DeserializeOwned + Default>(
-    map: &mut Extensions,
-    name: &str,
-) -> Result<T, String> {
-    match map.remove(name) {
-        None | Some(serde_json::Value::Null) => Ok(T::default()),
-        Some(value) => {
-            serde_json::from_value(value).map_err(|error| format!("event field {name:?}: {error}"))
-        }
-    }
-}
-
 /// The longest prefix of `text` that fits in `room` BYTES and is still
 /// valid UTF-8. Byte-exact rather than char-exact because the budget is
 /// in bytes: a prefix cut mid-character would either exceed the bound (a
@@ -618,24 +522,6 @@ fn clip(text: &str, room: u64) -> String {
         end -= 1;
     }
     text[..end].to_owned()
-}
-
-fn put_value<T: Serialize>(
-    map: &mut Extensions,
-    name: &str,
-    value: T,
-) -> Option<serde_json::Value> {
-    map.insert(
-        name.to_owned(),
-        serde_json::to_value(value).expect("a field encodes"),
-    )
-}
-
-fn put<T: Serialize>(map: &mut Extensions, name: &str, value: T) {
-    map.insert(
-        name.to_owned(),
-        serde_json::to_value(value).expect("an event field encodes"),
-    );
 }
 
 impl Event {
@@ -734,27 +620,27 @@ impl Event {
                     model: optional(map, "model")?,
                 },
                 "delta" => EventKind::Delta {
-                    text: field(map, "text")?,
+                    text: required(map, "text")?,
                 },
                 "tool-call" => EventKind::ToolCall {
-                    name: field(map, "name")?,
+                    name: required(map, "name")?,
                     input: optional(map, "input")?,
                 },
                 "tool-result" => EventKind::ToolResult {
-                    name: field(map, "name")?,
+                    name: required(map, "name")?,
                     ok: optional(map, "ok")?,
                 },
                 "turn-end" => EventKind::TurnEnd {
                     text: optional(map, "text")?,
                 },
                 "exited" => EventKind::Exited {
-                    status: field(map, "status")?,
+                    status: required(map, "status")?,
                     usage: optional(map, "usage")?,
                     truncated: optional(map, "truncated")?,
                     error: optional(map, "error")?,
                 },
                 "cancelled" => EventKind::Cancelled {
-                    reason: field(map, "reason")?,
+                    reason: required(map, "reason")?,
                 },
                 // The only remaining known tag.
                 _ => EventKind::Truncated {
@@ -959,9 +845,11 @@ impl Answer {
         let mut known = Extensions::new();
         put(&mut known, "api-version", &self.api_version);
         match &self.outcome {
-            Outcome::Ok(value) => known.insert("ok".to_owned(), value.clone()),
-            Outcome::Error(error) => put_value(&mut known, "error", error),
-        };
+            Outcome::Ok(value) => {
+                known.insert("ok".to_owned(), value.clone());
+            }
+            Outcome::Error(error) => put(&mut known, "error", error),
+        }
         encode_with_rest(known, &self.extra)
     }
 

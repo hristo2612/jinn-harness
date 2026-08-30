@@ -69,6 +69,7 @@ dependencies = [
  "harness-pin",
  "jinn-api",
  "jinn-cron",
+ "jinn-session",
  "jinn-settings",
  "rusqlite",
  "serde_json",
@@ -263,6 +264,7 @@ name = "jinn-api"
 version = "0.1.0"
 dependencies = [
  "jinn-engine",
+ "jinn-session",
  "serde",
  "serde_json",
 ]
@@ -308,6 +310,16 @@ name = "jinn-engine-codex-wire"
 version = "0.1.0"
 dependencies = [
  "jinn-engine",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jinn-session"
+version = "0.1.0"
+dependencies = [
+ "jinn-engine",
+ "jinn-settings",
  "serde",
  "serde_json",
 ]
@@ -471,6 +483,19 @@ dependencies = [
  "serde",
  "serde_core",
  "zmij",
+]
+
+[[package]]
+name = "session-kit"
+version = "0.1.0"
+dependencies = [
+ "api-kit",
+ "cron-kit",
+ "engine-kit",
+ "jinn-cron",
+ "jinn-engine",
+ "jinn-session",
+ "serde_json",
 ]
 
 [[package]]

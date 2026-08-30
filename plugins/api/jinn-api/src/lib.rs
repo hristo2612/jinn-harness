@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod engines;
 pub mod kernel;
+pub mod sessions;
 
 pub use engines::{
     decode_engine_answer, engine_api_error, engine_list, engine_routable, engine_route,
@@ -20,6 +21,12 @@ pub use engines::{
     EngineRoute, ENGINES_PATH, ENGINE_METHODS,
 };
 pub use jinn_engine::{engine_contract, engines_in, EngineSlot};
+pub use jinn_session::{store_contract, stores_in, StoreSlot};
+pub use sessions::{
+    decode_session_answer, is_sessions_path, no_such_store, session_api_error, session_payload,
+    session_route, store_list, store_routable, SessionRoute, StoreEntry, StoreList, SESSIONS_PATH,
+    SESSION_METHODS,
+};
 
 pub use kernel::{
     decode_last_seq, decode_profile_answer, decode_profile_document, decode_profile_entry,

@@ -13,6 +13,43 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
+Phase 2.4 (in progress) — kernel pin `3a8e5c0` (M2-K9). The sessions seam
+(`plugins/sessions/`) is the fourth core-port seam and the first that
+COMPOSES another: its definition (`jinn-session`) binds a session to the
+ENGINES definition, so a store drives `jinn:engine.<id>` and neither seam
+knows the other's provider. Landed this round: the definition — the
+contract vocabulary, the durable journal's record law and its honest
+replay (a turn reads back `done` only where a terminal record was
+written; a started turn with no ending replays `interrupted`, and
+`running` cannot be produced from a file at all), and `Sessions`, the
+registry every store shares. The store providers, the API routes, the kit
+and the real-composition proofs are the next round's.
+
+Pin-bump 8 (`3fd7b05` → `3a8e5c0`) closed `FINDINGS.md` #31: a
+reply-expecting dispatch to a fiber that owes a change now REFUSES typed
+and ledgered, and `jinn:introspect` 0.2.0 answers the same state. The
+settings-recovery test it blocked is still `#[ignore]`d — the bump made
+the NEXT defect reachable, logged as #32 (entry 4's nested-dispatch
+deadlock, with two transcripts at last, and the half entry 4 never named:
+the fiber that loses it may never come back).
+
+The distribution's wire law now has one home (`jinn_settings::wire`)
+instead of two halves in two seams.
+
+### Phase 2.4 — kernel pin `3a8e5c0` (M2-K9): sessions, the first seam that
+COMPOSES another. A definition (`jinn-session`) whose contract name
+carries the store id, so several stores are live at once; `jinn-session-fs`
+keeping one append-only JSONL journal per session over `jinn:fs` and
+replaying it honestly on activate; `jinn-session-memory` as the ephemeral
+store — a genuine use, and the swap proof. NEITHER spawns an engine:
+both inject the engines seam's DEFINITION and drive whatever answers,
+which is the layering the phase is for. The operator API gains the
+sessions surface, and `session-kit` builds the profile. Restart honesty is
+an ORDERING, not a recovery pass: the `turn-started` record lands before
+any engine is asked for anything, so a daemon killed mid-turn comes back
+with that turn `interrupted` and a reason — proven by SIGKILLing a daemon
+with a child-backed run in flight (`tests/composition/tests/sessions.rs`).
+
 Phase 2.3 — kernel pin `3fd7b05` (M2-K8): the keystore, and engines.
 The engines seam (`plugins/engines/`) is the third core-port seam: a
 definition (`jinn-engine`) whose contract name carries the engine id, so
@@ -60,6 +97,7 @@ iteration channel — kernel changes are never made here).
 | `tools/cron-kit` | Builds the cron seam's components + pinned profile; its library is the kit machinery every seam kit shares |
 | `tools/api-kit` | Builds the operator-API profile: the api trio beside the cron seam |
 | `tools/engine-kit` | Builds the engines profile: the engine providers and the probe beside the api trio |
+| `tools/session-kit` | Builds the sessions profile: the two store providers beside the engine providers |
 | `plugins/` | First-party plugin crates (wasm components) — land per phase, one seam triple at a time |
 | `profiles/` | Named plugin trees — a product is a profile |
 | `tests/composition` | Real-composition gates: boot generated profiles through the REAL pinned jinnd daemon |

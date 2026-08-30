@@ -9,8 +9,10 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 mod schema;
+mod wire;
 
 pub use schema::{validate, Field, Kind, Schema};
+pub use wire::{decode_with_rest, encode_with_rest, optional, put, required, Additive};
 
 /// The schema version every answer carries.
 pub const API_VERSION: &str = "0.1.0";

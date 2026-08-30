@@ -8,9 +8,9 @@ itself in agreement.
 
 ```
 repo: https://github.com/hristo2612/jinnd
-commit: 3fd7b053ff3bf8155d89dcb5614e8a3f46d06a36
-wit-hash: sha256:cacb1591723a8cfa5d60cc2e2189627853ca6dc996f825bbde78e3320c6ab837
-contracts-hash: sha256:027fc18fabad0824171363383192ffdcd4561533ab17322e73dbc87dd1ad5d7d
+commit: 3a8e5c03fdbe2f21144faee8daba73beeb75d8b4
+wit-hash: sha256:dd355cdbc05e35f1bed15259aeba1e8b42a3469dc8bde37d5a22a1e138aaa9a9
+contracts-hash: sha256:36f264d682b7c01fe3e67cc6ca7b0dd458e9ba572a5abc5164672b62c8d8364e
 ```
 
 `wit-hash` covers `wit/` (the `jinn:plugin` world). `contracts-hash` covers

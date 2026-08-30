@@ -16,6 +16,9 @@ license = "MIT"
 publish = false
 
 [dependencies]
+# The sessions seam's reason strings and vocabulary, asserted verbatim
+# from their one home rather than spelled again in a test.
+jinn-session = { path = "../../plugins/sessions/jinn-session" }
 harness-pin = { path = "../../tools/harness-pin" }
 jinn-api = { path = "../../plugins/api/jinn-api" }
 jinn-cron = { path = "../../plugins/cron/jinn-cron" }
