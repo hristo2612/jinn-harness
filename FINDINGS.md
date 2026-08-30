@@ -1535,10 +1535,18 @@ not as a reproduced defect. A card should start by measuring it.
 Recorded here because the honest limit of a proof belongs beside the
 frictions, not buried in a test:
 
-- **No vendor engine ran under a Todo in this round**, for the reason the
-  sessions seam gives below: the "same Todo over another engine" proof
-  runs over the two engine PROVIDER SHAPES that exist on every host. The
-  three-layer composition is the same one field either way.
+- **A vendor engine under a Todo runs only where an operator asks for
+  one by name.** `tests/composition/tests/todos.rs::the_same_dispatch_runs_over_a_vendor_engine_when_the_operator_names_one`
+  binds a real vendor CLI as the second leg of the three-layer proof,
+  changing the engine field and nothing else. It is gated on
+  `JINN_HARNESS_TODO_VENDOR_ENGINE` because it spends metered inference
+  under the operator's own authentication, so it self-skips in CI (and
+  says so loudly) exactly as the pinned-daemon gate does without a jinnd
+  checkout. A SKIP proves nothing and is never summarized as a pass; an
+  engine that is named and not mounted FAILS rather than skipping. The
+  echo and child-backed legs remain, and on their own they prove a
+  binding swap between two in-repo providers — not that the stack
+  survives contact with a real CLI.
 - **The torn tail is manufactured, not observed.** `jinn:fs`'s append is
   whole-document atomic (#22), so the suite writes a short document
   behind the daemon's back to produce one. What is proven is the
@@ -1593,11 +1601,35 @@ record become ONE undecodable line — in the middle of the document. A
 Todo that came back fine after one boot refuses to replay at the boot
 after, and the store that holds it fails to activate.
 
-**Evidence.** `tests/composition/tests/todos.rs::a_torn_tail_is_absence_and_the_todo_before_it_survives`,
-which manufactures the tear the way a torn write would leave it (the
-daemon is killed, the document is written short, the daemon is rebooted).
-Before the fix the proof failed at "the appended move to be durable": the
-appended line was there in bytes and gone as a record.
+**Evidence — the mechanism, reproduced.** A tolerable torn TAIL that is
+appended onto stops being a tail: it fuses with the new record into one
+undecodable line in the MIDDLE of the document, which the reader refuses
+by its own law. Deterministic, and named:
+
+```
+$ cargo test -p jinn-todo --lib -- --exact \
+    tests::an_append_onto_a_torn_tail_makes_a_hole_the_reader_refuses --nocapture
+running 1 test
+append-onto-a-tear replays as: journal line 3: a Todo's `status` is a closed surface and REFUSES the value `exec{` rather than dropping or guessing it (it admits backlog | executing | in-review | blocked | done | cancelled) at line 1 column 50
+test tests::an_append_onto_a_torn_tail_makes_a_hole_the_reader_refuses ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 40 filtered out; finished in 0.00s
+```
+
+The test asserts all three readings in one place: the torn document
+replays (absence), the SAME document with one more record appended does
+not (a hole), and the same append onto a HEALED document does. Line 3 is
+the fused line — the tear's bytes and the next record, read as one.
+
+**Evidence — the store path.** `tests/composition/tests/todos.rs::a_torn_tail_is_absence_and_the_todo_before_it_survives`
+drives the same mechanism through the real daemon: it manufactures the
+tear the way a torn write would leave it (the daemon is killed, the
+document is written short, the daemon is rebooted) and then requires the
+next move to be durable. Before the heal existed that proof failed at
+"the appended move to be durable" — the appended line was there in bytes
+and gone as a record. That pre-fix run is NARRATED from the round it
+happened in; the transcript above is the part that is reproducible on
+demand.
 
 **What the harness does meanwhile.** The durable store HEALS the document
 on adoption: a replay that reports `torn_tail_bytes > 0` is followed by a
@@ -1617,14 +1649,18 @@ bytes that are not a record, atomically, without touching the ones that
 are. The kernel already owns the atomic commit path (#22), so this is a
 new operation on an existing mechanism rather than a new mechanism.
 
-*Evidence grade:* **packet-card-ready.** The failure is reproduced by a
-named composition proof, the workaround is in the tree and cited, and the
-shape of the missing operation follows from the contract's own vocabulary.
-The one thing NOT established is how a tear arises through the kernel's
-own commit path: `#22` closed `append` as whole-document atomic, so the
-suite has to manufacture the tear by writing behind the daemon's back.
-Read the entry as "the reader's tolerance has a hole in it" rather than
-as "the kernel tears writes".
+*Evidence grade:* **packet-card-ready — the mechanism is reproduced on
+demand, the store path is narrated.** The transcript above reproduces the
+defect the missing operation would retire, the workaround is in the tree
+and cited, and the shape of that operation follows from the contract's
+own vocabulary. Two things are NOT established and the grade does not
+claim them. First, the pre-fix composition failure is a narrative of the
+round it happened in, not a command a reader can re-run — the heal is in
+the tree, so that proof is green now. Second, how a tear arises through
+the kernel's own commit path: `#22` closed `append` as whole-document
+atomic, so the suite has to manufacture the tear by writing behind the
+daemon's back. Read the entry as "the reader's tolerance has a hole in
+it" rather than as "the kernel tears writes".
 
 ---
 
@@ -1650,8 +1686,9 @@ accordingly (`DISPATCH_DEADLINE` is 120 s against the sessions suite's
 
 **Why it is worth a card even though it is not a defect.** The
 distribution's whole shape is seams composing seams, and this is the
-first measurement of what that costs per layer. Two layers is a bound
-nobody notices. The company ledger over sessions over engines is already
+first place it pays the cost twice. Nothing here is measured: what the
+entry establishes is that the term is ADDITIVE and structural, which is
+read off the two implementations. Two layers is a bound nobody notices. The company ledger over sessions over engines is already
 three; a workflow seam over todos would be four. The additive term is
 structural, not incidental, and it is paid on every answer.
 

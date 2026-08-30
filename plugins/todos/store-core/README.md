@@ -37,6 +37,24 @@ in: where the records live.
   answers `Result<(), TodoError>`; a memory store answers `Ok(())` and
   writes nothing.
 
+## The order every hook is called in
+
+A store calls its journal BETWEEN the definition's two halves, and never
+in any other order:
+
+```rust
+let planned = with_todos(|todos| todos.plan_update(..))?;   // touches nothing
+journal::status_changed(todo_id, &change, now)?;            // durable, or the call ends here
+with_todos(|todos| todos.commit_change(todo_id, &change));  // now the store reports it
+```
+
+That is what makes the state this store reports the state its log holds.
+A refused append answers the caller typed and moves nothing a reader can
+see; a restart then replays exactly what the live view was already
+saying. The definition has no method that advances state and writes
+nothing, so there is no shorter path to get this wrong
+(`jinn_todo::Todos`, module doc).
+
 Note `transition_refused`: a REFUSED move is one of the seven, because
 the attempt is a fact this seam records. A store that only wrote the
 moves it allowed would leave an operator unable to see that something

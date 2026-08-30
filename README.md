@@ -34,6 +34,17 @@ where a terminal record was written; a started dispatch with no ending
 replays `interrupted` with a reason, and `running` cannot be produced
 from a file at all.
 
+**A status this store reports is a status a durable line justifies.**
+Every mutation is three steps in one order: PLAN what would happen
+(nothing is touched), APPEND the record, and only then COMMIT it into
+the registry. So a `jinn:fs` append that refuses leaves the reported
+status exactly where it was, with an unchanged history and a
+byte-identical journal, and a restart replays what the live view was
+already saying — proven by withdrawing `append` from the durable store's
+grant and reading all three
+(`tests/composition/tests/todos.rs::a_status_no_durable_line_justifies_is_never_a_status_this_store_reports`).
+The definition has no method that advances state and writes nothing.
+
 **A Todo is never eternally `executing`.** The round's two defects were
 both found by the real-composition gate, and the first is the one worth
 knowing (`docs/notes/2026-08-30-todos-the-fold-is-not-enough.md`): a
@@ -152,3 +163,14 @@ cargo test --workspace
 
 Plugin crates build to `wasm32` components against the vendored contract
 surface in `kernel-pin/` — never against a live kernel checkout.
+
+### Environment gates on the test suites
+
+Every gate below self-skips LOUDLY when its condition is absent, and a
+skip is never reported, returned, or summarized as a pass.
+
+| Variable | What it turns on |
+|---|---|
+| `JINND_DIR` / `JINND_CLONE_URL` | Where the real-composition suites find a jinnd checkout holding the pinned commit (`KERNEL-PIN.md` Gate 2). Without one, every composition proof skips. |
+| `JINND_READ_TOKEN` | CI's credential for the same checkout; jinnd is private, so CI runs the composition leg only where it is configured. |
+| `JINN_HARNESS_TODO_VENDOR_ENGINE` | The engine id (`claude` or `codex`) the todos seam's vendor leg binds as the second half of the three-layer composition proof. It spends metered inference under the operator's own authentication, so it runs where a person names it and skips everywhere else. An engine that is NAMED and not mounted fails the proof rather than skipping it. |

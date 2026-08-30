@@ -763,6 +763,9 @@ fn an_append_onto_a_torn_tail_makes_a_hole_the_reader_refuses() {
         refused.contains("journal line"),
         "the reader names the line it refused: {refused}"
     );
+    // Printed so a run of this test is a TRANSCRIPT of the defect and
+    // not only a green tick — `FINDINGS.md` #34 quotes this line.
+    eprintln!("append-onto-a-tear replays as: {refused}");
 
     // Healing the tail FIRST — the whole-document rewrite this store does
     // on adoption — is what makes the same append readable.
