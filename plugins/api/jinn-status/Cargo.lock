@@ -165,6 +165,7 @@ version = "0.1.0"
 dependencies = [
  "jinn-engine",
  "jinn-session",
+ "jinn-todo",
  "serde",
  "serde_json",
 ]
@@ -205,6 +206,16 @@ dependencies = [
  "serde",
  "serde_json",
  "wit-bindgen",
+]
+
+[[package]]
+name = "jinn-todo"
+version = "0.1.0"
+dependencies = [
+ "jinn-session",
+ "jinn-settings",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

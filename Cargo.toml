@@ -20,12 +20,14 @@ members = [
     "plugins/engines/jinn-engine-claude-wire",
     "plugins/sessions/jinn-session",
     "plugins/settings/jinn-settings",
+    "plugins/todos/jinn-todo",
     "tests/composition",
     "tools/api-kit",
     "tools/cron-kit",
     "tools/engine-kit",
     "tools/harness-pin",
     "tools/session-kit",
+    "tools/todo-kit",
 ]
 
 [workspace.package]

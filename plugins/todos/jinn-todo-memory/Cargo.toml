@@ -1,0 +1,23 @@
+# The todos seam's EPHEMERAL store provider: the ledger served entirely
+# from this incarnation's memory. A genuine use (throwaway and test
+# ledgers) that doubles as the swap proof, and needs no `jinn:fs` grant at
+# all. Compiles for wasm32-unknown-unknown ONLY and is deliberately NOT a
+# workspace member (see the workspace manifest's note).
+[package]
+name = "jinn-todo-memory"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-session = { path = "../../sessions/jinn-session" }
+jinn-todo = { path = "../jinn-todo" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+wit-bindgen = "0.43.0"
+
+[workspace]

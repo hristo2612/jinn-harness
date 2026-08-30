@@ -21,14 +21,16 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
 use jinn_api::{
-    decode_engine_answer, decode_session_answer, engine_list, engine_routable, engine_route,
-    is_engines_path, is_sessions_path, route, run_id_payload, run_payload, session_payload,
-    session_route, store_list, store_routable, Answer, ApiError, EngineRoute, ErrorCode, Outcome,
-    SessionRoute, ENGINE_METHODS, SESSION_METHODS,
+    decode_engine_answer, decode_session_answer, decode_todo_answer, engine_list, engine_routable,
+    engine_route, is_engines_path, is_sessions_path, is_todos_path, route, run_id_payload,
+    run_payload, session_payload, session_route, store_list, store_routable, todo_payload,
+    todo_route, todo_store_list, todo_store_routable, Answer, ApiError, EngineRoute, ErrorCode,
+    Outcome, SessionRoute, TodoRoute, ENGINE_METHODS, SESSION_METHODS, TODO_METHODS,
 };
 use jinn_api_http_wire::{error_answer_response, error_response, parse, response, Parse};
 use jinn_engine::{engine_contract, OP_DESCRIBE};
 use jinn_session::{store_contract, OP_DESCRIBE as OP_DESCRIBE_STORE};
+use jinn_todo::{store_contract as todo_store_contract, OP_DESCRIBE as OP_DESCRIBE_TODO_STORE};
 use serde::Deserialize;
 
 wit_bindgen::generate!({
@@ -70,6 +72,13 @@ struct HttpConfig {
     /// the same discipline as `engines`.
     #[serde(default)]
     stores: Vec<String>,
+    /// The TODO stores this API may route to, written from the same
+    /// source as this entry's `jinn:todo.<id>` grants. A separate list
+    /// from `stores` because the two seams' ids are independent: a
+    /// composition may hold a `default` Todo store and no `default`
+    /// session store, and neither may stand in for the other.
+    #[serde(default)]
+    todo_stores: Vec<String>,
 }
 
 fn default_host() -> String {
@@ -86,6 +95,7 @@ static LISTENER: AtomicU64 = AtomicU64::new(0);
 static CONNS: Mutex<Vec<Conn>> = Mutex::new(Vec::new());
 static ENGINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static TODO_STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 fn fault(context: &str, error: impl std::fmt::Debug) -> GuestFault {
     GuestFault::Failed(format!("{context}: {error:?}"))
@@ -283,6 +293,74 @@ fn dispatch_sessions(
     })
 }
 
+/// One granted Todo store call: resolve `jinn:todo.<id>`, call it,
+/// decode its answer into this seam's outcome. A store with no provider
+/// mounted is an ordinary typed answer naming it — never a fault.
+fn todo_call(
+    contract: &str,
+    operation: &str,
+    payload: &[u8],
+) -> Result<serde_json::Value, ApiError> {
+    let handle = services::resolve(contract).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Unavailable,
+            format!("{contract} is not resolvable: {error:?}"),
+        )
+    })?;
+    let bytes = services::call(handle, operation, payload).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Refused,
+            format!("{contract}/{operation} refused: {error:?}"),
+        )
+    })?;
+    decode_todo_answer(&bytes)
+}
+
+/// The todos surface: the stores this API may route to, and one Todo's
+/// life in one of them. Every route is exactly one granted contract call
+/// per store addressed.
+fn dispatch_todos(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> Vec<u8> {
+    let Some(todos_route) = todo_route(method, path) else {
+        return route_miss(
+            TODO_METHODS
+                .iter()
+                .any(|candidate| todo_route(candidate, path).is_some()),
+        );
+    };
+    let stores = TODO_STORES.lock().unwrap().clone();
+    let outcome = match &todos_route {
+        TodoRoute::Stores => Ok(serde_json::to_value(todo_store_list(stores.iter().map(
+            |store| {
+                (
+                    store.clone(),
+                    todo_call(&todo_store_contract(store), OP_DESCRIBE_TODO_STORE, &[]),
+                )
+            },
+        )))
+        .expect("encodes")),
+        _ => {
+            let store = todos_route.store().expect("a call route names its store");
+            let operation = todos_route
+                .operation()
+                .expect("a call route names its operation");
+            todo_store_routable(&stores, store).and_then(|contract| {
+                let document = if todos_route.takes_body() {
+                    json_object(body)?
+                } else {
+                    query
+                };
+                let payload =
+                    serde_json::to_vec(&todo_payload(&todos_route, document)).expect("encodes");
+                todo_call(&contract, operation, &payload)
+            })
+        }
+    };
+    answered(&match outcome {
+        Ok(value) => Answer::ok(value),
+        Err(error) => Answer::error(error),
+    })
+}
+
 /// One request → one contract call → one response.
 fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> Vec<u8> {
     // The engines surface is routed first: its paths carry two
@@ -295,6 +373,11 @@ fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> 
     // store id and a session id, on a per-store contract.
     if is_sessions_path(path) {
         return dispatch_sessions(method, path, query, body);
+    }
+    // And the todos surface, for the same reason again: a store id, a
+    // Todo id, and a per-store contract.
+    if is_todos_path(path) {
+        return dispatch_todos(method, path, query, body);
     }
     let Some((route, id)) = route(method, path) else {
         return route_miss(
@@ -443,6 +526,7 @@ impl Guest for Http {
         CONNS.lock().unwrap().clear();
         *ENGINES.lock().unwrap() = config.engines;
         *STORES.lock().unwrap() = config.stores;
+        *TODO_STORES.lock().unwrap() = config.todo_stores;
         Ok(())
     }
 

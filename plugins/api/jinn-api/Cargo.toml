@@ -20,5 +20,6 @@ jinn-engine = { path = "../../engines/jinn-engine" }
 # The sessions seam's operation names, contract names and error
 # vocabulary, borrowed from their one home rather than spelled again.
 jinn-session = { path = "../../sessions/jinn-session" }
+jinn-todo = { path = "../../todos/jinn-todo" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

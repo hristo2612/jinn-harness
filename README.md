@@ -13,7 +13,53 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
-Phase 2.4 (in progress) — kernel pin `3a8e5c0` (M2-K9). The sessions seam
+Phase 2.5 — kernel pin `3a8e5c0` (M2-K9), UNCHANGED. The todos seam
+(`plugins/todos/`) is the fifth core-port seam and the first that is
+THREE layers deep: a Todo is dispatched to a SESSION through the
+`jinn-session` DEFINITION, and the session drives an engine through
+the engines definition, so `jinn:todo.<store>` ->
+`jinn:session.<store>` -> `jinn:engine.<id>` composes with no layer
+naming the next one's provider. The layering is enforced by
+AUTHORITY: a Todo store's entry is granted no `jinn:engine.<id>` at
+all.
+
+The ledger honesty this seam owes is by construction, not by a
+provider remembering. A status move is legal or REFUSED from an
+explicit table that is nowhere near any-status-to-any-status (a
+producer does not close their own work; a terminal status has no
+exit), the refusal is typed with the attempted `from -> to` as DATA,
+and `Todos::plan_update` answers a refusal carrying its own record — so no
+code path refuses without recording. A dispatch reads back `done` only
+where a terminal record was written; a started dispatch with no ending
+replays `interrupted` with a reason, and `running` cannot be produced
+from a file at all.
+
+**A status this store reports is a status a durable line justifies.**
+Every mutation is three steps in one order: PLAN what would happen
+(nothing is touched), APPEND the record, and only then COMMIT it into
+the registry. So a `jinn:fs` append that refuses leaves the reported
+status exactly where it was, with an unchanged history and a
+byte-identical journal, and a restart replays what the live view was
+already saying — proven by withdrawing `append` from the durable store's
+grant and reading all three
+(`tests/composition/tests/todos.rs::a_status_no_durable_line_justifies_is_never_a_status_this_store_reports`).
+The definition has no method that advances state and writes nothing.
+
+**A Todo is never eternally `executing`.** The round's two defects were
+both found by the real-composition gate, and the first is the one worth
+knowing (`docs/notes/2026-08-30-todos-the-fold-is-not-enough.md`): a
+DERIVED status — the sessions seam's discipline, correct there — leaves
+the ledger unusable the moment the status is an ARGUMENT and not just an
+answer. An operator was shown `blocked` and refused every move `blocked`
+admits, because the record still stood at `executing`. Adoption now
+RECORDS the recovery as a real status-changed line: a new event appended
+after the ones already there, never an edit, carrying the dispatch's
+reason and no actor. The second defect: a torn tail was tolerated on read
+and then appended past, fusing into an unreadable hole — the store now
+heals the document and reports `healed-tails`. `FINDINGS.md` #34 and #35
+are the kernel side.
+
+### Phase 2.4 — kernel pin `3a8e5c0` (M2-K9). The sessions seam
 (`plugins/sessions/`) is the fourth core-port seam and the first that
 COMPOSES another: its definition (`jinn-session`) binds a session to the
 ENGINES definition, so a store drives `jinn:engine.<id>` and neither seam
@@ -36,8 +82,7 @@ the fiber that loses it may never come back).
 The distribution's wire law now has one home (`jinn_settings::wire`)
 instead of two halves in two seams.
 
-### Phase 2.4 — kernel pin `3a8e5c0` (M2-K9): sessions, the first seam that
-COMPOSES another. A definition (`jinn-session`) whose contract name
+Sessions, the first seam that COMPOSES another. A definition (`jinn-session`) whose contract name
 carries the store id, so several stores are live at once; `jinn-session-fs`
 keeping one append-only JSONL journal per session over `jinn:fs` and
 replaying it honestly on activate; `jinn-session-memory` as the ephemeral
@@ -98,6 +143,7 @@ iteration channel — kernel changes are never made here).
 | `tools/api-kit` | Builds the operator-API profile: the api trio beside the cron seam |
 | `tools/engine-kit` | Builds the engines profile: the engine providers and the probe beside the api trio |
 | `tools/session-kit` | Builds the sessions profile: the two store providers beside the engine providers |
+| `tools/todo-kit` | Builds the todos profile: the two Todo stores above the two session stores |
 | `plugins/` | First-party plugin crates (wasm components) — land per phase, one seam triple at a time |
 | `profiles/` | Named plugin trees — a product is a profile |
 | `tests/composition` | Real-composition gates: boot generated profiles through the REAL pinned jinnd daemon |
@@ -117,3 +163,14 @@ cargo test --workspace
 
 Plugin crates build to `wasm32` components against the vendored contract
 surface in `kernel-pin/` — never against a live kernel checkout.
+
+### Environment gates on the test suites
+
+Every gate below self-skips LOUDLY when its condition is absent, and a
+skip is never reported, returned, or summarized as a pass.
+
+| Variable | What it turns on |
+|---|---|
+| `JINND_DIR` / `JINND_CLONE_URL` | Where the real-composition suites find a jinnd checkout holding the pinned commit (`KERNEL-PIN.md` Gate 2). Without one, every composition proof skips. |
+| `JINND_READ_TOKEN` | CI's credential for the same checkout; jinnd is private, so CI runs the composition leg only where it is configured. |
+| `JINN_HARNESS_TODO_VENDOR_ENGINE` | The engine id (`claude` or `codex`) the todos seam's vendor leg binds as the second half of the three-layer composition proof. It spends metered inference under the operator's own authentication, so it runs where a person names it and skips everywhere else. An engine that is NAMED and not mounted fails the proof rather than skipping it. |

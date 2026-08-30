@@ -71,6 +71,7 @@ dependencies = [
  "jinn-cron",
  "jinn-session",
  "jinn-settings",
+ "jinn-todo",
  "rusqlite",
  "serde_json",
 ]
@@ -265,6 +266,7 @@ version = "0.1.0"
 dependencies = [
  "jinn-engine",
  "jinn-session",
+ "jinn-todo",
  "serde",
  "serde_json",
 ]
@@ -328,6 +330,16 @@ dependencies = [
 name = "jinn-settings"
 version = "0.1.0"
 dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jinn-todo"
+version = "0.1.0"
+dependencies = [
+ "jinn-session",
+ "jinn-settings",
  "serde",
  "serde_json",
 ]
@@ -554,6 +566,20 @@ dependencies = [
  "once_cell",
  "rustix",
  "windows-sys",
+]
+
+[[package]]
+name = "todo-kit"
+version = "0.1.0"
+dependencies = [
+ "api-kit",
+ "cron-kit",
+ "engine-kit",
+ "jinn-cron",
+ "jinn-session",
+ "jinn-todo",
+ "serde_json",
+ "session-kit",
 ]
 
 [[package]]
