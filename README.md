@@ -13,7 +13,30 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
-Phase 2.3 — kernel pin `3fd7b05` (M2-K8): the keystore, and engines.
+Phase 2.4 (in progress) — kernel pin `3a8e5c0` (M2-K9). The sessions seam
+(`plugins/sessions/`) is the fourth core-port seam and the first that
+COMPOSES another: its definition (`jinn-session`) binds a session to the
+ENGINES definition, so a store drives `jinn:engine.<id>` and neither seam
+knows the other's provider. Landed this round: the definition — the
+contract vocabulary, the durable journal's record law and its honest
+replay (a turn reads back `done` only where a terminal record was
+written; a started turn with no ending replays `interrupted`, and
+`running` cannot be produced from a file at all), and `Sessions`, the
+registry every store shares. The store providers, the API routes, the kit
+and the real-composition proofs are the next round's.
+
+Pin-bump 8 (`3fd7b05` → `3a8e5c0`) closed `FINDINGS.md` #31: a
+reply-expecting dispatch to a fiber that owes a change now REFUSES typed
+and ledgered, and `jinn:introspect` 0.2.0 answers the same state. The
+settings-recovery test it blocked is still `#[ignore]`d — the bump made
+the NEXT defect reachable, logged as #32 (entry 4's nested-dispatch
+deadlock, with two transcripts at last, and the half entry 4 never named:
+the fiber that loses it may never come back).
+
+The distribution's wire law now has one home (`jinn_settings::wire`)
+instead of two halves in two seams.
+
+### Phase 2.3 — kernel pin `3fd7b05` (M2-K8): the keystore, and engines.
 The engines seam (`plugins/engines/`) is the third core-port seam: a
 definition (`jinn-engine`) whose contract name carries the engine id, so
 several providers are live at once; `jinn-engine-claude` and

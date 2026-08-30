@@ -37,7 +37,13 @@ live composition can permanently lose a contract with no fault, no
 refusal, and no log line. Entry 31 was hit adopting the same pin in the
 settings seam and is the entry-26 closure's shadow: the non-blocking
 `patch-entry` is right, and it turned a concealed dispatch hazard into a
-live one.
+live one; it is **closed** as of the `3a8e5c0` pin bump (jinnd M2-K9).
+Entry 32 was hit adopting that pin (phase 2.4) on the path entry 31 used
+to cut short: it gives entry 4's nested-dispatch deadlock its first real
+transcripts, shows that `Emit` blocks the emitter exactly as serial does,
+and adds the half entry 4 never named — whether the fiber that loses the
+deadlock ever comes back is incidental, and when it does not, its alarm
+writes two ledger rows per period forever.
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -1328,3 +1334,141 @@ with the exact call, the exact deadline and the exact ledger sequence;
 independently reproduced by the verifier. The harness has no remaining
 move here: this entry stays open, with its proof ignored and named, until
 the kernel packet lands.
+
+**Closed 2026-08-30 — retired by pin `3a8e5c0` (jinnd M2-K9).** A
+reply-expecting dispatch aimed at a fiber that already owes a change is
+now REFUSED, typed (`restarting` / `gone` / `suspended` / `stalled`,
+each with a `refused-target`) and ledgered, before any listener runs; and
+`jinn:introspect` 0.2.0 answers the same state as `entry.unserved` from
+the same snapshot, so ASKING and BEING REFUSED cannot disagree. The stall
+this entry describes is gone on the exact path that produced it:
+`the_shadowed_refusals_recovery_lands_when_executed` at pin `3a8e5c0`
+runs the ENTRY-layer patch that used to die on the 45 s request bound and
+it now ANSWERS — ledger seq **223** `patch-entry`, **224**
+`ProfilePatched`, **236/237** the operator's response written and the
+socket closed, **244–247** the scheduler's restart, **250** the
+successor's `declare` (`target/composition/runs/settings-recovery-26570`,
+this round's transcript). At pin `3fd7b05` that same call never reached
+236.
+
+The harness workaround this entry called insufficient — the settings
+provider choosing its dispatch mode from the layer it just wrote — is
+KEPT, and no longer as a workaround: `Emit` on the restart path is the
+semantically right notice (the successor re-declares on its own wake and
+has nothing to answer with), and it now costs nothing to be wrong about,
+because a `Serial` there would be refused typed rather than hang. It is
+no longer load-bearing. It does not make the notice SAFE, either — entry
+32 shows an `Emit` deadlocking against an owner that is merely busy — but
+that is a different gap, and no dispatch mode avoids it.
+
+The test does NOT pass at this pin, and it is honest to say why: it now
+gets FURTHER and dies later, on a different kernel gap — the
+nested-dispatch deadlock of entry 4, which entry 31's stall used to mask
+by killing the test before it could be reached. That is entry **32**, and
+the `#[ignore]` on this test now names 32 rather than this entry.
+
+## 32. A settings owner's `declare` and the provider's `changed` notice deadlock each other — and whether the loser comes back is luck
+
+Hit adopting `3a8e5c0` (jinnd M2-K9), on the path entry 31's stall used
+to cut short. It is entry **4**'s class — nested dispatch — but entry 4
+was graded *structural, not yet a runnable transcript, not independently
+reproduced*. It is reproducible now, twice, on the real daemon, with
+ledger sequences; and the two transcripts together say two things entry 4
+does not.
+
+**The deadlock.** `jinn-settings-profile` serves the operator's `PATCH`
+and, having applied it, emits `jinn:settings/changed` to the namespace's
+owner. The owner (`cron-scheduler`) re-declares its namespace on EVERY
+alarm wake — the healing mechanism entry 26 records the reason for —
+which is a `services.call` into that same provider instance. When the two
+overlap, the owner is parked on the provider's busy supervisor channel
+and the provider is parked awaiting delivery into the owner. Both die on
+the 5 s guest deadline, and so does the operator's request behind them.
+
+This is not a rare interleaving: the suite kit wakes the scheduler every
+250 ms and it declares on every wake, so any patch is a coin flip against
+it. The two transcripts caught it at different patches — one on the
+restart path, one on the hot path — which is the point: the collision is
+with the owner's cadence, not with a layer.
+
+**`Emit` does not help, and one transcript proves it.** The provider
+sends the restart-path notice `DispatchMode::Emit` precisely because the
+successor re-declares on its own wake and owes no answer. Run `36182`
+deadlocked on exactly that emit. The kernel awaits every listener
+delivery end-to-end in every mode — `jinnd-events/src/dispatch.rs:43`
+and `jinnd-wasm/src/topics.rs:245` both `await target.deliver(...)` —
+so fire-and-forget discards the ANSWER, never the WAIT. M2-K9's refusal
+does not apply either: the owner owes no transition, it is merely BUSY.
+
+**Whether the deadlocked fiber recovers is incidental.** In run `36182`
+the patch was aimed at the owner's own entry, so the loader already owed
+it a restart; the deadline killed the instance and the pending restart
+rebuilt it (seq **230** `EffectWithdrawn`, and on to a live successor).
+In run `26570` the patch was aimed at the STORE entry and the owner was
+collateral — nothing owed it anything, and nothing came for it:
+
+```
+311 cron-scheduler {"ErrorRecorded":{"error":{"code":"PluginFailed","message":"guest exceeded its call deadline"}}}
+312 cron-scheduler {"AlarmWake":{"alarm":5}}
+313 cron-scheduler {"ErrorRecorded":{"error":{"code":"PluginFailed","message":"the instance is gone"}}}
+314 cron-scheduler {"AlarmWake":{"alarm":5}}
+315 cron-scheduler {"ErrorRecorded":{"error":{"code":"PluginFailed","message":"the instance is gone"}}}
+…  the pair repeats every 250 ms to the end of the transcript (seq 627+)
+```
+
+No `FiberTransition` to `Failed`, no teardown, no restart, no bound: the
+armed alarm outlives the instance it wakes and converts itself into two
+ledger rows per period for as long as the daemon lives. R11 says a
+failing plugin deactivates itself and its dependents cleanly; this one
+deactivates nothing and writes forever. The operator sees a scheduler
+that has silently stopped scheduling and a ledger growing at 8 rows per
+second. That a config restart happened to rescue the other run is luck,
+not a mechanism.
+
+**Evidence.** `tests/composition/tests/settings.rs`
+`the_shadowed_refusals_recovery_lands_when_executed` at pin `3a8e5c0`,
+twice, in separate daemons.
+
+- `target/composition/runs/settings-recovery-36182` (restart path, the
+  test's FIRST patch): **219** `ContractCall jinn:settings patch`, **223**
+  `patch-entry`, **224** `AlarmWake` on `cron-scheduler`, **226** its
+  `ContractCall jinn:settings declare` into the busy provider, **227**
+  `ProfilePatched cron-scheduler`, **228** `jinn-api-http … guest
+  exceeded its call deadline`, **229** the same on `cron-scheduler`,
+  **230** the pending restart's `EffectWithdrawn`.
+- `target/composition/runs/settings-recovery-26570` (hot path, the test's
+  overlay patch, and the run that does not recover): **292** `patch`,
+  **297** `AlarmWake`, **298–299** `declare`, **300** `ProfilePatched
+  jinn-settings-store`, **309** and **311** the two deadlines, and from
+  **313** the unbounded `instance is gone` loop.
+
+In both, the operator's `PATCH /v1/settings/cron` dies on the suite's
+45 s bound (`tests/composition/src/api.rs:68`, `WouldBlock`).
+
+**What the harness can do: nothing honest.** The provider cannot know
+whether a listener is currently calling it, and the guest world has no
+deferral primitive to move the notice off the call. Slowing the owner's
+declare cadence shrinks the window without closing it, and buys the
+shrink by making a provider swap heal slower — trading one correctness
+gap for another. The seam is boxed in.
+
+**Packet-card shape.** Two pieces, and the second is the urgent one.
+(a) Reentrancy: a dispatch whose target instance is BUSY SERVING THE
+EMITTER is a deadlock the kernel can see at the one dispatch point it
+already owns — refuse it typed (`busy`, beside M2-K9's four) so the
+emitter can drop the notice, or queue it for delivery once the current
+call returns. Entry 4's card asked for this; it now has its transcripts.
+(b) Recovery: a fiber whose instance died on a deadline must reach a
+terminal transition and release its kernel registrations, or be
+restarted. An armed alarm outliving its instance is an unbounded
+ledger-write loop with no fault recorded anywhere — the same shape as
+entry 30, a live composition losing something for good with no fault, no
+refusal, and no line saying so.
+
+*Evidence grade:* packet-card-ready. Reproduced twice at pin `3a8e5c0` on
+the real daemon, in separate daemons and at different points of the same
+test, with exact calls, deadlines and ledger sequences; the kernel-side
+mechanism is named in source (`jinnd-events/src/dispatch.rs`,
+`jinnd-wasm/src/topics.rs`). The test that produces it stays in the
+suite, `#[ignore]`d and naming this entry — nothing in its body is
+relaxed.

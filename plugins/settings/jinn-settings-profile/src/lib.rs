@@ -262,15 +262,18 @@ fn patch(payload: &[u8]) -> Result<Patched, SettingsError> {
     };
     // The owner absorbs the HOT layer in place from this event, so the
     // answer waits for it (serial). On the RESTART path the notice is
-    // fire-and-forget: the owner re-declares on its own wake either way,
-    // and since pin `3fd7b05` the patch does not await the restart it
-    // schedules (FINDINGS.md #26), so a serial delivery here would be
-    // aimed at a fiber the loader is replacing underneath it — the
-    // dispatch waits for an incarnation that is waiting to be swapped,
-    // and the operator's call stalls to its deadline. The blocking
-    // `patch-entry` used to hide this by finishing the restart first.
-    // FINDINGS.md #31 — this is a workaround, and it is only correct
-    // because this provider KNOWS which layer it just wrote.
+    // fire-and-forget: the successor re-declares on its own wake and has
+    // nothing to answer with, so there is no reply to wait for.
+    //
+    // This used to be a WORKAROUND for FINDINGS.md #31 — a serial
+    // dispatch aimed at a fiber the loader was replacing stalled to the
+    // guest deadline, and this provider could only dodge it because it
+    // knows which layer it just wrote. #31 is CLOSED at pin `3a8e5c0`
+    // (jinnd M2-K9): such a dispatch is now refused typed and ledgered.
+    // The choice stays because it is the right notice on its own merits,
+    // not because it is load-bearing — and it was never a shield against
+    // FINDINGS.md #32, where an `Emit` deadlocks against an owner that is
+    // merely busy. No dispatch mode avoids that one.
     let notice = match plan.applied {
         Applied::Hot => DispatchMode::Serial,
         Applied::Restart => DispatchMode::Emit,

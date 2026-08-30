@@ -602,23 +602,31 @@ fn a_patch_reports_exactly_what_the_next_get_resolves_in_both_orders() {
 /// the key gone from the settings, from both layers, and from both
 /// entries of the document of record.
 ///
-/// IGNORED, tracked, not weakened. The recovery this test executes is an
-/// ENTRY-layer patch, so it takes the loader's restart path, and a serial
-/// dispatch aimed at a fiber with a pending restart neither queues nor
-/// refuses — it waits out the guest deadline and the operator's PATCH
-/// never answers (`WouldBlock` at the suite's request bound). That is
-/// FINDINGS.md #31, and it is a KERNEL gap: no `Restarting` refusal, no
-/// ledger row, no way for a guest to ask. The harness workaround (the
-/// provider choosing its dispatch mode from the layer it wrote) is
-/// insufficient and this test is the proof that it is. The fix is jinnd
-/// M2-K9 (PLA-318), which makes such a dispatch refuse typed and
-/// ledgered; PLA-318's acceptance removes this attribute and closes
-/// FINDINGS.md #31, so the gap cannot be forgotten. Nothing in the test
-/// body is relaxed: it is the same assertion, waiting for the kernel.
+/// IGNORED, tracked, not weakened — and the blocker has MOVED. At pin
+/// `3fd7b05` this test died at its first entry-layer patch: a serial
+/// dispatch aimed at a fiber with a pending restart neither queued nor
+/// refused, so the operator's PATCH never answered (FINDINGS.md #31).
+/// jinnd M2-K9 (pin `3a8e5c0`) closed that — the same patch now answers,
+/// and #31 carries the ledger sequence proving it.
+///
+/// What blocks the test now is FINDINGS.md #32, reached only because #31
+/// no longer kills it first: the namespace's owner re-declares on every
+/// alarm wake, which is a call INTO the provider that is at that moment
+/// dispatching a `changed` notice INTO the owner. Each is parked on the
+/// other and both die on the guest deadline — entry 4's nested-dispatch
+/// class, with a transcript at last. No dispatch mode avoids it (`Emit`
+/// awaits delivery exactly as serial does) and the harness has no move: a
+/// provider cannot know whether a listener is currently calling it. Since
+/// the owner's cadence decides whether the two overlap, the test is a
+/// coin flip rather than reliably red, which is its own reason not to
+/// leave it running. Nothing in the body is relaxed: it is the same
+/// assertion, waiting for the kernel.
 #[test]
-#[ignore = "blocked on jinnd M2-K9 / PLA-318 (FINDINGS.md #31): a serial dispatch \
-            to a fiber with a pending restart stalls to the guest deadline instead \
-            of refusing, so the entry-layer recovery's PATCH never answers"]
+#[ignore = "blocked on FINDINGS.md #32 (entry 4's class, jinnd card pending): the \
+            owner's periodic `declare` and the provider's `changed` notice park on \
+            each other and both die on the guest deadline, so the PATCH behind them \
+            never answers. FINDINGS.md #31, this test's previous blocker, is CLOSED \
+            at pin 3a8e5c0"]
 fn the_shadowed_refusals_recovery_lands_when_executed() {
     let Some((daemon, port)) = booted("settings-recovery") else {
         return;
