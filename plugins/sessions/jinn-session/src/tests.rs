@@ -268,3 +268,79 @@ fn every_closed_variant_round_trips_through_its_own_encoding() {
         );
     }
 }
+
+#[test]
+fn a_journal_that_claims_a_live_turn_is_refused_not_believed() {
+    // The WRITER refuses `running` (`Record::turn_ended`), so this line
+    // cannot come from this seam. It can come from a corrupted byte, a
+    // half-migrated document, or a future version that means something
+    // else by it — and a reader that believes it hands back a session
+    // eternally "working" that nothing will ever finish. The dangerous
+    // answer needs proof, so the READER refuses it too. The turn is
+    // properly STARTED here: the only thing wrong with this document is
+    // the status on its ending.
+    let mut hostile = Record::turn_started("t1", "hello", 3);
+    hostile.kind = Kind::TurnEnded;
+    hostile.status = Some(TurnStatus::Running);
+    hostile.message = None;
+    let claimed_live = document(&[
+        Record::created(spec("echo"), 1),
+        Record::turn_started("t1", "hello", 2),
+        hostile,
+    ]);
+    let refused = replay(&claimed_live).expect_err("a live turn is not an ending");
+    assert!(
+        refused.contains("journal line 3") && refused.contains("Running"),
+        "the refusal names the line and what it claimed: {refused}"
+    );
+    // The same document WITHOUT that line replays clean, which is what
+    // makes the refusal above attributable to the status and to nothing
+    // else.
+    let honest = document(&[
+        Record::created(spec("echo"), 1),
+        Record::turn_started("t1", "hello", 2),
+    ]);
+    assert_eq!(
+        replay(&honest).expect("a started turn").turns[0].status,
+        TurnStatus::Interrupted
+    );
+}
+
+#[test]
+fn a_terminal_record_with_no_reason_keeps_the_conservative_one() {
+    // A non-`done` ending carries a reason by the registry's rule
+    // (`Sessions::end_turn`). A journal line that ends one WITHOUT a
+    // reason is not proof that there was none: the reader keeps the
+    // conservative reason the started turn already carried rather than
+    // reporting an ending nobody can explain.
+    let mut ended = Record::turn_started("t1", "hello", 3);
+    ended.kind = Kind::TurnEnded;
+    ended.status = Some(TurnStatus::Failed);
+    ended.message = None;
+    let replayed = replay(&document(&[
+        Record::created(spec("echo"), 1),
+        Record::turn_started("t1", "hello", 2),
+        ended,
+    ]))
+    .expect("a complete journal");
+    let turn = &replayed.turns[0];
+    assert_eq!(turn.status, TurnStatus::Failed);
+    assert_eq!(
+        turn.reason.as_deref(),
+        Some(INTERRUPTED_REASON),
+        "an ending with no reason keeps the one the turn already had"
+    );
+    // A `done` needs no reason and gets none: it is the one status whose
+    // whole claim is that the answer is there.
+    let mut done = Record::turn_started("t1", "hello", 3);
+    done.kind = Kind::TurnEnded;
+    done.status = Some(TurnStatus::Done);
+    done.message = None;
+    let replayed = replay(&document(&[
+        Record::created(spec("echo"), 1),
+        Record::turn_started("t1", "hello", 2),
+        done,
+    ]))
+    .expect("a complete journal");
+    assert_eq!(replayed.turns[0].reason, None);
+}

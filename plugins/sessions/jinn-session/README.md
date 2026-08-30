@@ -79,10 +79,18 @@ detectable.
 from the absence of a contradiction.**
 
 - Every `turn-started` opens its turn as `interrupted`, carrying
-  `INTERRUPTED_REASON`. Only a `turn-ended` record moves it. There is no
-  code path where an unfinished turn is left `running`, because `running`
-  is never written into the journal at all — `Record::turn_ended` REFUSES
-  a non-terminal status.
+  `INTERRUPTED_REASON`. Only a `turn-ended` record moves it, and only to a
+  TERMINAL status: `Record::turn_ended` refuses to write a non-terminal
+  one, and `replay` refuses to read one back. Both halves are needed — the
+  writer's refusal makes `running` unwritable by this seam, and the
+  reader's makes it unreachable from a document this seam did not write
+  (a corrupted byte, a half-migrated log). `running` is therefore
+  impossible from a replay by CONSTRUCTION rather than by the writer's
+  good behaviour alone.
+- A terminal ending that carries no `reason` does not erase the one the
+  started turn already had: absence of a reason is not proof that there
+  was none, so the conservative one stands. `done` is the exception and
+  needs none — its whole claim is the answer itself.
 - A trailing unterminated line is a torn TAIL and reads as ABSENCE (the
   half-written turn is simply not there), with its byte count reported
   rather than swallowed. An undecodable line ANYWHERE ELSE is a hole, not

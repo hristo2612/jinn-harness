@@ -16,6 +16,10 @@
 //!   opens every turn as interrupted and only a terminal record can move
 //!   it. `Running` is unreachable from here — a replayed session can never
 //!   claim to be working.
+//! - A `turn-ended` line whose status is not terminal is REFUSED, not
+//!   believed: the writer cannot produce one, so a document that holds
+//!   one is corrupt, and `Running` stays unreachable from a replay by
+//!   construction rather than by the writer's good behaviour alone.
 //! - A line that does not decode is not a record. The reader admits a
 //!   torn TAIL — the last line, written short — as ABSENCE, because a
 //!   half-written turn must read as "absent or complete" and never as a
@@ -255,6 +259,18 @@ fn apply(replayed: &mut Replayed, record: Record, line: usize) -> Result<(), Str
             let status = record
                 .status
                 .ok_or_else(|| format!("journal line {line}: an ended turn carries a status"))?;
+            // The WRITER refuses a non-terminal ending
+            // (`Record::turn_ended`), so the READER refuses one too. A
+            // line that claims a turn ended `running` did not come from
+            // this seam, and believing it would hand back a session
+            // eternally in flight that nothing will ever finish — the
+            // exact lie the honesty law exists to prevent. It is a HOLE,
+            // answered like any other corruption.
+            if !status.is_terminal() {
+                return Err(format!(
+                    "journal line {line}: a turn's END cannot be {status:?}"
+                ));
+            }
             let turn = replayed
                 .turns
                 .iter_mut()
@@ -263,7 +279,16 @@ fn apply(replayed: &mut Replayed, record: Record, line: usize) -> Result<(), Str
                 .ok_or_else(|| format!("journal line {line}: turn {turn_id:?} never started"))?;
             turn.status = status;
             turn.answer = record.answer.unwrap_or_default();
-            turn.reason = record.reason;
+            // A non-`done` ending carries a reason by the registry's rule.
+            // A line that carries none is not proof that there was none:
+            // the conservative reason the started turn already holds
+            // stands rather than an ending nobody can explain. `done` is
+            // the one status whose whole claim is the answer itself.
+            turn.reason = match (status, record.reason) {
+                (TurnStatus::Done, _) => None,
+                (_, Some(reason)) => Some(reason),
+                (_, None) => turn.reason.take(),
+            };
             turn.run_id = record.run_id;
             turn.usage = record.usage.unwrap_or_default();
             turn.ended_ms = Some(record.at_ms);
