@@ -33,6 +33,9 @@
 //!   interrupted with a reason, never eternally `running`.
 //! - **History is append-only**, and a torn TAIL is absence rather than
 //!   corruption.
+//! - **A document holding NO complete record is the absence of the run**,
+//!   answered `404` and never as a status — and the heal that clears it
+//!   DROPS bytes without ever writing a record (`FINDINGS.md` #36).
 //! - **What the fourth layer COSTS**, measured rather than derived —
 //!   `FINDINGS.md` #35.
 //!
@@ -86,6 +89,10 @@ const VENDOR_GATE: &str = "JINN_HARNESS_WORKFLOW_VENDOR_ENGINE";
 /// that is metered. The echo leg is asked the same thing, so the two legs
 /// differ in the binding and in nothing else.
 const VENDOR_PROMPT: &str = "Reply with exactly: OK";
+
+/// The id of a run that never existed: the name on a document a daemon
+/// was killed inside the first append of. Nothing ever minted it.
+const ABSENT_RUN: &str = "default-r999";
 
 /// The reason an interrupted node carries, from its one home.
 const INTERRUPTED_NODE_REASON: &str = jinn_workflow::INTERRUPTED_NODE_REASON;
@@ -728,13 +735,19 @@ fn a_torn_tail_is_absence_and_the_run_before_it_survives() {
     daemon.interrupt();
 }
 
-#[test]
-fn a_run_document_holding_no_record_is_absence_and_boot_writes_nothing_into_it() {
-    let Some((daemon, port, root)) = booted("workflows-no-record") else {
-        return;
-    };
-    // A real run first, so this proves what the store does with THIS
-    // document rather than what an empty store does with nothing.
+/// Lays a record-less run document into a live store's directory and
+/// re-boots over it.
+///
+/// What a daemon killed INSIDE its very first append leaves behind: bytes
+/// that were never a record. Manufactured behind the daemon's back for
+/// the same reason the torn-tail proof is — `jinn:fs` writes whole
+/// documents (`FINDINGS.md` #22) — so what these proofs test is the
+/// READER, not that the kernel tears.
+///
+/// Answers the re-booted daemon, the document's path, and the id of a run
+/// that really happened, so each proof can show the real run is untouched.
+fn booted_over_a_record_less_document(name: &str) -> Option<(Daemon, u16, String, String)> {
+    let (daemon, port, root) = booted(name)?;
     let (workflow, _) = define(
         port,
         DEFAULT_STORE,
@@ -743,23 +756,28 @@ fn a_run_document_holding_no_record_is_absence_and_boot_writes_nothing_into_it()
     let run_id = start(port, DEFAULT_STORE, &workflow);
     settled(&daemon, port, DEFAULT_STORE, &run_id);
 
-    // What a daemon killed INSIDE its very first append leaves behind:
-    // bytes that were never a record. Manufactured behind the daemon's
-    // back for the same reason the torn-tail proof is — `jinn:fs` writes
-    // whole documents (`FINDINGS.md` #22) — so this proves the READER,
-    // not that the kernel tears.
-    let absent = "default-r999";
-    let path = daemon.data(&format!("workflows/runs/{absent}.jsonl"));
+    let path = daemon.data(&format!("workflows/runs/{ABSENT_RUN}.jsonl"));
     daemon.kill();
     std::fs::write(&path, b"{").expect("write the record-less journal");
     let daemon = reboot(&root);
+    Some((daemon, port, path.to_string_lossy().into_owned(), run_id))
+}
 
-    // ABSENCE, answered as absence. A run is a POSITIVE reading: without
-    // one complete `run-started` record there is nothing to report, and
-    // the one answer that must never come back is a status.
+#[test]
+fn a_run_document_holding_no_record_reads_as_absence_and_never_as_a_run() {
+    let Some((daemon, port, _, run_id)) = booted_over_a_record_less_document("workflows-no-record")
+    else {
+        return;
+    };
+
+    // A run is a POSITIVE reading. Without one complete `run-started`
+    // record there is nothing to report, and the answer that must never
+    // come back is a status: this route once returned 200 with
+    // `status: "done"`, `workflow-id: ""` and revision 0 — a completed
+    // run fabricated out of one byte (`FINDINGS.md` #36).
     let read = get(
         port,
-        &format!("/v1/workflows/{DEFAULT_STORE}/runs/{absent}"),
+        &format!("/v1/workflows/{DEFAULT_STORE}/runs/{ABSENT_RUN}"),
     );
     assert_eq!(
         read.status, 404,
@@ -767,20 +785,14 @@ fn a_run_document_holding_no_record_is_absence_and_boot_writes_nothing_into_it()
         read.raw
     );
 
-    // And the heal CREATED nothing. A heal may drop incomplete bytes; it
-    // may never write, complete or infer a record. The document that
-    // held none still holds none.
-    let after = std::fs::read(&path).expect("the healed journal");
-    assert_eq!(
-        kinds(&after),
-        Vec::<String>::new(),
-        "boot wrote a record into a document that held none: {:?}",
-        String::from_utf8_lossy(&after)
-    );
+    // It is absent from the LIST for the same reason, so no reader meets
+    // it by another door.
+    let list = get(port, &format!("/v1/workflows/{DEFAULT_STORE}/runs"));
+    assert_eq!(list.status, 200, "{}", list.raw);
     assert!(
-        after.is_empty(),
-        "the incomplete bytes survived the heal: {:?}",
-        String::from_utf8_lossy(&after)
+        !list.raw.contains(ABSENT_RUN),
+        "the run that never was, listed: {}",
+        list.raw
     );
 
     // The store SAW the document and declined to make a run of it, and
@@ -795,6 +807,42 @@ fn a_run_document_holding_no_record_is_absence_and_boot_writes_nothing_into_it()
 
     // The run that really happened is untouched by any of it.
     assert_eq!(run(port, DEFAULT_STORE, &run_id)["status"], "done");
+    daemon.interrupt();
+}
+
+#[test]
+fn a_heal_drops_incomplete_bytes_and_never_writes_a_record() {
+    // The SECOND fault, proven on its own terms and without asking the
+    // API anything: boot turned one torn byte into a lone `run-ended`
+    // line. A heal may DROP bytes that were never a record; it may not
+    // create, complete or infer one.
+    let Some((daemon, port, path, run_id)) =
+        booted_over_a_record_less_document("workflows-no-heal")
+    else {
+        return;
+    };
+
+    let after = std::fs::read(&path).expect("the healed journal");
+    assert_eq!(
+        kinds(&after),
+        Vec::<String>::new(),
+        "boot wrote a record into a document that held none: {:?}",
+        String::from_utf8_lossy(&after)
+    );
+    assert!(
+        after.is_empty(),
+        "the incomplete bytes survived the heal: {:?}",
+        String::from_utf8_lossy(&after)
+    );
+
+    // And the real run's document is whole and unedited — the heal
+    // touched the document that needed it and nothing else.
+    let real = run_journal(&daemon, &run_id).expect("the real run's journal");
+    assert_untorn(&real, "the run that really happened");
+    assert!(
+        kinds(&real).contains(&"run-started".to_owned()),
+        "the real run lost its own opening line"
+    );
     daemon.interrupt();
 }
 
