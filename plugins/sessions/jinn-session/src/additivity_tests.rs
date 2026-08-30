@@ -188,6 +188,19 @@ fn inventory() -> Vec<Wire> {
             round_trip: round_trip::<SessionEvent>,
         },
         Wire {
+            name: "EventsRequest",
+            canonical: || vec![json!({ "session-id": "fs-1", "after": 3, "limit": 10 })],
+            round_trip: round_trip::<EventsRequest>,
+        },
+        Wire {
+            name: "EventPage",
+            canonical: || {
+                vec![json!({ "api-version": API_VERSION, "session-id": "fs-1",
+                             "events": session_event_docs(), "next-after": 4, "dropped": 0 })]
+            },
+            round_trip: round_trip::<EventPage>,
+        },
+        Wire {
             name: "journal::Record",
             canonical: || {
                 vec![

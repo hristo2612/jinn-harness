@@ -344,3 +344,63 @@ fn a_terminal_record_with_no_reason_keeps_the_conservative_one() {
     .expect("a complete journal");
     assert_eq!(replayed.turns[0].reason, None);
 }
+
+#[test]
+fn a_feed_hands_back_every_event_once_and_says_what_it_dropped() {
+    let mut sessions = Sessions::new("memory");
+    let created = sessions.create(spec("echo"), 1);
+    let id = created.session_id.clone();
+    sessions.record_event(
+        &id,
+        EventKind::Created {
+            engine: "echo".to_owned(),
+        },
+    );
+    for index in 0..3_u64 {
+        sessions.record_event(
+            &id,
+            EventKind::Delta {
+                turn_id: "t1".to_owned(),
+                text: format!("d{index}"),
+            },
+        );
+    }
+    let first = sessions.events_since(&id, None, Some(2)).expect("a page");
+    assert_eq!(first.events.len(), 2);
+    assert_eq!(first.next_after, 1);
+    assert_eq!(first.dropped, 0);
+    let next = sessions
+        .events_since(&id, Some(first.next_after), Some(10))
+        .expect("a page");
+    assert_eq!(next.events.len(), 2, "everything after the cursor, once");
+    assert_eq!(next.next_after, 3);
+    // A caught-up reader keeps its cursor rather than being sent back to
+    // the start of a feed it has already read.
+    let caught_up = sessions
+        .events_since(&id, Some(next.next_after), None)
+        .expect("a page");
+    assert!(caught_up.events.is_empty());
+    assert_eq!(caught_up.next_after, 3);
+}
+
+#[test]
+fn a_ring_that_overflows_reports_the_gap_rather_than_hiding_it() {
+    let mut sessions = Sessions::new("memory");
+    let created = sessions.create(spec("echo"), 1);
+    let id = created.session_id.clone();
+    for index in 0..(EVENT_RING as u64 + 5) {
+        sessions.record_event(
+            &id,
+            EventKind::Delta {
+                turn_id: "t1".to_owned(),
+                text: format!("d{index}"),
+            },
+        );
+    }
+    let page = sessions.events_since(&id, None, Some(1)).expect("a page");
+    assert_eq!(page.dropped, 5, "a feed that lost history says so");
+    assert_eq!(
+        page.events[0].seq, 5,
+        "the sequence is the session's, not the ring's index"
+    );
+}

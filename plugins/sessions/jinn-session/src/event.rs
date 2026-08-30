@@ -187,3 +187,51 @@ impl SessionEvent {
         }
     }
 }
+
+/// `events`: the feed of one session's events from `after` onward.
+///
+/// The feed is POLLED, and that is a deliberate bound rather than an
+/// unfinished stream: an open response would have to be held across the
+/// HTTP provider's readiness wakes, and a store that pushed into a held
+/// connection would be emitting from inside a caller's dispatch — the
+/// nested-dispatch class this repo keeps finding (`FINDINGS.md` #4, #32).
+/// A cursor read is honest about what it is: `after` is a SEQUENCE, so a
+/// reader never misses an event it has not seen and never re-reads one it
+/// has.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct EventsRequest {
+    pub session_id: String,
+    /// Events after this sequence. Absent means from the beginning —
+    /// never "the latest", which would silently drop the backlog.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<u64>,
+    #[serde(flatten)]
+    pub extra: Extensions,
+}
+
+/// One page of a session's event feed.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct EventPage {
+    #[serde(default)]
+    pub api_version: String,
+    pub session_id: String,
+    #[serde(default)]
+    pub events: Vec<SessionEvent>,
+    /// The sequence to ask `after` next. Always present: a reader that
+    /// caught up still needs the cursor to ask again with.
+    #[serde(default)]
+    pub next_after: u64,
+    /// How many events the store has DROPPED from the front of this
+    /// session's ring since it opened. A feed that lost history says so;
+    /// silence would let a gap pass for a quiet session.
+    #[serde(default)]
+    pub dropped: u64,
+    #[serde(flatten)]
+    pub extra: Extensions,
+}
+
+jinn_settings::additive!(EventsRequest, EventPage);

@@ -49,6 +49,7 @@
 //! [`jinn_settings::closed`].
 
 mod answer;
+pub mod drive;
 mod event;
 pub mod journal;
 mod record;
@@ -61,12 +62,12 @@ mod additivity_tests;
 mod tests;
 
 pub use answer::{Answer, ErrorCode, Outcome, SessionError};
-pub use event::{Event, EventKind, SessionEvent};
+pub use event::{Event, EventKind, EventPage, EventsRequest, SessionEvent};
 pub use jinn_settings::{
     closed, decode_with_rest, encode_with_rest, optional, put, required, Additive, Extensions,
 };
 pub use record::{Page, SessionRecord, SessionStatus, SessionSummary, Turn, TurnStatus};
-pub use sessions::Sessions;
+pub use sessions::{Sessions, DEFAULT_PAGE, EVENT_RING};
 pub use spec::{
     Attribution, CancelRequest, CloseRequest, CreateRequest, EngineBinding, GetRequest,
     ListRequest, MessagesRequest, SendRequest, SessionCreated, SessionSpec, TurnAccepted,
@@ -100,6 +101,8 @@ pub const OP_GET: &str = "get";
 pub const OP_MESSAGES: &str = "messages";
 /// Operation: the sessions this store holds.
 pub const OP_LIST: &str = "list";
+/// Operation: one page of a session's event feed.
+pub const OP_EVENTS: &str = "events";
 /// Operation: cancel the turn in flight.
 pub const OP_CANCEL: &str = "cancel";
 /// Operation: close a session for good.

@@ -4,8 +4,8 @@
 
 use super::{Live, Sessions, DEFAULT_PAGE};
 use crate::{
-    Extensions, ListRequest, Page, SessionRecord, SessionStatus, SessionSummary, TurnStatus,
-    API_VERSION,
+    EventPage, Extensions, ListRequest, Page, SessionRecord, SessionStatus, SessionSummary,
+    TurnStatus, API_VERSION,
 };
 
 impl Sessions {
@@ -39,6 +39,43 @@ impl Sessions {
             offset,
             limit.unwrap_or(DEFAULT_PAGE).max(1),
         ))
+    }
+
+    /// One page of a session's event feed: everything after `after`,
+    /// bounded by `limit`. `next-after` is the cursor to ask with next
+    /// and is always answered — a caught-up reader still needs one.
+    #[must_use]
+    pub fn events_since(
+        &self,
+        session_id: &str,
+        after: Option<u64>,
+        limit: Option<u64>,
+    ) -> Option<EventPage> {
+        let live = self.live.get(session_id)?;
+        let limit = usize::try_from(limit.unwrap_or(DEFAULT_PAGE).max(1)).unwrap_or(usize::MAX);
+        let events: Vec<_> = live
+            .events
+            .iter()
+            .filter(|event| after.is_none_or(|after| event.seq > after))
+            .take(limit)
+            .cloned()
+            .collect();
+        // The cursor advances only over events actually handed back. A
+        // reader that asked past the end keeps the cursor it came with,
+        // so nothing minted between two polls is skipped.
+        let next_after = events
+            .last()
+            .map(|event| event.seq)
+            .or(after)
+            .unwrap_or_default();
+        Some(EventPage {
+            api_version: API_VERSION.to_owned(),
+            session_id: session_id.to_owned(),
+            events,
+            next_after,
+            dropped: live.dropped,
+            extra: Extensions::new(),
+        })
     }
 
     /// The sessions this store holds, filtered.

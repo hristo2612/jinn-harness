@@ -11,14 +11,21 @@ mod views;
 
 use crate::journal::Replayed;
 use crate::{
-    ErrorCode, Extensions, SessionCreated, SessionError, SessionSpec, Turn, TurnAccepted,
-    TurnStatus, API_VERSION,
+    ErrorCode, EventKind, Extensions, SessionCreated, SessionError, SessionEvent, SessionSpec,
+    Turn, TurnAccepted, TurnStatus, API_VERSION,
 };
 
 /// The page size a `messages` read falls back to when the caller names
 /// none. A bound, never "everything": an unbounded default is how a large
 /// log becomes an outage.
 pub const DEFAULT_PAGE: u64 = 50;
+
+/// How many events one session's feed holds before the OLDEST are
+/// dropped. A ring, because a store that kept every delta of every
+/// session forever is a memory leak with a schedule; the count of what
+/// was dropped is reported with every page, so a reader is never told a
+/// gap is quiet (see `EventPage::dropped`).
+pub const EVENT_RING: usize = 512;
 
 pub(super) struct Live {
     pub(super) spec: SessionSpec,
@@ -27,6 +34,10 @@ pub(super) struct Live {
     pub(super) created_ms: u64,
     seq: u64,
     minted_turns: u64,
+    /// The feed's ring, oldest first, bounded by [`EVENT_RING`].
+    pub(super) events: Vec<SessionEvent>,
+    /// How many the ring has dropped from its front.
+    pub(super) dropped: u64,
 }
 
 /// Every session one store incarnation holds.
@@ -119,6 +130,8 @@ impl Sessions {
                 created_ms,
                 seq: 0,
                 minted_turns,
+                events: Vec::new(),
+                dropped: 0,
             },
         );
     }
@@ -133,6 +146,28 @@ impl Sessions {
             }
             None => 0,
         }
+    }
+
+    /// Records one event against a session and answers the record to put
+    /// on the bus. The sequence is minted HERE, once, so the feed a
+    /// reader polls and the records a listener receives carry the same
+    /// numbers — two sequences would be two versions of what happened.
+    ///
+    /// An event for a session this registry does not hold is still
+    /// SEQUENCED and answered (a `closed` for a session already gone
+    /// still belongs on the bus); it simply joins no ring.
+    pub fn record_event(&mut self, session_id: &str, kind: EventKind) -> SessionEvent {
+        let seq = self.next_seq(session_id);
+        let record = SessionEvent::new(&self.store, session_id, seq, kind);
+        if let Some(live) = self.live.get_mut(session_id) {
+            live.events.push(record.clone());
+            if live.events.len() > EVENT_RING {
+                let over = live.events.len() - EVENT_RING;
+                live.events.drain(..over);
+                live.dropped += over as u64;
+            }
+        }
+        record
     }
 
     /// The session's engine binding, for a provider about to drive it.
