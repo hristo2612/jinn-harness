@@ -10,7 +10,10 @@ Phase 1.3 (cron seam) baseline: every entry below was hit while building
 the first real capability. Evidence grades were audited by the independent
 round-1 verification and are stated per entry: entries 1, 2, 3, 6, and 8
 are packet-card-ready (reproducible, shaped); the rest are honest
-observations whose cards need more evidence, marked as such. What HELD is
+observations whose cards need more evidence, marked as such. Entry **35** is
+answered in place by phase 2.6 — the fourth layer it predicted now
+exists, so its term is a measured number rather than a structure, and the
+prediction held. What HELD is
 at the bottom — the kernel earned that section too. Entries 1 and 2 are
 **closed** as of the `01133c45` pin bump (jinnd M2-K2) and entries 3 and 8
 as of the `41cb2f47` pin bump (jinnd M2-K3), and entries 14 and 15 (hit
@@ -1703,3 +1706,99 @@ measured end-to-end latency at each layer, has not established a
 distribution, and does not claim a number. The deadlines the suite uses
 are generous margins, not measurements. A card should start by measuring
 it at two and three layers.
+
+### CLOSED as a prediction — MEASURED at pin `3a8e5c0`, phase 2.6
+
+The entry above stands as the record of what it claimed and how it was
+graded. This is its answer, appended in place rather than filed
+elsewhere.
+
+Phase 2.6 added the fourth layer the entry was about
+(`jinn:workflow.<store>` over `jinn:todo.<store>` over
+`jinn:session.<store>` over `jinn:engine.<id>`), so the prediction became
+testable and `tests/composition/tests/workflows.rs::dispatch_latency_at_two_three_and_four_layers`
+tested it. All three depths are driven from ONE daemon, on the same
+engine, at the same poll period, in the same minutes, so they differ in
+the number of layers and in nothing else; each depth's workflow is a
+single dispatch node with no edges, so a run is one pass through the stack
+with no graph walk mixed in; and the observer polls at 15 ms against
+stores that poll at 250 ms, so the measurement is not dominated by the
+measuring.
+
+```
+FINDINGS #35, measured at poll-ms=250 per store layer (observer polls every 15 ms, 5 samples, one daemon):
+  2 layers (session -> engine)              median 513 ms  samples [508, 508, 513, 564, 548]
+  3 layers (todo -> session -> engine)      median 755 ms  samples [721, 752, 772, 755, 783]
+  4 layers (workflow -> todo -> ...)        median 1084 ms  samples [1041, 1121, 1084, 1087, 1079]
+  per-layer term: 3-2 = 242 ms, 4-3 = 329 ms (the additive model predicts one poll period, 250 ms, for each)
+```
+
+**The additive model is CONFIRMED.** The third layer costs 242 ms against
+a predicted 250 ms — within 3%, which is as close as a prediction of this
+shape can come. The fourth costs 329 ms: additive in kind, 32% over the
+predicted period. Four layers take rather more than twice what two take,
+on a stack whose engine work is a 250 ms delay.
+
+**The 79 ms the fourth layer costs beyond a poll period is NOT explained
+by a measurement.** The candidate explanation, read off the two
+implementations, is that the layers are not symmetric at their START: a
+Todo store OPENS its session synchronously inside the `dispatch` call
+(`plugins/todos/store-core/store.rs`, `on_dispatch`), while a run store
+starts its node on its own clock wake and only then dispatches the Todo
+(`plugins/workflows/store-core/store.rs`, `start_ready_nodes`) — so the
+fourth layer pays at both ends where the third pays at one. That is
+*derived from reading the two files, not separately measured*, and it is
+recorded at that grade rather than promoted to the entry's finding.
+
+*Evidence grade:* **measured.** Five samples per depth from one daemon at
+a stated poll period, with the command in the tree and re-runnable. The
+entry's original grade was honest and its prediction held; what changes is
+that the term is now a number rather than a structure. The capability that
+would retire the cost is unchanged — whatever closes #4/#32, so a consumer
+is NOTIFIED by the seam it drives rather than asking it, would make the
+per-layer term a wake rather than a period.
+
+---
+
+## What the WORKFLOWS seam could NOT prove, and says so
+
+Recorded here because the honest limit of a proof belongs beside the
+frictions, not buried in a test:
+
+- **A vendor engine under a workflow run runs only where an operator asks
+  for one by name.** `tests/composition/tests/workflows.rs::the_same_run_runs_over_a_vendor_engine_when_the_operator_names_one`
+  binds a real vendor CLI as the last leg of the FOUR-layer proof,
+  changing the engine field and nothing else. It is gated on
+  `JINN_HARNESS_WORKFLOW_VENDOR_ENGINE` for the reason the todos gate
+  gives one layer down: it spends metered inference under the operator's
+  own authentication. A SKIP proves nothing and is never summarized as a
+  pass; an engine that is NAMED and not mounted FAILS rather than
+  skipping. The echo and child-backed legs remain, and on their own they
+  prove a binding swap between two in-repo providers — not that four
+  layers survive contact with a real CLI.
+- **The torn tail is manufactured, not observed** — the same limit the
+  todos seam recorded, for the same reason (#22, #34). The suite writes an
+  unterminated line behind the daemon's back. What is proven is the
+  READER's behaviour and the store's heal, not that the kernel tears.
+- **Concurrency between two writers to one run is not proven.** The proofs
+  drive one caller at a time. The registry is behind a mutex and the
+  journal's append is atomic, so a lost update is not reachable through
+  the operations as written — but "not reachable by inspection" is not a
+  proof, and no test races two node-state moves on one run.
+- **A run is not RESUMED across a restart, and that is a decision, not a
+  gap.** A fresh incarnation drives nothing it did not start, so a run the
+  daemon stopped mid-flight is recorded `interrupted` — including its
+  nodes that had not started yet. Running the procedure again is a NEW
+  run, which pins its own revision. Nothing here proves a resumable run
+  would be safe, because nothing here builds one.
+- **`spec-digest` is a change detector under an ACCIDENTAL threat model.**
+  The packet's stated model is races, crashes and torn writes, not an
+  adversary with write access to the data root. Someone who can write a
+  store's journal can forge a run's history or a definition, and this seam
+  would not detect it as forgery; what the reader catches is damage. The
+  authority on what a run executes is the spec the run carries whole.
+- **The graph walk is proven on two shapes.** A single dispatch node, and
+  a two-lane graph where one lane is followed and the other is skipped. A
+  wide fan-out, a join with several followed inbound edges, and a deep
+  chain are unit-proven in `jinn_workflow` and are NOT driven through the
+  daemon.

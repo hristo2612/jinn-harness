@@ -541,10 +541,13 @@ fn an_illegal_node_transition_is_refused_typed_and_ledgered() {
     assert_eq!(refused.body["error"]["node"], "work", "{}", refused.raw);
     assert_eq!(refused.body["error"]["from"], "running", "{}", refused.raw);
     assert_eq!(refused.body["error"]["to"], "pending", "{}", refused.raw);
+    // The API's error document names the prose `detail`; the DATA above
+    // is what a caller classifies on, and the prose is what an operator
+    // reads.
     assert!(
-        refused.body["error"]["message"]
+        refused.body["error"]["detail"]
             .as_str()
-            .is_some_and(|message| message.contains("running -> pending")),
+            .is_some_and(|detail| detail.contains("running -> pending")),
         "{}",
         refused.raw
     );

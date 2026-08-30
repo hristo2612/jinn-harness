@@ -197,6 +197,7 @@ iteration channel — kernel changes are never made here).
 | `tests/composition` | Real-composition gates: boot generated profiles through the REAL pinned jinnd daemon |
 | `FINDINGS.md` | Kernel frictions logged as jinnd packet-card candidates (two-way iteration) |
 | `docs/notes/` | Agent notes: rationale for non-obvious decisions, one per non-trivial change |
+| `docs/postmortems/` | Defects that hardened into rules (AGENTS.md standing order 5) |
 
 ## The cutover rule
 
