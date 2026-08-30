@@ -816,7 +816,7 @@ fn a_heal_drops_incomplete_bytes_and_never_writes_a_record() {
     // API anything: boot turned one torn byte into a lone `run-ended`
     // line. A heal may DROP bytes that were never a record; it may not
     // create, complete or infer one.
-    let Some((daemon, port, path, run_id)) =
+    let Some((daemon, _port, path, run_id)) =
         booted_over_a_record_less_document("workflows-no-heal")
     else {
         return;
