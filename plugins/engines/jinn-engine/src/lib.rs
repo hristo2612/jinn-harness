@@ -1262,15 +1262,31 @@ impl Runs {
     /// Drops the oldest finished records once more than `keep` are held —
     /// a provider's memory is bounded (R9), and a run record is evidence
     /// the ledger already carries.
+    ///
+    /// **Oldest by the instant it STARTED, never by its key.** The
+    /// registry is keyed by run id and a run id is `<engine>-<n>`, so past
+    /// nine runs the key order and the time order stop agreeing —
+    /// `"echo-10"` sorts before `"echo-9"`. Walking the keys therefore
+    /// reaps recent runs while much older ones stay, and the consumer
+    /// polling one of those recent runs one layer up reads `no run` for
+    /// work that SUCCEEDED. It has no way to tell a reaped record from an
+    /// id that never existed, so it reports the conservative answer —
+    /// `failed` — for work that did not fail. That is a dangerous claim
+    /// derived from the absence of a record, and the deeper the stack
+    /// above this engine, the later the read and the likelier it is.
     pub fn retain_recent(&mut self, keep: usize) {
-        let finished: Vec<String> = self
+        let mut finished: Vec<(u64, String)> = self
             .live
             .iter()
             .filter(|(_, live)| live.record.state.is_terminal())
-            .map(|(run_id, _)| run_id.clone())
+            .map(|(run_id, live)| (live.started_ms, run_id.clone()))
             .collect();
+        // The instant first, the id only to break a tie between two runs
+        // accepted in the same millisecond — so the order is total and a
+        // repeat of this call reaps the same records.
+        finished.sort_unstable();
         let excess = finished.len().saturating_sub(keep);
-        for run_id in finished.into_iter().take(excess) {
+        for (_, run_id) in finished.into_iter().take(excess) {
             self.live.remove(&run_id);
         }
     }

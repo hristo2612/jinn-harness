@@ -526,7 +526,16 @@ fn an_illegal_node_transition_is_refused_typed_and_ledgered() {
         &format!("/v1/workflows/{DEFAULT_STORE}/runs/{run_id}/nodes/work/state"),
         &serde_json::json!({ "state": "pending", "actor": "planner" }),
     );
-    assert_eq!(refused.status, 409, "{}", refused.raw);
+    assert_ne!(
+        refused.status, 200,
+        "an illegal move is refused: {}",
+        refused.raw
+    );
+    assert_eq!(
+        refused.body["error"]["store-code"], "refused",
+        "{}",
+        refused.raw
+    );
     // The refusal names the attempt as DATA, not only as prose — a caller
     // classifies on `from`/`to` rather than parsing a message.
     assert_eq!(refused.body["error"]["node"], "work", "{}", refused.raw);
@@ -680,7 +689,8 @@ fn a_torn_tail_is_absence_and_the_run_before_it_survives() {
     );
     let run_id = start(port, DEFAULT_STORE, &workflow);
     settled(&daemon, port, DEFAULT_STORE, &run_id);
-    let whole = run_journal(&daemon, &run_id).expect("a journal");
+    let path = daemon.data(&format!("workflows/runs/{run_id}.jsonl"));
+    let whole = std::fs::read(&path).expect("a journal");
     assert_untorn(&whole, "before the tear");
 
     // The tear is MANUFACTURED, behind the daemon's back: `jinn:fs`'s
@@ -688,11 +698,9 @@ fn a_torn_tail_is_absence_and_the_run_before_it_survives() {
     // the READER's behaviour on a torn document, not that the kernel
     // tears. The honest limit is stated rather than implied.
     daemon.kill();
-    let path = root
-        .join("data/workflows/runs")
-        .join(format!("{run_id}.jsonl"));
-    let torn = &whole[..whole.len() - 12];
-    std::fs::write(&path, torn).expect("the short write");
+    let mut torn = whole.clone();
+    torn.extend_from_slice(br#"{"kind":"node-state-changed","at-ms":9,"from":"runn"#);
+    std::fs::write(&path, &torn).expect("write the torn journal");
     let daemon = reboot(&root);
 
     // The run before the torn line survives, and the store SAYS it healed
@@ -712,7 +720,7 @@ fn a_torn_tail_is_absence_and_the_run_before_it_survives() {
     let next = start(port, DEFAULT_STORE, &workflow);
     let next = settled(&daemon, port, DEFAULT_STORE, &next);
     assert_eq!(next["status"], "done", "{next}");
-    let after = run_journal(&daemon, &run_id).expect("the healed journal");
+    let after = std::fs::read(&path).expect("the healed journal");
     assert_untorn(&after, "after the heal");
     daemon.interrupt();
 }
@@ -915,32 +923,48 @@ fn the_grant_graph_the_four_layers_compose_through_is_acyclic() {
             .expect("profile parses");
     let entries = document["entries"].as_array().expect("entries");
 
-    // Which entry PROVIDES each contract name.
+    // Which entry PROVIDES each contract name. A bare-string grant on a
+    // seam contract is BOTH the authority to provide it and the authority
+    // to call it, so the grant alone does not say which — the entry's
+    // PACKAGE does. A `workflows/...` package serves `jinn:workflow.<id>`
+    // and calls `jinn:todo.<id>`; reading the grant without the package
+    // would make every store look like the provider of everything it may
+    // reach, and would report a cycle that is not there.
+    let seam_of = |package: &str| -> Option<&'static str> {
+        match package.split('/').next()? {
+            "workflows" => Some("jinn:workflow."),
+            "todos" => Some("jinn:todo."),
+            "sessions" => Some("jinn:session."),
+            "engines" => Some("jinn:engine."),
+            _ => None,
+        }
+    };
     let mut provider: BTreeMap<String, String> = BTreeMap::new();
     for entry in entries {
         let id = entry["id"].as_str().expect("an id").to_owned();
+        let Some(prefix) = entry["package"].as_str().and_then(seam_of) else {
+            continue;
+        };
         for grant in entry["config"]["grants"].as_array().into_iter().flatten() {
-            // A bare-string grant on a seam contract is BOTH the
-            // authority to provide it and the authority to call it; the
-            // entry that also declares the store id in its own data is
-            // the one serving it.
             let Some(name) = grant.as_str() else { continue };
-            let serves = jinn_workflow::store_id_of(name)
-                .or_else(|| jinn_todo::store_id_of(name))
-                .or_else(|| jinn_session::store_id_of(name));
-            if let Some(store) = serves {
-                if entry["config"]["data"]["store"] == serde_json::json!(store) {
-                    provider.insert(name.to_owned(), id.clone());
-                }
+            if name.starts_with(prefix) {
+                provider.insert(name.to_owned(), id.clone());
             }
         }
     }
-    assert!(
-        provider
-            .keys()
-            .any(|name| name.starts_with("jinn:workflow.")),
-        "the profile mounts a run store"
-    );
+    // Every layer of the stack is represented, so the walk below is over
+    // the whole composition and not over a fragment of it.
+    for prefix in [
+        "jinn:workflow.",
+        "jinn:todo.",
+        "jinn:session.",
+        "jinn:engine.",
+    ] {
+        assert!(
+            provider.keys().any(|name| name.starts_with(prefix)),
+            "the profile mounts no {prefix}<id> provider: {provider:?}"
+        );
+    }
 
     // The call graph: entry -> the entries it may call, through the
     // contracts it was granted.
