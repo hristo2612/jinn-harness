@@ -104,7 +104,7 @@ The reason vocabulary is what the +7d audit counts:
 |---|---|---|
 | `adopt` / `planned-start` | an operator start | the reason file, read — a report, not an inference |
 | `boot-consistent` | the readings are CONSISTENT with the daemon having died with the host | a readable `kern.boottime` AND a coherent `run/jinnd.pid` record, boot strictly later |
-| `keepalive-restart-consistent` | the readings are consistent with the opposite: previous start on THIS host boot, launchd replacing a daemon that ended uncleanly | the same two readings, boot NOT later |
+| `keepalive-restart-consistent` | the readings are consistent with the opposite: the previous start belongs to THIS host boot, so the host did not reboot under the daemon | the same two readings, boot NOT later |
 | `first-supervised-start` | no record of a previous start | `run/` was enumerated and held no `jinnd.pid` — a proven absence |
 | `unknown` | the wrapper cannot prove why this start happened | — it derives nothing, and names the input it could not read |
 
@@ -129,7 +129,7 @@ dry run, the death line, the start line), so they cannot drift apart:
 | `prev_record` | `present` / `absent` (enumerated) / `unknown` (`run/` unenumerable) |
 | `prev_pid` | the previous pid as read |
 | `prev_start_sec` / `prev_start` | the record's mtime as read, and its UTC rendering |
-| `prev_end_raw` / `prev_end` | launchd's `LastExitStatus` verbatim, and decoded |
+| `prev_end_raw` / `prev_end` / `prev_end_clean` | launchd's `LastExitStatus` verbatim, and the one decode of it |
 | `last_seen` | the daemon's final log timestamp — the duty gap's start |
 | `unproven` | the inputs that could not be READ, or `none` |
 
@@ -162,14 +162,30 @@ is looked at twice with the read between, and a tear leaves both unknown.
 
 The wrapper `exec`s the daemon, so nobody is standing beside it when it
 dies; for every unplanned reason it therefore writes the DEATH before the
-start line, from what launchd retained and what the daemon last said —
-`ended; DERIVED boot-consistent: …`, `ended UNCLEAN; DERIVED
-keepalive-restart-consistent: …`, or, when the provenance is unproven,
-`ended, PROVENANCE UNKNOWN (could not read: <inputs>)` — each followed by
-`evidence: <the table above>`. The duty gap is `last_seen` → the new
-readiness line. `launchd list`'s `LastExitStatus` is a wait status (signal
-in the low bits, exit code in the high byte); the wrapper reports it raw
-and decoded, so a reader can re-decode it themselves.
+start line, from what launchd retained and what the daemon last said:
+
+```
+<ts> previous jinnd <pid> <how it ended>; DERIVED <reason>: <the inference>. evidence: <the table above>
+```
+
+— or, when the provenance is unproven, `<how it ended>, PROVENANCE UNKNOWN
+(could not read: <inputs>)`. The duty gap is `last_seen` → the new readiness
+line.
+
+**How it ended and `prev_end=` are one decode, so they cannot disagree.**
+`launchctl list`'s `LastExitStatus` is a wait status (a signal in the low
+seven bits, an exit code in the high byte); the wrapper decodes it ONCE into
+a kind, and the field, `prev_end_clean`, and the phrase the line opens with
+are all rendered from that — the phrase containing the field verbatim
+(`ended UNCLEAN: killed by signal 15 (SIGTERM)`, `ended CLEANLY, on its own:
+exit 0`, `ended, HOW UNKNOWN: end status unknown (launchd retained none)`).
+Round 3 wrote that phrase as a literal beside a separately-decoded field, and
+a real start with `LastExitStatus = 15` printed *"a daemon that ended on its
+own"* beside `prev_end="killed by signal 15 (SIGTERM)"` on one line at rc 0 —
+the same defect class as the three above, reached from the printing side: a
+statement made without its proof beside it drifts from the proof. The raw
+reading stays on the line, so a reader can re-decode it themselves. A signal
+has no sender here, in either place — nothing retains one (§Known limits).
 
 To see the decision without starting anything:
 `SOAK_DRY_RUN=1 sh "$SOAK/bin/soak-run.sh"`. It prints `reason=<r>` and the
@@ -195,6 +211,18 @@ missing files, unreadable sysctls, torn records. It is not a forger.
 - **The sender of a SIGTERM is not recorded anywhere**, because nothing
   retains it. `prev_end_raw`/`prev_end` say what the status was, never who
   caused it. The 2026-08-29T14:18Z end stays unattributed (§The +7d audit).
+- **`LastExitStatus` is launchd's, not the record's.** It is the last status
+  launchd retained FOR THE LABEL, and nothing ties it to the pid in
+  `run/jinnd.pid`. In the ordinary supervised lane they are the same instance;
+  across an operator `bootout`/`bootstrap`, or a status launchd has since
+  dropped, they need not be. The wrapper prints both readings side by side
+  (`prev_pid=` and `prev_end_raw=`) and never asserts they describe one
+  process — the reason vocabulary rests on the boot time and the record's
+  mtime, never on the status.
+- **`last_seen` is the last timestamp in `jinnd.log`, not the moment of
+  death.** It is a lower bound on when the daemon was alive; the interval
+  between it and the death is unobserved by construction, since the wrapper
+  is not running while the daemon is.
 
 **Operator verbs** (`bootstrap`/`bootout`/`kickstart`, the modern `launchctl`
 lane — pick one lane and stay in it; never mix in `load`/`unload`):
@@ -354,9 +382,11 @@ KeepAlive restart, and the operator adds the before/after evidence line.
 
 An UNPLANNED restart needs no operator at all now: the daemon dies
 uncleanly, launchd relaunches it as soon as `ThrottleInterval` allows, and the
-wrapper's `reason=keepalive-restart` (or `reason=boot` after a host
-reboot) is the outage's own record. Annotate it when you next look —
-what died, and what the ledger shows on the other side.
+wrapper's `reason=keepalive-restart-consistent` (or `reason=boot-consistent`
+when the readings line up with a host reboot) is the outage's own record —
+opening with how the previous instance ended, decoded from launchd's retained
+status. Annotate it when you next look — what died, and what the ledger shows
+on the other side.
 
 ## Pin bump mid-soak
 

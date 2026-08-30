@@ -168,6 +168,63 @@ Round 2's work is untouched by all of this: the vanished-record probe still
 answers `unknown` 20 times out of 20, and the seven per-input degradation
 proofs are green at 19 passed / 0 failed.
 
+## The fifth instance, from the printing side (2026-08-30)
+
+Rounds 1-3 hardened the READING: every input yields a value the wrapper can
+prove it read, or `unknown`; the conclusion is labelled a derivation and the
+readings ride on the line beside it. The fifth instance came from the other
+end of the pipe.
+
+The verifier drove the real start path with launchd retaining
+`LastExitStatus = 15` and got, at rc 0, one line saying both:
+
+```
+previous jinnd 75738 ended UNCLEAN; DERIVED keepalive-restart-consistent: …
+launchd is relaunching a daemon that ended on its own …
+prev_end="killed by signal 15 (SIGTERM)"
+```
+
+*"Ended on its own"* and *"killed by signal 15"* are the same line
+contradicting itself. No forgery, no race, no missing file — a real start path
+with an ordinary status. An auditor reading it on 2026-09-04 learns only that
+the wrapper does not know what it is saying, which is worse than a wrong label:
+a wrong label can be re-derived from the evidence, a self-contradicting one
+cannot be trusted at all.
+
+**Why it happened is the same law, applied to the writer rather than the
+reader.** The status was decoded in one place, for the `prev_end=` field. The
+narrative was worded in another, as a literal in the `printf`. Two statements
+about one value, and nothing holding them together: the moment the reading
+changed shape, the literal stayed where it was. *A statement made without its
+proof beside it drifts from the proof* — the round-3 lesson was that a claim
+needs its evidence on the line; this is the same lesson one level in, that a
+sentence about a reading must be RENDERED FROM the reading.
+
+**The fix is not a check that they agree.** A check is a fourth guard, and
+guards are what failed three times. There is now ONE decode, into a kind, and
+the field, the `prev_end_clean` token and the narrative phrase are three
+renderings of that one dispatch — the phrase *containing* the field verbatim
+(`ended UNCLEAN: killed by signal 15 (SIGTERM)`). Disagreement is not
+prevented; it is unrepresentable, because there is no second wording left to
+disagree with.
+
+Two things followed from doing it properly rather than patching the sentence:
+
+- **The keepalive derivation stopped claiming how the daemon ended.** What two
+  timestamps derive is that the host did not reboot under the daemon. *How* it
+  ended is a different reading, and it now lives only where that reading is
+  decoded. The old sentence had quietly bundled the two.
+- **`proven_status` extends round 2's inversion to the status.** An
+  optionally-signed run of digits, or `unknown`; the previous `${raw:-unknown}`
+  would have accepted whatever a reshaped `launchctl list` printed.
+
+Red-first across the whole exit-status space — signal death, clean exit, dirty
+exit, no retained status — over the real start path, because the dry run prints
+only the evidence record and the narrative could hide nowhere else. The
+assertion is deliberately not "the two agree": the narrative must END with the
+decoded field verbatim, so a future paraphrase fails the gate even if it
+happens to be true.
+
 ## What is deliberately NOT claimed
 
 The sender of the SIGTERM is unknown. jetsam is ruled out by the signal
