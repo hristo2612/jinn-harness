@@ -1210,9 +1210,12 @@ fn each_start_opens_a_duty_segment_and_closes_the_previous_one() {
 fn record_build_derives_every_field_it_writes() {
     let scratch = Scratch::new("record-build");
     scratch.install_daemon("#!/bin/sh\nexit 0\n");
+    // The layout the composition harness really produces: the archive is
+    // extracted, the daemon is built inside its own target dir, and the
+    // `.commit` marker sits at the archive root.
     let built = scratch.root.join("built");
-    std::fs::create_dir_all(&built).expect("built");
-    std::fs::write(built.join("jinnd"), "#!/bin/sh\nexit 0\n").expect("built daemon");
+    std::fs::create_dir_all(built.join("target/debug")).expect("built");
+    std::fs::write(built.join("target/debug/jinnd"), STUB_DAEMON).expect("built daemon");
     std::fs::write(
         built.join(".commit"),
         "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4\n",
@@ -1253,6 +1256,19 @@ fn record_build_derives_every_field_it_writes() {
     assert!(
         record.contains("harness-pin=3a8e5c03fdbe2f21144faee8daba73beeb75d8b4"),
         "{record}"
+    );
+
+    // A bare directory holding the daemon is the second accepted shape.
+    let flat = scratch.root.join("flat");
+    std::fs::create_dir_all(&flat).expect("flat");
+    std::fs::write(flat.join("jinnd"), STUB_DAEMON).expect("flat daemon");
+    std::fs::write(flat.join(".commit"), "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4\n")
+        .expect("flat marker");
+    let flat_ok = run(&[flat.as_os_str(), repo.as_os_str()]);
+    assert!(
+        flat_ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&flat_ok.stderr)
     );
 
     // A missing marker is a refusal, never a record with a hole in it: half a

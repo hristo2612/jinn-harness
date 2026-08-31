@@ -4,9 +4,10 @@
 # usage: tools/soak/record-build.sh <built-daemon-dir> [<repo-root>]
 #
 #   <built-daemon-dir>  the composition harness's pinned build —
-#                       `target/composition/pinned-jinnd`, holding the
-#                       binary and the `.commit` marker the git-archive
-#                       build wrote beside it.
+#                       `target/composition/pinned-jinnd`: the extracted
+#                       archive, carrying the `.commit` marker the
+#                       git-archive build wrote at its root and the daemon
+#                       under its own `target/debug/`.
 #   <repo-root>         where KERNEL-PIN.md is read from (default: the
 #                       repo this script lives in).
 #
@@ -54,8 +55,20 @@ repo=${2:-$(cd "$(dirname "$0")/../.." && pwd)}
 
 fail() { echo "record-build: $1" >&2; exit 1; }
 
-[ -f "$built/jinnd" ] || fail "no daemon at $built/jinnd"
-[ -f "$built/.commit" ] || fail "no .commit marker beside $built/jinnd — the pin is derived from it, never typed"
+# The daemon's place inside the build, resolved once and REPORTED. The
+# composition harness extracts the archive and builds inside it, so the
+# binary sits under the archive's own target dir; a bare directory holding
+# the binary is accepted too. Which one answered is printed, because a
+# script that silently accepts two shapes is a script whose reader does not
+# know which one it got.
+daemon=
+for candidate in "$built/target/debug/jinnd" "$built/jinnd"; do
+    [ -f "$candidate" ] || continue
+    daemon=$candidate
+    break
+done
+[ -n "$daemon" ] || fail "no daemon under $built (looked in target/debug/jinnd and jinnd)"
+[ -f "$built/.commit" ] || fail "no .commit marker at $built — the pin is derived from it, never typed"
 [ -f "$repo/KERNEL-PIN.md" ] || fail "no KERNEL-PIN.md under $repo — the harness pin is read from it"
 
 running_pin=$(tr -d '[:space:]' <"$built/.commit")
@@ -67,7 +80,7 @@ harness_pin=$(sed -n 's/^commit:[[:space:]]*\([0-9a-f][0-9a-f]*\)[[:space:]]*$/\
 [ -n "$harness_pin" ] || fail "no 'commit:' line in $repo/KERNEL-PIN.md"
 
 mkdir -p "$SOAK/bin"
-install -m 0755 "$built/jinnd" "$SOAK/bin/jinnd"
+install -m 0755 "$daemon" "$SOAK/bin/jinnd"
 
 # The digest is taken from the INSTALLED bytes, not the source ones: what
 # the wrapper will hash is what is described.
@@ -90,6 +103,6 @@ mv "$record.tmp" "$record"
 # order 5: one home per fact).
 rm -f "$SOAK/bin/jinnd.commit"
 
-echo "installed: $SOAK/bin/jinnd"
+echo "installed: $SOAK/bin/jinnd (from $daemon)"
 echo "recorded:  $record"
 sed 's/^/  /' "$record"
