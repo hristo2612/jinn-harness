@@ -532,6 +532,9 @@ fn the_operator_api_cannot_change_what_a_plugin_is_only_what_it_is_configured_wi
     daemon.eventually("the config patch to land", || {
         entry(&listing(port, MAIN), FIXED_ID)["package"] == FIXED_PACKAGE
     });
-    assert_eq!(entry(&listing(port, MAIN), FIXED_ID)["package"], FIXED_PACKAGE);
+    assert_eq!(
+        entry(&listing(port, MAIN), FIXED_ID)["package"],
+        FIXED_PACKAGE
+    );
     daemon.interrupt();
 }
