@@ -19,6 +19,7 @@ publish = false
 jinn-engine = { path = "../../engines/jinn-engine" }
 # The sessions seam's operation names, contract names and error
 # vocabulary, borrowed from their one home rather than spelled again.
+jinn-plugins = { path = "../../plugins/jinn-plugins" }
 jinn-session = { path = "../../sessions/jinn-session" }
 jinn-todo = { path = "../../todos/jinn-todo" }
 # The workflows seam's operation names, contract names and error

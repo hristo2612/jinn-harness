@@ -266,6 +266,7 @@ name = "jinn-api"
 version = "0.1.0"
 dependencies = [
  "jinn-engine",
+ "jinn-plugins",
  "jinn-session",
  "jinn-todo",
  "jinn-workflow",
@@ -417,6 +418,18 @@ name = "pkg-config"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f6b464fbc74e149a392436b17d523f769e057cb6877f6a5c4618bc6f11800548"
+
+[[package]]
+name = "plugin-kit"
+version = "0.1.0"
+dependencies = [
+ "api-kit",
+ "cron-kit",
+ "jinn-api",
+ "jinn-cron",
+ "jinn-plugins",
+ "serde_json",
+]
 
 [[package]]
 name = "proc-macro2"

@@ -28,6 +28,7 @@ members = [
     "tools/cron-kit",
     "tools/engine-kit",
     "tools/harness-pin",
+    "tools/plugin-kit",
     "tools/session-kit",
     "tools/todo-kit",
     "tools/workflow-kit",
