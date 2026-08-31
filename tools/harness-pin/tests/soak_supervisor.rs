@@ -1283,3 +1283,277 @@ fn record_build_derives_every_field_it_writes() {
         "a derivation that could not read its source still wrote a record"
     );
 }
+
+// A SHAPE IS A READING, AND SO IS EXISTENCE (PLA-297 round 2, both Majors).
+//
+// The round-1 wrapper bound the pin to the binary's digest and called that a
+// derivation. It was not one yet. Every hex reading went through one
+// predicate — "a nonempty run of lowercase hex" — under which `a` is a
+// commit, `a` is a sha256, and a record saying `running-pin=a harness-pin=b`
+// is a licensed account of a 64-megabyte daemon. The verifier produced
+// exactly that at rc 0. A validator that accepts `a` proves nothing about the
+// artifact it claims to describe, so deriving from it is transcription with
+// extra steps: this packet's own defect, one level in.
+//
+// Length is therefore part of the shape. A commit is exactly 40 lowercase hex
+// characters and a digest exactly 64; anything else is `unknown` with the
+// attempted reading named, never the malformed value dressed up as one.
+//
+// And "well-formed" is not "is a real commit". They are two readings, so they
+// get two fields, for the same reason `running_pin` and `harness_pin` do: a
+// field that can hold either cannot say which was performed. Where a kernel
+// checkout is reachable the wrapper asks the repo and says so; where it is
+// not — under launchd, which is every real start — it says `well-formed` and
+// claims no more than it looked at.
+
+/// Jinn Taste §1, enforced instead of reviewed. Four of these comments were
+/// deleted from `soak_supervisor.rs` in the previous soak packet's round 6 and
+/// four more arrived in these scripts one packet later, so the class is now a
+/// test rather than something a reviewer has to catch a third time.
+#[test]
+fn no_soak_shell_asset_carries_a_section_divider_comment() {
+    let mut offenders = Vec::new();
+    for entry in std::fs::read_dir(soak_dir()).expect("tools/soak") {
+        let path = entry.expect("dir entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("sh") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).expect("read shell asset");
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("?")
+            .to_owned();
+        for (n, line) in text.lines().enumerate() {
+            let Some(comment) = line.trim_start().strip_prefix('#') else {
+                continue;
+            };
+            if comment.trim_start().starts_with("---") {
+                offenders.push(format!("{name}:{}: {line}", n + 1));
+            }
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "Jinn Taste §1 — no section-divider ASCII. Say it in prose or start a \
+         new file:\n  {}",
+        offenders.join("\n  ")
+    );
+}
+
+#[cfg(target_os = "macos")]
+impl Scratch {
+    /// Run `record-build.sh` over a build whose `.commit` marker and whose
+    /// harness `KERNEL-PIN.md` say exactly what the caller asks. Both inputs
+    /// are the ones the install path really reads.
+    fn record_build(&self, marker: &str, kernel_pin_commit: &str) -> std::process::Output {
+        let built = self.root.join("built");
+        let _ = std::fs::remove_dir_all(&built);
+        std::fs::create_dir_all(built.join("target/debug")).expect("built");
+        std::fs::write(built.join("target/debug/jinnd"), STUB_DAEMON).expect("built daemon");
+        std::fs::write(built.join(".commit"), format!("{marker}\n")).expect("marker");
+        let repo = self.root.join("repo");
+        std::fs::create_dir_all(&repo).expect("repo");
+        std::fs::write(
+            repo.join("KERNEL-PIN.md"),
+            format!("```\nrepo: https://example.invalid/jinnd\ncommit: {kernel_pin_commit}\n```\n"),
+        )
+        .expect("KERNEL-PIN.md");
+        Command::new("/bin/sh")
+            .arg(soak_dir().join("record-build.sh"))
+            .arg(&built)
+            .arg(&repo)
+            .env("SOAK", &self.root)
+            .output()
+            .expect("/bin/sh")
+    }
+
+    /// A real git repository holding one real commit, standing in for the
+    /// kernel checkout the pin is looked up in. Returns its path and the sha
+    /// it actually holds, so the resolving case is proven against an object
+    /// that exists rather than against a mock that always says yes.
+    fn kernel_repo(&self) -> (PathBuf, String) {
+        let dir = self.root.join("kernel-repo");
+        std::fs::create_dir_all(&dir).expect("kernel repo");
+        let git = |args: &[&str]| -> std::process::Output {
+            let out = Command::new("git")
+                .args(args)
+                .current_dir(&dir)
+                .output()
+                .expect("git");
+            assert!(
+                out.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            out
+        };
+        git(&["init", "-q"]);
+        git(&[
+            "-c",
+            "user.email=soak@example.invalid",
+            "-c",
+            "user.name=soak",
+            "commit",
+            "-q",
+            "--allow-empty",
+            "-m",
+            "the commit the pin names",
+        ]);
+        let sha = String::from_utf8_lossy(&git(&["rev-parse", "HEAD"]).stdout)
+            .trim()
+            .to_owned();
+        (dir, sha)
+    }
+
+    /// The dry run with a kernel checkout reachable, which is the only
+    /// condition under which existence is answerable at all.
+    fn dry_run_against(&self, kernel_repo: &Path) -> String {
+        let output = Command::new("/bin/sh")
+            .arg(soak_dir().join("soak-run.sh"))
+            .env("SOAK", &self.root)
+            .env("SOAK_DRY_RUN", "1")
+            .env("PATH", &self.path)
+            .env("JINND_DIR", kernel_repo)
+            .output()
+            .expect("/bin/sh");
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        String::from_utf8_lossy(&output.stdout).into_owned()
+    }
+}
+
+/// THE VERIFIER'S REPRODUCTION, verbatim: a `.commit` marker of `a` and a
+/// `KERNEL-PIN.md` commit of `b`. Round 1 wrote the record at rc 0 and the
+/// wrapper reported `running_pin=a harness_pin=b`. Neither is a commit.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_one_character_hex_string_is_never_a_pin() {
+    let scratch = Scratch::new("pin-one-char");
+
+    let refused = scratch.record_build("a", "b");
+    assert!(
+        !refused.status.success(),
+        "record-build wrote a record from a one-character marker: {}",
+        String::from_utf8_lossy(&refused.stdout)
+    );
+    let complaint = String::from_utf8_lossy(&refused.stderr);
+    assert!(
+        complaint.contains("40"),
+        "the refusal must name the shape it wanted: {complaint}"
+    );
+    assert!(
+        !scratch.root.join("bin/jinnd.build").exists()
+            || !std::fs::read_to_string(scratch.root.join("bin/jinnd.build"))
+                .expect("record")
+                .contains("running-pin=a"),
+        "the malformed marker reached the record anyway"
+    );
+
+    // And the wrapper, handed such a record with an otherwise perfect digest,
+    // reports no pin rather than a one-character one.
+    scratch.ancient_pid_record("file");
+    scratch.build_record(&scratch.daemon_sha256(), "a", "b");
+    let out = scratch.dry_run();
+    assert!(
+        out.contains("running_pin=unknown") && out.contains("harness_pin=unknown"),
+        "a one-character hex string was reported as a pin: {out}"
+    );
+    assert!(
+        !out.contains("running_pin=a ") && !out.contains("harness_pin=b "),
+        "the malformed value was dressed up as a reading: {out}"
+    );
+    assert!(
+        out.contains("build-record-unreadable"),
+        "what could not be read must be named: {out}"
+    );
+}
+
+/// The digest is the same class of reading and gets the same treatment: a
+/// one-character `binary-sha256` is not a digest, and the join it would
+/// otherwise license is between two strings that describe nothing.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_one_character_hex_string_is_never_a_digest() {
+    let scratch = Scratch::new("digest-one-char");
+    scratch.ancient_pid_record("file");
+    scratch.build_record("a", RUNNING_PIN, HARNESS_PIN);
+    let out = scratch.dry_run();
+    assert!(
+        out.contains("running_pin=unknown"),
+        "a record whose digest is not a digest still licensed a pin: {out}"
+    );
+    assert!(
+        out.contains("build-record-unreadable"),
+        "the unreadable record must be named: {out}"
+    );
+}
+
+/// Shape and existence are two readings and never share a field. With no
+/// kernel checkout reachable — which is every launchd start — the wrapper
+/// says which check it actually performed.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_unreachable_kernel_repo_yields_a_well_formed_reading_and_says_so() {
+    let scratch = Scratch::new("pin-shape-only");
+    scratch.ancient_pid_record("file");
+    let out = scratch.dry_run();
+    assert!(out.contains(&format!("running_pin={RUNNING_PIN}")), "{out}");
+    assert!(
+        out.contains("running_pin_checked=well-formed"),
+        "the wrapper must say it checked the shape and nothing more: {out}"
+    );
+    assert!(
+        out.contains("harness_pin_checked=well-formed"),
+        "the harness pin is the same kind of reading: {out}"
+    );
+}
+
+/// Where a checkout IS reachable, the stronger reading is taken and named.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_reachable_kernel_repo_proves_the_pin_resolves() {
+    let scratch = Scratch::new("pin-resolves");
+    scratch.ancient_pid_record("file");
+    let (repo, sha) = scratch.kernel_repo();
+    scratch.build_record(&scratch.daemon_sha256(), &sha, &sha);
+    let out = scratch.dry_run_against(&repo);
+    assert!(out.contains(&format!("running_pin={sha}")), "{out}");
+    assert!(
+        out.contains("running_pin_checked=resolves-in-kernel-repo"),
+        "a pin the repo really holds must be reported as resolved: {out}"
+    );
+    assert!(
+        out.contains("unproven=none"),
+        "everything here was readable: {out}"
+    );
+}
+
+/// A well-formed sha the kernel repo does not hold is not a commit, and the
+/// difference is only visible because the two readings are separate.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_well_formed_pin_the_kernel_repo_does_not_hold_is_not_a_commit() {
+    let scratch = Scratch::new("pin-absent");
+    scratch.ancient_pid_record("file");
+    let (repo, _real) = scratch.kernel_repo();
+    let plausible = "0123456789abcdef0123456789abcdef01234567";
+    scratch.build_record(&scratch.daemon_sha256(), plausible, plausible);
+    let out = scratch.dry_run_against(&repo);
+    assert!(
+        !out.contains(&format!("running_pin={plausible}")),
+        "a sha nothing holds was reported as the running pin: {out}"
+    );
+    assert!(out.contains("running_pin=unknown"), "{out}");
+    assert!(
+        out.contains("running_pin_checked=absent-from-kernel-repo"),
+        "the reading that failed must be the one reported: {out}"
+    );
+    assert!(
+        out.contains("pin-absent-from-kernel-repo"),
+        "an unproven pin must be named among the unproven inputs: {out}"
+    );
+}
