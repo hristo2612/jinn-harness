@@ -15,7 +15,7 @@
 # `$SOAK/bin/jinnd.build`, which is the ONLY thing the wrapper will accept
 # as an account of what it is running.
 #
-# --- Why this script exists at all.
+# Why this script exists at all.
 #
 # The pin used to reach the soak as `cp …/.commit "$SOAK/bin/jinnd.commit"`
 # beside the binary, and the +7d audit's own artifact (`meta.json`) was
@@ -30,7 +30,7 @@
 # describe the binary that is running, which is a readable fact rather than
 # an invisible one.
 #
-# --- Why every field is derived and none is an argument.
+# Why every field is derived and none is an argument.
 #
 # A field a person can type is a field that can be typed wrong, and this
 # packet exists because one was. So:

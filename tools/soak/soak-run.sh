@@ -40,7 +40,7 @@ if [ "${SOAK_DRY_RUN:-}" != 1 ]; then
     mkdir -p "$SOAK/logs" "$SOAK/run"
 fi
 
-# --- What happened to the previous instance, and why this start happened.
+# What happened to the previous instance, and why this start happened.
 #
 # The wrapper exec's the daemon, so nobody is standing beside it when it
 # dies: the record of a death is written HERE, at the next start, from
@@ -64,7 +64,7 @@ fi
 #   unknown                 anything else, including everything not yet
 #                           imagined — see below
 #
-# --- Why two of those say `-consistent`, and none says `boot`.
+# Why two of those say `-consistent`, and none says `boot`.
 #
 # `boot` is a causal claim about the HOST. The wrapper's inputs are a
 # sysctl reading and a file's mtime; from those it can derive that the
@@ -84,7 +84,7 @@ fi
 # A wrong input is then visible as a wrong input on 2026-09-04, instead of
 # hiding inside a confident word.
 #
-# --- Why `unknown` exists, and why it is the default.
+# Why `unknown` exists, and why it is the default.
 #
 # Three times running, a missing or unreadable input degraded into a value
 # that made a positive claim true: a vanished stamp file wrote `boot`; an
@@ -163,7 +163,7 @@ proven_status() {
     esac
 }
 
-# --- Input 1: the host's boot time.
+# Input 1: the host's boot time.
 boot_sec=$(proven_digits "$(sysctl -n kern.boottime 2>/dev/null \
     | sed -n 's/^{[[:space:]]*sec[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[^0-9].*/\1/p')")
 if [ "$boot_sec" = unknown ]; then
@@ -174,7 +174,7 @@ else
     boot_at=$(date -u -r "$boot_sec" +%FT%TZ 2>/dev/null || printf unknown)
 fi
 
-# --- Inputs 2 and 3: the previous pid and the previous start's mtime.
+# Inputs 2 and 3: the previous pid and the previous start's mtime.
 #
 # They are one record, so they are proven as one. The record is looked at
 # twice with the read between: a record that answers both looks with the
@@ -219,7 +219,7 @@ else
     prev_start_at=$(date -u -r "$prev_start" +%FT%TZ 2>/dev/null || printf unknown)
 fi
 
-# --- Input 4: how the previous instance ended.
+# Input 4: how the previous instance ended.
 #
 # launchd's LastExitStatus is a wait status: a signal in the low seven
 # bits, an exit code in the high byte (the table form of `launchctl list`
@@ -281,7 +281,7 @@ case "$prev_end_clean" in
     no)      prev_end_phrase="ended UNCLEAN: $prev_end" ;;
     *)       prev_end_phrase="ended, HOW UNKNOWN: $prev_end" ;;
 esac
-# --- Input 5: WHAT IS RUNNING, and what SHOULD be.
+# Input 5: WHAT IS RUNNING, and what SHOULD be.
 #
 # The soak's account of its own kernel used to be two files sitting in one
 # directory — the binary, and a `jinnd.commit` copied beside it — plus a
@@ -364,7 +364,7 @@ last_seen=$(LC_ALL=C sed "s/${esc}\[[0-9;]*m//g" "$SOAK/logs/jinnd.log" 2>/dev/n
     | grep -o '^[0-9][0-9-]*T[0-9:.]*Z' | tail -1)
 last_seen=${last_seen:-unknown}
 
-# --- The decision. Every branch that claims something names its proof.
+# The decision. Every branch that claims something names its proof.
 reason_file="$SOAK/run/launchd.reason"
 operator_reason=unknown
 if [ -f "$reason_file" ]; then
@@ -448,7 +448,7 @@ printf '%s started (launchd; reason=%s): jinnd %s (pin %s) evidence: %s\n' \
     "$started_at" "$reason" "$$" "$running_pin" "$evidence" >>"$SOAK/logs/ops.log"
 printf '%s\n' "$$" >"$SOAK/run/jinnd.pid"
 
-# --- The duty ledger: which pin ran, from when to when.
+# The duty ledger: which pin ran, from when to when.
 #
 # The +7d audit reports duty PER PIN (PLA-297's standing ruling: a supervised
 # bump does not reset the week, and no single pin may carry the whole week and
