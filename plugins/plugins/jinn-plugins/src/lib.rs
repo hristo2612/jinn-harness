@@ -38,6 +38,7 @@ pub mod entry;
 pub mod history;
 pub mod lifecycle;
 pub mod mutants;
+pub mod pin;
 pub mod transition;
 
 #[cfg(test)]
