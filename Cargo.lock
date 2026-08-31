@@ -69,6 +69,7 @@ dependencies = [
  "harness-pin",
  "jinn-api",
  "jinn-cron",
+ "jinn-plugins",
  "jinn-session",
  "jinn-settings",
  "jinn-todo",
