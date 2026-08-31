@@ -318,6 +318,10 @@ impl Scratch {
             .env("SOAK", &self.root)
             .env("SOAK_DRY_RUN", "1")
             .env("PATH", &self.path)
+            // Whether a kernel checkout is reachable changes which reading the
+            // wrapper can take, so it is stated here rather than inherited
+            // from whatever ran the suite.
+            .env_remove("JINND_DIR")
             .output()
             .expect("/bin/sh");
         assert!(

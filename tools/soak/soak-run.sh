@@ -114,12 +114,45 @@ proven_digits() {
     esac
 }
 
-# A digest or a commit is a run of lowercase hex, or it is not a reading.
+# A digest or a commit is a run of lowercase hex OF ITS OWN LENGTH, or it is
+# not a reading. Length is not decoration: without it `a` is a commit and `a`
+# is a sha256, and a record saying `running-pin=a` is a licensed account of a
+# 64-megabyte daemon (PLA-297 round 2). A validator that accepts `a` proves
+# nothing about the artifact it describes, so a derivation from it is
+# transcription with extra steps — this packet's own defect, one level in.
 proven_hex() {
-    case "$1" in
-        '' | *[!0-9a-f]*) printf 'unknown' ;;
-        *) printf '%s' "$1" ;;
+    want=$1
+    value=$2
+    case "$value" in
+        '' | *[!0-9a-f]*) printf 'unknown'; return ;;
     esac
+    if [ "${#value}" -eq "$want" ]; then
+        printf '%s' "$value"
+    else
+        printf 'unknown'
+    fi
+}
+
+# WHETHER A WELL-FORMED PIN IS A REAL COMMIT is a second reading, and it never
+# shares a field with the first. Forty lowercase hex characters is what a
+# commit LOOKS like; whether the kernel repo holds that object is answerable
+# only where a checkout is reachable, and under launchd — which is every real
+# start — it is not. So the check that was actually performed is reported
+# beside the value, for the same reason `running_pin` and `harness_pin` are
+# two fields: one field that can hold either reading cannot say which it is.
+#
+# A pin the repo provably does NOT hold is not a weaker pin, it is not a
+# commit, and the value falls to `unknown` with the failed reading named.
+commit_check() {
+    if [ "$1" = unknown ]; then
+        printf 'no-pin'
+    elif [ -z "${JINND_DIR:-}" ] || [ ! -d "${JINND_DIR:-}/.git" ]; then
+        printf 'well-formed'
+    elif git -C "$JINND_DIR" cat-file -e "$1^{commit}" 2>/dev/null; then
+        printf 'resolves-in-kernel-repo'
+    else
+        printf 'absent-from-kernel-repo'
+    fi
 }
 
 # A wait status is an optionally-signed run of digits, or it is not one.
@@ -273,7 +306,7 @@ build_record="$SOAK/bin/jinnd.build"
 pin_unproven=
 binary_sha256=unknown
 if [ -f "$daemon_path" ]; then
-    binary_sha256=$(proven_hex "$(shasum -a 256 "$daemon_path" 2>/dev/null | awk '{print $1}' || true)")
+    binary_sha256=$(proven_hex 64 "$(shasum -a 256 "$daemon_path" 2>/dev/null | awk '{print $1}' || true)")
 fi
 [ "$binary_sha256" != unknown ] || pin_unproven="$pin_unproven running-binary"
 
@@ -282,11 +315,11 @@ recorded_running=unknown
 recorded_harness=unknown
 if [ -f "$build_record" ]; then
     record_field() {
-        proven_hex "$(sed -n "s/^$1=//p" "$build_record" 2>/dev/null | head -1 | tr -d '[:space:]' || true)"
+        proven_hex "$1" "$(sed -n "s/^$2=//p" "$build_record" 2>/dev/null | head -1 | tr -d '[:space:]' || true)"
     }
-    recorded_sha=$(record_field binary-sha256)
-    recorded_running=$(record_field running-pin)
-    recorded_harness=$(record_field harness-pin)
+    recorded_sha=$(record_field 64 binary-sha256)
+    recorded_running=$(record_field 40 running-pin)
+    recorded_harness=$(record_field 40 harness-pin)
 else
     pin_unproven="$pin_unproven build-record"
 fi
@@ -310,6 +343,20 @@ if [ "$binary_sha256" != unknown ] && [ "$recorded_sha" != unknown ]; then
     fi
 elif [ "$recorded_sha" = unknown ] && [ -f "$build_record" ]; then
     pin_unproven="$pin_unproven build-record-unreadable"
+fi
+
+# The second reading, taken where it is answerable and NAMED either way. A pin
+# the repo provably does not hold is not a pin, so the value goes and the
+# check that sank it stays: `unknown` with the reading that was attempted.
+running_pin_checked=$(commit_check "$running_pin")
+harness_pin_checked=$(commit_check "$harness_pin")
+if [ "$running_pin_checked" = absent-from-kernel-repo ]; then
+    running_pin=unknown
+    pin_unproven="$pin_unproven running-pin-absent-from-kernel-repo"
+fi
+if [ "$harness_pin_checked" = absent-from-kernel-repo ]; then
+    harness_pin=unknown
+    pin_unproven="$pin_unproven harness-pin-absent-from-kernel-repo"
 fi
 
 esc=$(printf '\033')
@@ -356,10 +403,10 @@ fi
 
 # Built ONCE, printed everywhere: the dry run, the death line and the start
 # line are three views of one record, so they cannot drift apart.
-evidence=$(printf 'host_boot_sec=%s host_boot=%s prev_record=%s prev_pid=%s prev_start_sec=%s prev_start=%s prev_end_raw=%s prev_end="%s" prev_end_clean=%s last_seen=%s binary_sha256=%s running_pin=%s harness_pin=%s unproven=%s' \
+evidence=$(printf 'host_boot_sec=%s host_boot=%s prev_record=%s prev_pid=%s prev_start_sec=%s prev_start=%s prev_end_raw=%s prev_end="%s" prev_end_clean=%s last_seen=%s binary_sha256=%s running_pin=%s running_pin_checked=%s harness_pin=%s harness_pin_checked=%s unproven=%s' \
     "$boot_sec" "$boot_at" "$prev_record" "$prev_pid" "$prev_start" "$prev_start_at" \
     "$prev_end_raw" "$prev_end" "$prev_end_clean" "$last_seen" \
-    "$binary_sha256" "$running_pin" "$harness_pin" "$unproven")
+    "$binary_sha256" "$running_pin" "$running_pin_checked" "$harness_pin" "$harness_pin_checked" "$unproven")
 
 # Dry run (the harness-pin gate, and an operator checking the decision):
 # print it, touch nothing, start nothing. An unproven decision names what

@@ -71,13 +71,33 @@ done
 [ -f "$built/.commit" ] || fail "no .commit marker at $built — the pin is derived from it, never typed"
 [ -f "$repo/KERNEL-PIN.md" ] || fail "no KERNEL-PIN.md under $repo — the harness pin is read from it"
 
-running_pin=$(tr -d '[:space:]' <"$built/.commit")
-case "$running_pin" in
-    *[!0-9a-f]* | '') fail "the .commit marker is not a commit: '$running_pin'" ;;
-esac
+# A commit is exactly 40 lowercase hex characters. Length is not decoration:
+# without it `a` passes, and a record whose pin is `a` describes nothing while
+# looking exactly like one that does (PLA-297 round 2).
+is_commit() {
+    case "$1" in
+        *[!0-9a-f]* | '') return 1 ;;
+    esac
+    [ "${#1}" -eq 40 ]
+}
 
-harness_pin=$(sed -n 's/^commit:[[:space:]]*\([0-9a-f][0-9a-f]*\)[[:space:]]*$/\1/p' "$repo/KERNEL-PIN.md" | head -1)
-[ -n "$harness_pin" ] || fail "no 'commit:' line in $repo/KERNEL-PIN.md"
+running_pin=$(tr -d '[:space:]' <"$built/.commit")
+is_commit "$running_pin" \
+    || fail "the .commit marker is not a commit (want 40 lowercase hex, read ${#running_pin} characters): '$running_pin'"
+
+harness_pin=$(sed -n 's/^commit:[[:space:]]*\([0-9a-f]\{40\}\)[[:space:]]*$/\1/p' "$repo/KERNEL-PIN.md" | head -1)
+[ -n "$harness_pin" ] || fail "no 'commit:' line naming 40 lowercase hex characters in $repo/KERNEL-PIN.md"
+
+# Where a kernel checkout is reachable, the stronger reading is available and
+# is taken: a well-formed sha nothing holds is not a commit. Which check was
+# performed is REPORTED rather than assumed, because the install path can run
+# with no checkout in sight and "well-formed" is a different claim.
+pin_check=well-formed
+if [ -n "${JINND_DIR:-}" ] && [ -d "${JINND_DIR:-}/.git" ]; then
+    git -C "$JINND_DIR" cat-file -e "$running_pin^{commit}" 2>/dev/null \
+        || fail "the .commit marker names no commit in $JINND_DIR: '$running_pin'"
+    pin_check=resolves-in-kernel-repo
+fi
 
 mkdir -p "$SOAK/bin"
 install -m 0755 "$daemon" "$SOAK/bin/jinnd"
@@ -88,6 +108,7 @@ sha=$(shasum -a 256 "$SOAK/bin/jinnd" 2>/dev/null | awk '{print $1}')
 case "$sha" in
     *[!0-9a-f]* | '') fail "could not digest $SOAK/bin/jinnd" ;;
 esac
+[ "${#sha}" -eq 64 ] || fail "not a sha256 of $SOAK/bin/jinnd: '$sha'"
 
 record=$SOAK/bin/jinnd.build
 cat >"$record.tmp" <<RECORD
@@ -104,5 +125,6 @@ mv "$record.tmp" "$record"
 rm -f "$SOAK/bin/jinnd.commit"
 
 echo "installed: $SOAK/bin/jinnd (from $daemon)"
+echo "pin check: $pin_check"
 echo "recorded:  $record"
 sed 's/^/  /' "$record"
