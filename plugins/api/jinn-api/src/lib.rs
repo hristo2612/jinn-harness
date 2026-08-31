@@ -15,6 +15,7 @@ pub mod engines;
 pub mod kernel;
 pub mod sessions;
 pub mod todos;
+pub mod workflows;
 
 pub use engines::{
     decode_engine_answer, engine_api_error, engine_list, engine_routable, engine_route,
@@ -32,6 +33,11 @@ pub use todos::{
     decode_todo_answer, is_todos_path, no_such_todo_store, todo_api_error, todo_payload,
     todo_route, todo_store_list, todo_store_routable, TodoRoute, TodoStoreEntry, TodoStoreList,
     TODOS_PATH, TODO_METHODS,
+};
+pub use workflows::{
+    decode_workflow_answer, is_workflows_path, no_such_workflow_store, workflow_api_error,
+    workflow_payload, workflow_route, workflow_store_list, workflow_store_routable, WorkflowRoute,
+    WorkflowStoreEntry, WorkflowStoreList, RUNS_SEGMENT, WORKFLOWS_PATH, WORKFLOW_METHODS,
 };
 
 pub use kernel::{

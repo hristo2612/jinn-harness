@@ -22,6 +22,9 @@ jinn-session = { path = "../../plugins/sessions/jinn-session" }
 # The todos seam's reason strings and vocabulary, asserted verbatim from
 # their one home rather than spelled again in a test.
 jinn-todo = { path = "../../plugins/todos/jinn-todo" }
+# The workflows seam's reason strings and vocabulary, asserted verbatim
+# from their one home rather than spelled again in a test.
+jinn-workflow = { path = "../../plugins/workflows/jinn-workflow" }
 harness-pin = { path = "../../tools/harness-pin" }
 jinn-api = { path = "../../plugins/api/jinn-api" }
 jinn-cron = { path = "../../plugins/cron/jinn-cron" }

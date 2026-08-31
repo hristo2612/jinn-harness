@@ -1027,3 +1027,71 @@ fn the_same_dispatch_runs_over_a_vendor_engine_when_the_operator_names_one() {
     );
     daemon.interrupt();
 }
+
+/// The id this store mints after `minted` — the name a daemon killed
+/// inside its very next `create` would leave a document under.
+fn next_id(minted: &str) -> String {
+    let (prefix, number) = minted.rsplit_once('-').expect("an id ends in its number");
+    let number: u64 = number.parse().expect("a numeric id");
+    format!("{prefix}-{}", number + 1)
+}
+
+#[test]
+fn the_id_of_a_record_less_document_is_never_handed_to_a_new_todo() {
+    // Round 2 taught this store to read a record-less document as
+    // absence, which is right and is half an answer. The other half is
+    // the BYTES and the ID: the document is still named for an id, and a
+    // `create` that minted it again would write the new Todo's first
+    // record into it. That half was missing one layer down and turned an
+    // accepted absence into a journal that refuses to replay, so it is
+    // proven here rather than assumed to be inherited (`FINDINGS.md` #36).
+    let Some((daemon, port, root)) = booted("todos-record-less-id") else {
+        return;
+    };
+    let real = create(port, DEFAULT_STORE, "work that really happened");
+    let absent = next_id(&real);
+    let path = daemon.data(&format!("todos/{absent}.jsonl"));
+    daemon.kill();
+    std::fs::write(&path, b"{").expect("write the record-less journal");
+    let daemon = reboot(&root);
+
+    // The bytes are gone, and nothing was written where a record never
+    // was: a drop is the only repair.
+    let after = std::fs::read(&path).unwrap_or_default();
+    assert!(
+        after.is_empty(),
+        "the incomplete bytes survived the boot: {:?}",
+        String::from_utf8_lossy(&after)
+    );
+    let read = get(port, &format!("/v1/todos/{DEFAULT_STORE}/{absent}"));
+    assert_eq!(
+        read.status, 404,
+        "one byte that was never a record answered as a Todo: {}",
+        read.raw
+    );
+    let described = described(port, DEFAULT_STORE);
+    assert!(
+        described["describe"]["extra"]["documents-without-a-record"]
+            .as_u64()
+            .is_some_and(|seen| seen >= 1),
+        "a store that discards a whole document says so: {described}"
+    );
+
+    // The id is spoken for, and the Todo created next lands in a document
+    // of its own that is whole from its first byte.
+    let fresh = create(port, DEFAULT_STORE, "work after an absence");
+    assert_ne!(
+        fresh, absent,
+        "a new Todo was handed the record-less document's id"
+    );
+    let document = journal(&daemon, &fresh).expect("the new Todo's journal");
+    assert_untorn(&document, "the Todo created after the absence");
+
+    // And the store comes back: the boot after is where the fusion would
+    // have shown up as a replay that refuses.
+    daemon.kill();
+    let daemon = reboot(&root);
+    record(port, DEFAULT_STORE, &fresh);
+    record(port, DEFAULT_STORE, &real);
+    daemon.interrupt();
+}

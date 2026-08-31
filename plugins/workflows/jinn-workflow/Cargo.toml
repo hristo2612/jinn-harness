@@ -1,0 +1,24 @@
+# The workflows seam's SERVICE DEFINITION (AGENTS.md standing order 4):
+# the `jinn:workflow.<store-id>` contract's vocabulary, the node-state law
+# and its explicit legal-transition table, the run journal's record law,
+# the run-to-definition-revision PINNING, and the run logic every run
+# store shares — pure types + logic, no host calls, unit-tested here and
+# compiled into the guests and the host tools alike. A provider adds only
+# where the runs live.
+[package]
+name = "jinn-workflow"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+# A workflow NODE dispatches through the todos seam's DEFINITION, whose
+# one home is there: a node names a Todo store and a dispatch binding,
+# and a provider drives `jinn:todo.<store>`. The wire law and the
+# closed-surface refusal come through it from `jinn-settings`.
+jinn-todo = { path = "../../todos/jinn-todo" }
+jinn-settings = { path = "../../settings/jinn-settings" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"

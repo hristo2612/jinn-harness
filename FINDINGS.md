@@ -10,7 +10,10 @@ Phase 1.3 (cron seam) baseline: every entry below was hit while building
 the first real capability. Evidence grades were audited by the independent
 round-1 verification and are stated per entry: entries 1, 2, 3, 6, and 8
 are packet-card-ready (reproducible, shaped); the rest are honest
-observations whose cards need more evidence, marked as such. What HELD is
+observations whose cards need more evidence, marked as such. Entry **35** is
+answered in place by phase 2.6 — the fourth layer it predicted now
+exists, so its term is a measured number rather than a structure, and the
+prediction held. What HELD is
 at the bottom — the kernel earned that section too. Entries 1 and 2 are
 **closed** as of the `01133c45` pin bump (jinnd M2-K2) and entries 3 and 8
 as of the `41cb2f47` pin bump (jinnd M2-K3), and entries 14 and 15 (hit
@@ -38,6 +41,12 @@ refusal, and no log line. Entry 31 was hit adopting the same pin in the
 settings seam and is the entry-26 closure's shadow: the non-blocking
 `patch-entry` is right, and it turned a concealed dispatch hazard into a
 live one; it is **closed** as of the `3a8e5c0` pin bump (jinnd M2-K9).
+Entry **36** is a DISTRIBUTION finding rather than a kernel gap, opened by
+phase 2.6's round-2 verification: it records the seventh instance of the
+absence class and, more importantly, the structural reading of it — six
+seams hand-rolling the same replay, each getting a different part of it
+wrong. The three journal seams are fixed in place; the shared typed
+outcome it proposes is its own card and is deliberately NOT built there.
 Entry 32 was hit adopting that pin (phase 2.4) on the path entry 31 used
 to cut short: it gives entry 4's nested-dispatch deadlock its first real
 transcripts, shows that `Emit` blocks the emitter exactly as serial does,
@@ -1635,7 +1644,10 @@ demand.
 on adoption: a replay that reports `torn_tail_bytes > 0` is followed by a
 full `fs::write` of the whole prefix
 (`plugins/todos/jinn-todo-fs/src/journal.rs::heal`), and `describe`
-reports `healed-tails` so bytes are never discarded in silence. No record
+reports `healed-tails` so bytes are never discarded in silence. The same
+workaround now sits in all THREE durable stores — the workflows store from
+phase 2.6, and the sessions store from its round 3, where its absence had
+left this fuse live (#36's round-3 section). No record
 is lost — by the reader's own law those bytes were never a record — but
 this is a REWRITE of an append-only document, and it costs the whole
 document's bytes per heal. On a long-lived ledger that is the wrong shape
@@ -1703,3 +1715,318 @@ measured end-to-end latency at each layer, has not established a
 distribution, and does not claim a number. The deadlines the suite uses
 are generous margins, not measurements. A card should start by measuring
 it at two and three layers.
+
+### CLOSED as a prediction — MEASURED at pin `3a8e5c0`, phase 2.6
+
+The entry above stands as the record of what it claimed and how it was
+graded. This is its answer, appended in place rather than filed
+elsewhere.
+
+Phase 2.6 added the fourth layer the entry was about
+(`jinn:workflow.<store>` over `jinn:todo.<store>` over
+`jinn:session.<store>` over `jinn:engine.<id>`), so the prediction became
+testable and `tests/composition/tests/workflows.rs::dispatch_latency_at_two_three_and_four_layers`
+tested it. All three depths are driven from ONE daemon, on the same
+engine, at the same poll period, in the same minutes, so they differ in
+the number of layers and in nothing else; each depth's workflow is a
+single dispatch node with no edges, so a run is one pass through the stack
+with no graph walk mixed in; and the observer polls at 15 ms against
+stores that poll at 250 ms, so the measurement is not dominated by the
+measuring.
+
+```
+FINDINGS #35, measured at poll-ms=250 per store layer (observer polls every 15 ms, 5 samples, one daemon):
+  2 layers (session -> engine)              median 513 ms  samples [508, 508, 513, 564, 548]
+  3 layers (todo -> session -> engine)      median 755 ms  samples [721, 752, 772, 755, 783]
+  4 layers (workflow -> todo -> ...)        median 1084 ms  samples [1041, 1121, 1084, 1087, 1079]
+  per-layer term: 3-2 = 242 ms, 4-3 = 329 ms (the additive model predicts one poll period, 250 ms, for each)
+```
+
+**The additive model is CONFIRMED.** The third layer costs 242 ms against
+a predicted 250 ms — within 3%, which is as close as a prediction of this
+shape can come. The fourth costs 329 ms: additive in kind, 32% over the
+predicted period. Four layers take rather more than twice what two take,
+on a stack whose engine work is a 250 ms delay.
+
+**The 79 ms the fourth layer costs beyond a poll period is NOT explained
+by a measurement.** The candidate explanation, read off the two
+implementations, is that the layers are not symmetric at their START: a
+Todo store OPENS its session synchronously inside the `dispatch` call
+(`plugins/todos/store-core/store.rs`, `on_dispatch`), while a run store
+starts its node on its own clock wake and only then dispatches the Todo
+(`plugins/workflows/store-core/store.rs`, `start_ready_nodes`) — so the
+fourth layer pays at both ends where the third pays at one. That is
+*derived from reading the two files, not separately measured*, and it is
+recorded at that grade rather than promoted to the entry's finding.
+
+*Evidence grade:* **measured.** Five samples per depth from one daemon at
+a stated poll period, with the command in the tree and re-runnable. The
+entry's original grade was honest and its prediction held; what changes is
+that the term is now a number rather than a structure. The capability that
+would retire the cost is unchanged — whatever closes #4/#32, so a consumer
+is NOTIFIED by the seam it drives rather than asking it, would make the
+per-layer term a wake rather than a period.
+
+---
+
+## 36. SIX SEAMS EACH HAND-ROLL JOURNAL REPLAY, and each has got absence wrong differently — the reimplementation is the defect generator
+
+**This entry is a DISTRIBUTION finding, not a kernel gap.** It is filed
+here because this file is the program's numbered evidence log and code
+comments cite these numbers; the card it becomes is a harness card, not a
+`jinnd` one.
+
+**What happened.** Phase 2.6's `jinn_workflow::journal::replay` returned
+`Ok` on a run document whose only `run-started` line was TORN. The
+default `Replayed` it handed back — `workflow-id: ""`, `revision: 0`,
+`status: running`, no nodes — was adopted as a run; the recovery read an
+empty node set as *every node reached `done`* and appended a `run-ended`
+line; and `GET /v1/workflows/default/runs/default-r999` answered **HTTP
+200 with `status: "done"`**. One byte of noise became a COMPLETED RUN,
+and boot wrote a record into a document that had never held one.
+
+**Evidence.** Independently reproduced at pre-fix source in this repo:
+
+```
+assertion `left == right` failed: one byte that was never a record answered as a run: HTTP/1.1 200 OK
+{"api-version":"0.1","definition-revision":0,"ended-ms":1788119493144,"history":[],"input":{},
+ "nodes":[],"refused":[],"run-id":"default-r999","spec":{...,"nodes":[]},"spec-digest":"",
+ "started-ms":0,"status":"done","store":"default","workflow-id":""}
+  left: 200
+ right: 404
+```
+
+The verifier's own pure fixture printed the replay half:
+`workflow_id="" revision=0 status=running nodes=0 started_ms=0 torn_tail_bytes=1`.
+
+**The class, stated as it is.** This is the SEVENTH instance of one
+defect: *a claim derived from the absence of a contradiction rather than
+from proof.*
+
+1. M2-K9's false `Reload` — a plan reported for a change nothing proved.
+2. The soak wrapper's false `reason=boot`.
+3. The sessions journal's `running` — a turn nothing was driving.
+4. Phase 2.5's Todo status that no durable write justified.
+5. A COO capability claim read off a config file the consuming lane never
+   read.
+6. `retain_recent` reaping by KEY ORDER, so a reaped run read as
+   never-existed and became a false `failed`.
+7. This one — and it is the worst. The first six MISREPORTED something
+   absent. This one MANUFACTURED A SUCCESS out of absence, and then wrote
+   the record it had invented back to disk.
+
+**The structural reading, which is the point.** Six seams — cron,
+settings, engines, sessions, todos, workflows — each hand-roll their own
+durable replay: `plugins/cron/cron-scheduler/src/lib.rs` (`load` /
+`load_or_quarantine`), `plugins/sessions/jinn-session/src/journal.rs`,
+`plugins/todos/jinn-todo/src/journal.rs`,
+`plugins/workflows/jinn-workflow/src/journal.rs`, and the two `store-core`
+adopt paths beside them. Every one of them re-answers the same three
+questions (what is a record, what is a torn tail, what is no record at
+all), and every one has got a different one of them wrong. The cron
+seam is the counter-example that proves the point rather than an
+exception to it: `load_or_quarantine` takes the absent value as an
+explicit PARAMETER, so its caller names what absence means instead of a
+default standing in for it — the same question, answered honestly, by a
+different hand. Nothing shares that answer. Phase 2.6 was
+told not to assume it inherited 2.5's fix; it designed a FRESH and
+genuinely stronger ordering — replay, heal, adopt, plan recovery, append,
+provide — and still fabricated a `done` run. **A new instance appearing in
+a lane that was designed to avoid it is evidence about the STRUCTURE, not
+about the lane.** The reimplementation is the defect generator.
+
+**Fixed here, and how far the fix reaches.** In all three journal seams
+that hand-roll a run/Todo/session replay, absence is now a POSITIVE
+distinction the type carries, so no caller can be handed a sentinel:
+
+- `jinn_workflow::journal::replay` answers a typed
+  `RunDocument::{Absent, Run}`; `Absent` carries no `Replayed` at all.
+- `jinn_todo::journal::replay` and `jinn_session::journal::replay` answer
+  `Option<Replayed>` for the same question.
+- Every `adopt_all` honours it: nothing is adopted, so nothing is
+  recovered, so **the heal writes no record**. A heal may only DROP bytes
+  that were never a record.
+- `jinn_workflow::run_ending` answers `None` over an empty node set: over
+  no nodes, `done` is vacuously true and factually unfounded.
+- The fs stores COUNT the documents they declined and report them as
+  `documents-without-a-record` in `describe`, so a store that discards a
+  whole document says so.
+
+Proven by `tests/composition/tests/workflows.rs::a_run_document_holding_no_record_reads_as_absence_and_never_as_a_run`
+and `::a_heal_drops_incomplete_bytes_and_never_writes_a_record` — two
+tests deliberately, so one green cannot cover both faults — plus unit
+proofs in each of the three definition crates.
+
+**Where a bare "not found" is still read as an answer — named, not
+implied.** These are LIMITS this round did not close:
+
+1. **Every `get-*` route answers `404` for all four absence reasons at
+   once.** A run/Todo/session that never existed, one removed by a
+   retention policy, one whose durable write has not landed, and one whose
+   store refused are indistinguishable to an HTTP consumer.
+   `plugins/api/jinn-api/src/workflows.rs:318` maps one `NotFound` code
+   through; `plugins/workflows/store-core/store.rs:761` mints it as
+   `"{run_id:?} is not here"`. Instance 6 above is exactly the harm.
+2. **`jinn_workflow::Workflows::plan_recovery` answers an empty
+   `Recovery` for a run it cannot find** (`workflows.rs:699`), which is
+   correct today only because its one caller iterates ids it just
+   adopted. The signature cannot say so.
+3. **`kind_of` falls back to `NodeKind::default()` for a node the spec
+   does not name** (`plugins/workflows/jinn-workflow/src/journal.rs:682`),
+   reading an absent node as a default one.
+4. **`next_seq` answers `0` for an unknown run**
+   (`plugins/workflows/jinn-workflow/src/workflows.rs:758`), which is
+   also a legitimate first sequence number.
+5. ~~**The sessions fs store does not HEAL a torn tail at all**~~ —
+   CLOSED in round 3, and the sentence that followed it was WRONG. See
+   the round-3 section below: "the tear is no longer fabricated INTO
+   anything" was derived from the absence of a contradiction, and the
+   contradiction existed one call away.
+
+### Round 3: recognising absence is HALF of it — the bytes and the id are the other half
+
+**The eighth instance, and the first to bite the FIX for the class.**
+Round 2's fix above is correct as far as it goes and every claim made for
+it holds. What it did not do is finish the answer. A document that READS
+as absent is not yet a clean slate: it still has BYTES on disk and it is
+still NAMED for an id. In `jinn-session-fs` the skip left both, so
+`Sessions::create` minted `default-1` again and appended the real
+`created` record after the stray `{`. The two fused into one undecodable
+line and the next replay refused:
+
+```
+create response ... "session-id":"default-1"
+journal after create: "{{\"api-version\"..."
+next replay: Err("journal line 1: key must be a string at line 1 column 2")
+REPRO_RC=101
+```
+
+An ACCEPTED ABSENCE became CORRUPTION — #34's fuse mechanism, reached
+through a different door. Round 2 had even written limit 5 above naming
+the missing heal, and then concluded from it that "the tear is no longer
+fabricated INTO anything". That conclusion was drawn from the absence of a
+contradiction. This is the class biting its own fix.
+
+**What round 3 established, seam by seam, rather than assumed.** The same
+live reproduction was written for all three stores. Every one was red, and
+they were red differently:
+
+- **sessions** — the bytes survived (`the incomplete bytes survived the
+  boot: "{"`), the id was reused (`default-2`), and there was no heal at
+  all (`healed-tails: Null`). Three separate assertions, three separate
+  faults.
+- **todos** — the bytes were dropped, but a record-less document was
+  counted as `healed-tails: 1` with no `documents-without-a-record` at
+  all: a store reporting a repair it did not make. The id was not
+  reserved.
+- **workflows** — the bytes were dropped, and the id was reused anyway
+  (`a new run was handed the record-less document's id: default-r2`).
+
+Neither todos nor workflows corrupted anything, because each had already
+emptied the file before the reuse. That is safety BY DERIVATION — exactly
+the reasoning round 2's `record_less` doc wrote down, and exactly what
+this entry is about.
+
+**The rule the fix encodes, in all three seams.** An absence is three
+things, and each is proven separately:
+
+1. **The reading** — round 2's: a typed absence, no sentinel to read a
+   status off.
+2. **The BYTES** — the document is REMOVED, whole. Every byte in it is one
+   the reader's own law says was never a record, so nothing that is a
+   record is lost, and a name that is gone cannot be appended onto. A drop
+   is the only permitted repair; nothing synthesizes, completes or infers.
+3. **The ID** — reserved (`Sessions::reserve`, `Todos::reserve`,
+   `Workflows::reserve_run` / `reserve_workflow`), so the mint moves past
+   an id whose document held no record without installing anything. Two
+   independent reasons the next create cannot land in an absent record's
+   place, neither leaning on the other.
+
+A torn tail on a document that DOES hold records is still healed to its
+whole prefix (#34's workaround), and is counted apart from a record-less
+document, because a trimmed tail leaves the records that were there and a
+record-less document had none.
+
+**Proven by**, one live reproduction per seam against the pinned daemon,
+plus a unit proof of the reservation in each definition crate:
+`tests/composition/tests/sessions.rs::a_record_less_session_document_is_dropped_and_never_appended_onto`,
+`::the_id_of_a_record_less_document_is_never_handed_to_a_new_session`,
+`::a_torn_tail_is_healed_and_the_turn_before_it_survives`,
+`tests/composition/tests/todos.rs::the_id_of_a_record_less_document_is_never_handed_to_a_new_todo`,
+and `tests/composition/tests/workflows.rs::the_id_of_a_record_less_document_is_never_handed_to_a_new_run`.
+
+**The process lesson, recorded because it cost a round.** Round 2 found
+the same class live in the two seams below workflows and fixed it there in
+passing — the right instinct. But those sibling fixes rode on the primary
+fix's evidence and got none of their own: no failing test first, no live
+reproduction. The primary fix was verified and correct; the sibling was
+neither, and it shipped a new defect with a shorter fuse. **A sibling fix
+gets its own red test and its own live reproduction, or it is carded
+separately and left alone.**
+
+**The capability that would retire it — PROPOSED, NOT BUILT.** One shared
+typed replay outcome, in a single crate every store consumes, that makes
+these the only possible answers to "what does this document say":
+
+```
+Replay<T> = Damaged { line, why }        // a hole: refuse
+          | Absent  { torn_tail_bytes }  // no complete record: not a T
+          | Present { value: T, torn_tail_bytes }
+```
+
+paired with a typed NEGATIVE lookup answer — at minimum
+`never-existed | removed-by-policy | not-yet-durable | refused` — so a
+consumer that cannot tell them apart REFUSES to conclude instead of
+taking the dangerous reading. **An undifferentiated "not found" is the
+defect, not the handling of it.** This is deliberately not built in phase
+2.6: it touches all six seams and is its own card, on this evidence.
+
+## What the WORKFLOWS seam could NOT prove, and says so
+
+Recorded here because the honest limit of a proof belongs beside the
+frictions, not buried in a test:
+
+- **A vendor engine under a workflow run runs only where an operator asks
+  for one by name.** `tests/composition/tests/workflows.rs::the_same_run_runs_over_a_vendor_engine_when_the_operator_names_one`
+  binds a real vendor CLI as the last leg of the FOUR-layer proof,
+  changing the engine field and nothing else. It is gated on
+  `JINN_HARNESS_WORKFLOW_VENDOR_ENGINE` for the reason the todos gate
+  gives one layer down: it spends metered inference under the operator's
+  own authentication. A SKIP proves nothing and is never summarized as a
+  pass; an engine that is NAMED and not mounted FAILS rather than
+  skipping. The echo and child-backed legs remain, and on their own they
+  prove a binding swap between two in-repo providers — not that four
+  layers survive contact with a real CLI.
+- **The torn tail is manufactured, not observed** — the same limit the
+  todos seam recorded, for the same reason (#22, #34). The suite writes an
+  unterminated line behind the daemon's back. What is proven is the
+  READER's behaviour and the store's heal, not that the kernel tears.
+- **Concurrency between two writers to one run is not proven.** The proofs
+  drive one caller at a time. The registry is behind a mutex and the
+  journal's append is atomic, so a lost update is not reachable through
+  the operations as written — but "not reachable by inspection" is not a
+  proof, and no test races two node-state moves on one run.
+- **A run is not RESUMED across a restart, and that is a decision, not a
+  gap.** A fresh incarnation drives nothing it did not start, so a run the
+  daemon stopped mid-flight is recorded `interrupted` — including its
+  nodes that had not started yet. Running the procedure again is a NEW
+  run, which pins its own revision. Nothing here proves a resumable run
+  would be safe, because nothing here builds one.
+- **`spec-digest` is a change detector under an ACCIDENTAL threat model.**
+  The packet's stated model is races, crashes and torn writes, not an
+  adversary with write access to the data root. Someone who can write a
+  store's journal can forge a run's history or a definition, and this seam
+  would not detect it as forgery; what the reader catches is damage. The
+  authority on what a run executes is the spec the run carries whole.
+- **A record-less document is proven for the RUN family only.** The
+  workflow-document half (no complete `defined` record) is guarded in
+  `jinn-workflow-fs`'s adopt path and covered by the same describe
+  counter, but no proof boots a daemon over a record-less WORKFLOW
+  document. The Todo and session halves are unit-proven in their own
+  crates and are not driven through the daemon either. See `FINDINGS.md`
+  #36.
+- **The graph walk is proven on two shapes.** A single dispatch node, and
+  a two-lane graph where one lane is followed and the other is skipped. A
+  wide fan-out, a join with several followed inbound edges, and a deep
+  chain are unit-proven in `jinn_workflow` and are NOT driven through the
+  daemon.

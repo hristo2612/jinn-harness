@@ -21,6 +21,7 @@ members = [
     "plugins/sessions/jinn-session",
     "plugins/settings/jinn-settings",
     "plugins/todos/jinn-todo",
+    "plugins/workflows/jinn-workflow",
     "tests/composition",
     "tools/api-kit",
     "tools/cron-kit",
@@ -28,6 +29,7 @@ members = [
     "tools/harness-pin",
     "tools/session-kit",
     "tools/todo-kit",
+    "tools/workflow-kit",
 ]
 
 [workspace.package]

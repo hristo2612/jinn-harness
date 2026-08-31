@@ -223,7 +223,9 @@ fn a_todo_whose_dispatch_was_interrupted_never_reads_as_still_executing() {
             30,
         ),
     ]);
-    let replayed = replay(&document).expect("it replays");
+    let replayed = replay(&document)
+        .expect("it replays")
+        .expect("a record this document proves");
     assert_eq!(replayed.declared_status, Status::Executing);
     let dispatch = replayed.dispatches.last().expect("a dispatch");
     // RECORDED interrupted, with a reason, by construction.
@@ -262,7 +264,12 @@ fn the_recovery_is_a_new_event_and_makes_the_ledger_usable_again() {
         ),
     ]);
     let mut todos = store();
-    todos.adopt("default-1", replay(&document).expect("replays"));
+    todos.adopt(
+        "default-1",
+        replay(&document)
+            .expect("replays")
+            .expect("a record this document proves"),
+    );
     // Before recovery: the fold reports blocked and explains itself.
     let folded = todos.record("default-1").expect("a record");
     assert_eq!(folded.status, Status::Blocked);
@@ -328,7 +335,9 @@ fn running_is_unreachable_from_a_document() {
         )
         .expect("a terminal ending"),
     ]);
-    let replayed = replay(&document).expect("it replays");
+    let replayed = replay(&document)
+        .expect("it replays")
+        .expect("a record this document proves");
     assert!(replayed
         .dispatches
         .iter()
@@ -390,7 +399,9 @@ fn a_torn_tail_is_absence_and_a_hole_is_corruption() {
     // A tail written short: the last line, unterminated.
     let mut torn = whole.clone();
     torn.extend_from_slice(br#"{"kind":"status-cha"#);
-    let replayed = replay(&torn).expect("a tear reads as absence");
+    let replayed = replay(&torn)
+        .expect("a tear reads as absence")
+        .expect("a record this document proves");
     assert_eq!(replayed.declared_status, Status::Executing);
     assert_eq!(replayed.torn_tail_bytes, 19);
     // A hole EARLIER is not a tear.
@@ -566,7 +577,12 @@ fn a_list_filters_on_the_reported_status_not_the_declared_one() {
         ),
     ]);
     let mut todos = store();
-    todos.adopt("default-1", replay(&document).expect("replays"));
+    todos.adopt(
+        "default-1",
+        replay(&document)
+            .expect("replays")
+            .expect("a record this document proves"),
+    );
     let blocked = todos.list(&ListRequest {
         status: Some(Status::Blocked),
         ..ListRequest::default()
@@ -607,7 +623,9 @@ fn an_adopted_id_mints_forward_so_a_later_create_cannot_collide() {
     let mut todos = store();
     todos.adopt(
         "default-7",
-        replay(&document(&[created_line("old")])).expect("replays"),
+        replay(&document(&[created_line("old")]))
+            .expect("replays")
+            .expect("a record this document proves"),
     );
     let created = landed_create(&mut todos, spec("new"), 30).expect("a Todo");
     assert_eq!(created.todo_id, "default-8");
@@ -749,7 +767,9 @@ fn an_append_onto_a_torn_tail_makes_a_hole_the_reader_refuses() {
 
     // A torn TAIL alone is absence: the Todo reads back at its last whole
     // line, and the reader says how many bytes were not a record.
-    let replayed = replay(&torn).expect("a torn tail is absence, not damage");
+    let replayed = replay(&torn)
+        .expect("a torn tail is absence, not damage")
+        .expect("a record this document proves");
     assert_eq!(replayed.declared_status, Status::Executing);
     assert_eq!(replayed.history.len(), 1);
     assert!(replayed.torn_tail_bytes > 0);
@@ -771,7 +791,60 @@ fn an_append_onto_a_torn_tail_makes_a_hole_the_reader_refuses() {
     // on adoption — is what makes the same append readable.
     let mut healed = whole.clone();
     healed.extend_from_slice(&moved(Status::Executing, Status::InReview, 40).line());
-    let after = replay(&healed).expect("the healed document replays");
+    let after = replay(&healed)
+        .expect("the healed document replays")
+        .expect("a record this document proves");
     assert_eq!(after.declared_status, Status::InReview);
     assert_eq!(after.history.len(), 2);
+}
+
+#[test]
+fn a_document_whose_only_created_line_is_torn_holds_no_todo_at_all() {
+    // The same class as `FINDINGS.md` #36 one layer up: a daemon killed
+    // inside the very FIRST append leaves bytes that were never a record,
+    // and a default `Replayed` — empty spec, default status — is a
+    // sentinel that would pass for a Todo nobody created.
+    let whole = document(&[created_line("t")]);
+    assert_eq!(
+        replay(&whole[..1]).expect("a torn first line is absence, not damage"),
+        None
+    );
+    assert_eq!(replay(&[]).expect("an empty document is absence"), None);
+}
+
+#[test]
+fn an_id_whose_document_held_no_record_is_never_minted_again() {
+    // Recognising absence is only HALF of the answer. A document holding
+    // no complete record is not adopted, so nothing advances the mint
+    // past its id — and the next `create` hands that id to a new Todo
+    // whose first record lands in the file the absent one left behind.
+    // Reserving is the other half (`FINDINGS.md` #36).
+    let mut todos = store();
+    todos.reserve("default-1");
+    let planned = todos
+        .plan_create(&spec("work after an absence"), 10)
+        .expect("a spec this seam records");
+    assert_eq!(
+        planned.todo_id, "default-2",
+        "the id of a record-less document was minted again"
+    );
+    // Reserving installs NOTHING: the registry is not one Todo heavier
+    // for having seen a document it made no record of.
+    assert_eq!(todos.ids().count(), 0);
+}
+
+#[test]
+fn a_reserved_id_from_another_store_moves_nothing() {
+    // The counter is per store. A stray document named for a different
+    // store is not this store's id and must not burn one of its numbers.
+    let mut todos = store();
+    todos.reserve("memory-9");
+    todos.reserve("not-a-number");
+    assert_eq!(
+        todos
+            .plan_create(&spec("the first"), 10)
+            .expect("a spec this seam records")
+            .todo_id,
+        "default-1"
+    );
 }

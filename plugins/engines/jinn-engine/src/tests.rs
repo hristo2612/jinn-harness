@@ -463,6 +463,41 @@ fn finished_records_are_bounded_and_live_ones_are_never_dropped() {
 }
 
 #[test]
+fn the_bound_drops_the_oldest_and_not_the_one_whose_id_sorts_first() {
+    // The registry is keyed by run id, and a run id is `<engine>-<n>`.
+    // Past nine runs the key order and the time order STOP AGREEING:
+    // "echo-10" sorts before "echo-9". A bound that walked the keys would
+    // reap a recent run and keep a much older one, and the consumer
+    // polling that recent run one layer up would read `no run` for work
+    // that SUCCEEDED — a false `failed` derived from the absence of a
+    // record rather than from any evidence of failure.
+    //
+    // So the order is the recorded instant, and this test needs more than
+    // nine runs to say so.
+    let mut runs = Runs::new("echo");
+    let mut ids = Vec::new();
+    for index in 0..12 {
+        let run = runs.accept(&request("echo"), index * 10).run_id;
+        runs.record_all(&run, [Event::exited(0, Usage::default(), false, None)]);
+        ids.push(run);
+    }
+    runs.retain_recent(3);
+    assert_eq!(runs.len(), 3);
+    for oldest in &ids[..9] {
+        assert!(
+            runs.get(oldest).is_none(),
+            "{oldest} started before the three that were kept"
+        );
+    }
+    for newest in &ids[9..] {
+        assert!(
+            runs.get(newest).is_some(),
+            "{newest} is one of the three most recent and was reaped anyway"
+        );
+    }
+}
+
+#[test]
 fn an_answer_is_typed_either_way() {
     let ok = Answer::ok(Description {
         api_version: API_VERSION.to_owned(),

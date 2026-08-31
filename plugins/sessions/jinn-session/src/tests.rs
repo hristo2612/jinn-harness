@@ -49,7 +49,9 @@ fn a_started_turn_with_no_ending_replays_interrupted_never_running() {
         Record::created(spec("echo"), 10),
         Record::turn_started("t1", "hello", 20),
     ]);
-    let replayed = replay(&document).expect("replays");
+    let replayed = replay(&document)
+        .expect("replays")
+        .expect("a record this document proves");
     assert_eq!(replayed.turns.len(), 1);
     assert_eq!(replayed.turns[0].status, TurnStatus::Interrupted);
     assert_eq!(
@@ -73,7 +75,9 @@ fn only_a_terminal_record_can_make_a_turn_done() {
         Record::turn_started("t1", "hello", 20),
         Record::turn_ended(&ended, 30).expect("a terminal turn records"),
     ]);
-    let replayed = replay(&document).expect("replays");
+    let replayed = replay(&document)
+        .expect("replays")
+        .expect("a record this document proves");
     assert_eq!(replayed.turns[0].status, TurnStatus::Done);
     assert_eq!(replayed.turns[0].answer, "hi");
     assert_eq!(replayed.status(), SessionStatus::Idle);
@@ -98,7 +102,9 @@ fn a_torn_tail_reads_as_absence_and_says_how_many_bytes() {
     ]);
     let mut torn = whole.clone();
     torn.extend_from_slice(br#"{"kind":"turn-ende"#);
-    let replayed = replay(&torn).expect("a torn tail is absence, not damage");
+    let replayed = replay(&torn)
+        .expect("a torn tail is absence, not damage")
+        .expect("a record this document proves");
     assert_eq!(replayed.turns.len(), 1);
     assert_eq!(replayed.turns[0].status, TurnStatus::Interrupted);
     assert_eq!(replayed.torn_tail_bytes, torn.len() - whole.len());
@@ -143,7 +149,9 @@ fn a_replayed_session_is_adopted_without_becoming_runnable_again() {
         Record::created(spec("echo"), 10),
         Record::turn_started("t1", "hello", 20),
     ]);
-    let replayed = replay(&document).expect("replays");
+    let replayed = replay(&document)
+        .expect("replays")
+        .expect("a record this document proves");
     let mut sessions = Sessions::new("fs");
     sessions.adopt("fs-7", replayed);
     let record = sessions.record("fs-7").expect("adopted");
@@ -301,7 +309,11 @@ fn a_journal_that_claims_a_live_turn_is_refused_not_believed() {
         Record::turn_started("t1", "hello", 2),
     ]);
     assert_eq!(
-        replay(&honest).expect("a started turn").turns[0].status,
+        replay(&honest)
+            .expect("a started turn")
+            .expect("a record this document proves")
+            .turns[0]
+            .status,
         TurnStatus::Interrupted
     );
 }
@@ -322,7 +334,8 @@ fn a_terminal_record_with_no_reason_keeps_the_conservative_one() {
         Record::turn_started("t1", "hello", 2),
         ended,
     ]))
-    .expect("a complete journal");
+    .expect("a complete journal")
+    .expect("a record this document proves");
     let turn = &replayed.turns[0];
     assert_eq!(turn.status, TurnStatus::Failed);
     assert_eq!(
@@ -341,7 +354,8 @@ fn a_terminal_record_with_no_reason_keeps_the_conservative_one() {
         Record::turn_started("t1", "hello", 2),
         done,
     ]))
-    .expect("a complete journal");
+    .expect("a complete journal")
+    .expect("a record this document proves");
     assert_eq!(replayed.turns[0].reason, None);
 }
 
@@ -403,4 +417,49 @@ fn a_ring_that_overflows_reports_the_gap_rather_than_hiding_it() {
         page.events[0].seq, 5,
         "the sequence is the session's, not the ring's index"
     );
+}
+
+#[test]
+fn a_document_whose_only_created_line_is_torn_holds_no_session_at_all() {
+    // The same class as `FINDINGS.md` #36 two layers up: bytes that were
+    // never a record are the absence of the session, not a session
+    // nobody created sitting `idle`.
+    let whole = document(&[Record::created(spec("echo"), 10)]);
+    assert_eq!(
+        replay(&whole[..1]).expect("a torn first line is absence, not damage"),
+        None
+    );
+    assert_eq!(replay(&[]).expect("an empty document is absence"), None);
+}
+
+#[test]
+fn an_id_whose_document_held_no_record_is_never_minted_again() {
+    // Recognising absence is only HALF of the answer. A document that
+    // replays as absence is not adopted, so nothing here advances the
+    // mint past its id — and the very next `create` hands that id to a
+    // new session, whose first record lands in the file the absent one
+    // left behind. Reserving is the other half, and it is the half that
+    // turned an accepted absence into corruption one layer down
+    // (`FINDINGS.md` #36).
+    let mut sessions = Sessions::new("default");
+    sessions.reserve("default-1");
+    let created = sessions.create(spec("echo"), 10);
+    assert_eq!(
+        created.session_id, "default-2",
+        "the id of a record-less document was minted again"
+    );
+    // Reserving installs NOTHING: the absence stays an absence, and the
+    // registry is not one session heavier for having seen the document.
+    assert_eq!(sessions.ids().count(), 1);
+    assert!(sessions.record("default-1").is_none());
+}
+
+#[test]
+fn a_reserved_id_from_another_store_moves_nothing() {
+    // The counter is per store. A stray document named for a different
+    // store is not this store's id and must not burn one of its numbers.
+    let mut sessions = Sessions::new("default");
+    sessions.reserve("memory-9");
+    sessions.reserve("not-a-number");
+    assert_eq!(sessions.create(spec("echo"), 10).session_id, "default-1");
 }

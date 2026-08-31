@@ -204,12 +204,19 @@ impl Replayed {
 
 /// Replays a journal document.
 ///
+/// `None` where the document holds NO complete record — a daemon killed
+/// inside its very first append leaves bytes that were never one, and
+/// that is the absence of the SESSION rather than a session with an
+/// empty id sitting `idle`. A default [`Replayed`] is a sentinel that
+/// passes for a real reading, so it is not returned; `FINDINGS.md` #36 is
+/// what returning it costs two layers up.
+///
 /// # Errors
 ///
 /// A line that does not decode anywhere but at the very end (a hole, not
 /// a tear), a `turn-ended` for a turn that never started, or a document
 /// whose first record is not `created`.
-pub fn replay(document: &[u8]) -> Result<Replayed, String> {
+pub fn replay(document: &[u8]) -> Result<Option<Replayed>, String> {
     let (body, torn_tail_bytes) = match document.iter().rposition(|byte| *byte == b'\n') {
         Some(last) => (&document[..=last], document.len() - last - 1),
         None => (&document[..0], document.len()),
@@ -218,15 +225,20 @@ pub fn replay(document: &[u8]) -> Result<Replayed, String> {
         torn_tail_bytes,
         ..Replayed::default()
     };
+    let mut opened = false;
     for (index, line) in body.split(|byte| *byte == b'\n').enumerate() {
         if line.is_empty() {
             continue;
         }
         let record: Record = serde_json::from_slice(line)
             .map_err(|error| format!("journal line {}: {error}", index + 1))?;
+        opened = true;
         apply(&mut replayed, record, index + 1)?;
     }
-    Ok(replayed)
+    if !opened {
+        return Ok(None);
+    }
+    Ok(Some(replayed))
 }
 
 fn apply(replayed: &mut Replayed, record: Record, line: usize) -> Result<(), String> {

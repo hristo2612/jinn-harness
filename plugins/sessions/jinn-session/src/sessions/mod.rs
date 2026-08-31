@@ -86,18 +86,40 @@ impl Sessions {
         }
     }
 
-    /// Installs a session read back from a durable journal under the id it
-    /// was stored as. The replay decides its turns; nothing here can
-    /// promote one to `running` (see `journal`'s honesty law). Mints
-    /// forward past any adopted numeric id so a later `create` cannot
-    /// collide with one.
-    pub fn adopt(&mut self, session_id: &str, replayed: Replayed) {
+    /// Moves the id counter past `session_id` without installing
+    /// anything, so a later `create` cannot mint it.
+    ///
+    /// This is the half of the absence answer that is not about reading.
+    /// A document holding no complete record is not adopted — correctly,
+    /// there is no session in it — but the id it was NAMED for is then
+    /// still free, and the next `create` hands it out. The store's next
+    /// record would land in that document. Reserving is what makes the
+    /// absence answer safe rather than merely honest (`FINDINGS.md` #36).
+    ///
+    /// An id that is not one this store mints (another store's prefix, or
+    /// a name with no number) moves nothing.
+    pub fn reserve(&mut self, session_id: &str) {
+        self.mint_past(session_id);
+    }
+
+    /// Moves the id counter past a numeric id of THIS store's, so a later
+    /// `create` cannot collide with one already spoken for.
+    fn mint_past(&mut self, session_id: &str) {
         if let Some(minted) = session_id
             .strip_prefix(&format!("{}-", self.store))
             .and_then(|tail| tail.parse::<u64>().ok())
         {
             self.minted = self.minted.max(minted);
         }
+    }
+
+    /// Installs a session read back from a durable journal under the id it
+    /// was stored as. The replay decides its turns; nothing here can
+    /// promote one to `running` (see `journal`'s honesty law). Mints
+    /// forward past any adopted numeric id so a later `create` cannot
+    /// collide with one.
+    pub fn adopt(&mut self, session_id: &str, replayed: Replayed) {
+        self.mint_past(session_id);
         let turns = replayed.turns.len() as u64;
         let created = replayed.created_ms;
         self.install(

@@ -265,6 +265,13 @@ pub struct Replayed {
 
 /// Replays a journal document.
 ///
+/// `None` where the document holds NO complete record — a daemon killed
+/// inside its very first append leaves bytes that were never one, and
+/// that is the absence of the TODO rather than a Todo with an empty id
+/// and a default status. A default [`Replayed`] is a sentinel that passes
+/// for a real reading, so it is not returned; `FINDINGS.md` #36 is what
+/// returning it costs one layer up.
+///
 /// # Errors
 ///
 /// A line that does not decode anywhere but at the very end (a hole, not
@@ -272,7 +279,7 @@ pub struct Replayed {
 /// that is illegal or begins from the wrong status, a `dispatch-ended`
 /// for a dispatch that never started, or a `dispatch-ended` claiming a
 /// non-terminal status.
-pub fn replay(document: &[u8]) -> Result<Replayed, String> {
+pub fn replay(document: &[u8]) -> Result<Option<Replayed>, String> {
     let (body, torn_tail_bytes) = match document.iter().rposition(|byte| *byte == b'\n') {
         Some(last) => (&document[..=last], document.len() - last - 1),
         None => (&document[..0], document.len()),
@@ -299,7 +306,10 @@ pub fn replay(document: &[u8]) -> Result<Replayed, String> {
         opened = true;
         apply(&mut replayed, record, line_no)?;
     }
-    Ok(replayed)
+    if !opened {
+        return Ok(None);
+    }
+    Ok(Some(replayed))
 }
 
 fn apply(replayed: &mut Replayed, record: Record, line: usize) -> Result<(), String> {

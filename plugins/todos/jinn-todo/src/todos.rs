@@ -155,6 +155,18 @@ impl Todos {
         self.install(created.todo_id.clone(), spec, now_ms);
     }
 
+    /// Moves the id counter past `todo_id` without installing anything,
+    /// so a later `create` cannot mint it.
+    ///
+    /// This is the half of the absence answer that is not about reading.
+    /// A document holding no complete record is not adopted — correctly,
+    /// there is no Todo in it — but the id it was NAMED for is then still
+    /// free, and the next `create` hands it out; the store's next record
+    /// would land in that document (`FINDINGS.md` #36).
+    pub fn reserve(&mut self, todo_id: &str) {
+        self.mint_past(todo_id);
+    }
+
     /// Moves the id counter past `todo_id`, so a later `create` cannot
     /// collide with one already here.
     fn mint_past(&mut self, todo_id: &str) {

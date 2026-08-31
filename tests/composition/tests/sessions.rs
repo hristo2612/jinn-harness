@@ -588,3 +588,180 @@ fn an_ephemeral_store_keeps_nothing_across_a_restart_and_says_so() {
     assert_eq!(described(port, DEFAULT_STORE)["describe"]["durable"], true);
     daemon.interrupt();
 }
+
+// ---- absence: the bytes, and the id ----------------------------------
+
+/// The id this store mints after `minted` — the name a daemon killed
+/// inside its very next `create` would leave a document under.
+fn next_id(minted: &str) -> String {
+    let (prefix, number) = minted.rsplit_once('-').expect("an id ends in its number");
+    let number: u64 = number.parse().expect("a numeric id");
+    format!("{prefix}-{}", number + 1)
+}
+
+/// Boots, puts one REAL session on disk, then manufactures the document a
+/// daemon killed inside its very first append would leave — named for the
+/// id this store would mint NEXT — and reboots over it.
+///
+/// Answers the rebooted daemon, its port, the root, the record-less
+/// document's path, the id it is named for, and the real session's id.
+fn booted_over_a_record_less_document(
+    name: &str,
+) -> Option<(Daemon, u16, PathBuf, PathBuf, String, String)> {
+    let (daemon, port, root) = booted(name)?;
+    let real = create(port, DEFAULT_STORE, DEFAULT_ENGINE);
+    let turn = send(port, DEFAULT_STORE, &real, "hello");
+    settled(&daemon, port, DEFAULT_STORE, &real, &turn);
+
+    let absent = next_id(&real);
+    let path = daemon.data(&format!("sessions/{absent}.jsonl"));
+    daemon.kill();
+    std::fs::write(&path, b"{").expect("write the record-less journal");
+    let daemon = reboot(&root);
+    Some((daemon, port, root, path, absent, real))
+}
+
+#[test]
+fn a_record_less_session_document_is_dropped_and_never_appended_onto() {
+    // THE BYTES half, on its own terms. Reading a record-less document as
+    // absence is right and is round 2's; it is not enough. Bytes that
+    // were never a record, left where they are, are what the next append
+    // lands on — and the tear and the new record fuse into one
+    // undecodable line (`FINDINGS.md` #34's mechanism, #36's class).
+    let Some((daemon, port, _root, path, absent, real)) =
+        booted_over_a_record_less_document("sessions-record-less-bytes")
+    else {
+        return;
+    };
+
+    let after = std::fs::read(&path).unwrap_or_default();
+    assert!(
+        after.is_empty(),
+        "the incomplete bytes survived the boot: {:?}",
+        String::from_utf8_lossy(&after)
+    );
+
+    // And a DROP is the only repair: nothing was written into a document
+    // that held no record, so the absence is still an absence.
+    let read = get(port, &format!("/v1/sessions/{DEFAULT_STORE}/{absent}"));
+    assert_eq!(
+        read.status, 404,
+        "one byte that was never a record answered as a session: {}",
+        read.raw
+    );
+
+    // The store SAW the document and declined to make a session of it,
+    // and says so — evidence of absence, not absence of evidence.
+    let described = described(port, DEFAULT_STORE);
+    assert!(
+        described["describe"]["extra"]["documents-without-a-record"]
+            .as_u64()
+            .is_some_and(|seen| seen >= 1),
+        "a store that discards a whole document says so: {described}"
+    );
+
+    // The session that really happened is untouched by any of it.
+    let document = journal(&daemon, &real).expect("the real session's journal");
+    assert_untorn(&document, "the session that really happened");
+    daemon.interrupt();
+}
+
+#[test]
+fn the_id_of_a_record_less_document_is_never_handed_to_a_new_session() {
+    // THE ID half, on its own terms, and the reproduction of the defect
+    // it closes: the next `create` answered with the record-less
+    // document's own id and appended its `created` record after the stray
+    // byte. The reply was a 200 and the corruption was one boot away.
+    let Some((daemon, port, root, _path, absent, real)) =
+        booted_over_a_record_less_document("sessions-record-less-id")
+    else {
+        return;
+    };
+
+    let fresh = create(port, DEFAULT_STORE, DEFAULT_ENGINE);
+    assert_ne!(
+        fresh, absent,
+        "a new session was handed the record-less document's id"
+    );
+    daemon.eventually("the new session's first record to be durable", || {
+        journal(&daemon, &fresh).is_some_and(|bytes| !bytes.is_empty())
+    });
+    let document = journal(&daemon, &fresh).expect("the new session's journal");
+    assert_untorn(&document, "the session created after the absence");
+
+    // The whole point, read at the boot after: before the fix this replay
+    // was `journal line 1: key must be a string`, and the durable store
+    // failed to activate with it.
+    daemon.kill();
+    let daemon = reboot(&root);
+    record(port, DEFAULT_STORE, &fresh);
+    record(port, DEFAULT_STORE, &real);
+    let read = get(port, &format!("/v1/sessions/{DEFAULT_STORE}/{absent}"));
+    assert_eq!(
+        read.status, 404,
+        "the id that held no record came back as a session: {}",
+        read.raw
+    );
+    daemon.interrupt();
+}
+
+#[test]
+fn a_torn_tail_is_healed_and_the_turn_before_it_survives() {
+    // The tolerable tear, and the same lesson one step along: the reader
+    // admits an unterminated last line as absence, but leaving those
+    // bytes in place makes the NEXT append land on the end of them. This
+    // store never healed at all, so a session that came back fine after
+    // one boot refused to replay at the boot after (`FINDINGS.md` #34).
+    let Some((daemon, port, root)) = booted("sessions-torn-tail") else {
+        return;
+    };
+    let session = create(port, DEFAULT_STORE, DEFAULT_ENGINE);
+    let turn = send(port, DEFAULT_STORE, &session, "hello");
+    settled(&daemon, port, DEFAULT_STORE, &session, &turn);
+    let path = daemon.data(&format!("sessions/{session}.jsonl"));
+    let whole = std::fs::read(&path).expect("a journal");
+    assert_untorn(&whole, "before the tear");
+    daemon.kill();
+
+    // A short write: the last line, unterminated, exactly what a torn
+    // append would leave.
+    let mut torn = whole.clone();
+    torn.extend_from_slice(br#"{"kind":"turn-started","at-ms":9,"turn-i"#);
+    std::fs::write(&path, &torn).expect("write the torn journal");
+
+    let daemon = reboot(&root);
+    let recovered = record(port, DEFAULT_STORE, &session);
+    assert_eq!(
+        turn_status(&recovered, &turn).as_deref(),
+        Some("done"),
+        "the tear is absence, not damage: {recovered}"
+    );
+    assert_eq!(
+        described(port, DEFAULT_STORE)["describe"]["extra"]["healed-tails"],
+        1,
+        "the store discarded bytes without saying so"
+    );
+    assert_eq!(
+        std::fs::read(&path).expect("the healed journal"),
+        whole,
+        "the heal did not restore the document to its whole prefix"
+    );
+
+    // And the store is fully usable: the next turn appends onto a HEALED
+    // document, so a tolerable tear never becomes an unreadable hole.
+    let next = send(port, DEFAULT_STORE, &session, "again");
+    settled(&daemon, port, DEFAULT_STORE, &session, &next);
+    assert_untorn(
+        &std::fs::read(&path).expect("the appended journal"),
+        "after the heal and the next turn",
+    );
+    daemon.kill();
+    let daemon = reboot(&root);
+    let again = record(port, DEFAULT_STORE, &session);
+    assert_eq!(
+        turn_status(&again, &next).as_deref(),
+        Some("done"),
+        "the boot after the heal: {again}"
+    );
+    daemon.interrupt();
+}
