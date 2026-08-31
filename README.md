@@ -426,16 +426,31 @@ Its own README carries these in full; the load-bearing ones:
   that could carry it, so the fabrication is unrepresentable rather than
   unreached.
 - **`state: null` is four situations and this seam separates two** (#39).
-- **No plugin can WATCH the composition; it can only ask** (#40, #41).
-  There is no lifecycle event surface at all, so the three readings that
-  describe a fiber between two rests — `mounted`, `activating`,
-  `interrupted` — are unobservable in principle: a real restart, measured
-  through this seam, completed inside one HTTP read and 190 consecutive
-  reads all returned `active` while the kernel's own ledger recorded the
-  full path. A consumer that believes it can follow a plugin's life
-  through this seam will build something that silently misses every
-  transition. This is why the seam ships no typed event: the only one it
-  could emit would announce a transition it did not witness.
+- **Three of the eleven readings are UNREACHABLE at this pin** (#41).
+  `mounted`, `activating` and `interrupted` each name a fiber between two
+  rests. The kernel passes through all three; no consumer here can be
+  handed one, because `jinn:introspect@0.2.0` answers from a snapshot
+  taken at rest and a real restart — measured through this seam —
+  completed inside one HTTP read while 189 consecutive reads all returned
+  `active` and the kernel's own ledger recorded the whole path. The
+  vocabulary keeps the words because the kernel really does pass through
+  them; the limit is marked **in the definition itself**
+  (`jinn_plugins::UNREACHABLE_AT_PIN`) rather than only here, and a canary
+  check refuses any catalog answer that delivers one, so the day the
+  kernel gains a publish path the suite goes red instead of the claim
+  quietly outliving its measurement. A consumer that believes it can
+  follow a plugin's life through this seam today will build something that
+  silently misses every transition.
+- **There is no lifecycle event surface at all, anywhere** (#40), and
+  this seam ships no typed event as a recorded decision rather than an
+  oversight. The kernel commits every `FiberTransition` to the ledger but
+  is not a publisher on the plugin event bus, and there is no listen topic
+  for a lifecycle change, so the only event this seam could emit is one a
+  poller synthesised by diffing two snapshots — announcing a transition it
+  did not witness and cannot time. The refusal is written at the place a
+  person would go to add one (`jinn-plugins`'s module doc), because
+  without it the next reader closes the gap with exactly that poller. The
+  kernel-side fix is carded as **M2-K13**.
 - **An entry the document could not RESOLVE appears in no catalog at
   all** — a list here omits exactly the entries that are most broken.
 - **The surface is read-only,** and the join is three reads at three

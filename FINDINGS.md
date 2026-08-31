@@ -2313,7 +2313,10 @@ event, a transition it did not witness and cannot time. That is the
 fabrication class this seam exists to kill, one layer up: an event whose
 payload asserts more than its emitter can know. **The seam ships no event
 type**, and this entry is the reason, so the absence is a recorded
-decision rather than an oversight.
+decision rather than an oversight. The decision is written where it will
+be READ — the `jinn-plugins` module doc, at the place a person comes to
+add an event surface — because a gap recorded only in this file gets
+closed by the next reader with exactly the poller it refuses.
 
 **The capability shape that would retire it.** Kernel-published typed
 events on the existing bus for the transitions the kernel already
@@ -2362,13 +2365,22 @@ poller catches it. This is #40's consequence stated as a number: without
 a push, a transient state is not merely hard to observe, it is
 unobservable in principle by anything slower than the transition.
 
-Two things follow, and this seam does both. Its transient readings are
-proven on the kernel's OWN recorded state words, taken from that run's
+Three things follow, and this seam does all three. Its transient readings
+are proven on the kernel's OWN recorded state words, taken from that run's
 ledger, with the join exercised in the test process because there is
 nowhere else to run it — stated as exactly that, never as a composition
-proof it is not. And the README's limits section carries it, because a
+proof it is not. The README's limits section carries it, because a
 consumer that believes it can watch a plugin's life through this seam
-will build something that silently misses every transition.
+will build something that silently misses every transition. And, since a
+vocabulary three of whose words nothing can produce is a claim that is
+right for a reason nothing enforces, the limit is marked IN THE
+DEFINITION — `jinn_plugins::UNREACHABLE_AT_PIN` with its qualifier, and
+on the three variants themselves — and guarded by a canary check,
+`no-transient-reading-at-this-pin`: at this pin a catalog answer that
+DELIVERS one of the three is itself a defect. The mutation harness proves
+the canary non-vacuous rather than passing because nothing produces the
+input. The day the capability shape below lands, that check goes red and
+forces the reading law to be re-read.
 
 **The capability shape that would retire it.** #40's kernel-published
 lifecycle events. Failing that, a `transitions(since)` operation on

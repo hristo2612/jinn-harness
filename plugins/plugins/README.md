@@ -39,7 +39,11 @@ that needs positive proof:
 - **`active` is reachable from exactly one input** — the kernel said
   `active`, an incarnation is installed, and the live incarnation owes
   nothing. Every other combination falls to a conservative answer by
-  construction, because the match has no other arm that reaches it.
+  construction, because the match has no other arm that reaches it. All
+  three facts ride on the wire beside the claim (`incarnation`, and
+  `owes` for the change the live incarnation already carries), so a
+  consumer CHECKS the claim rather than trusting the reader on the part
+  it cannot see.
 - **Mounted-but-never-activated is `mounted`.** An entry with no live
   fiber at all is `no-incarnation`, with a reason from the document or the
   ledger — never `active`, never `activating`.
@@ -106,10 +110,17 @@ authority.
 - **A fiber BETWEEN two rests is invisible** (`FINDINGS.md` #41). The
   `mounted`, `activating` and `interrupted` readings are real and the
   kernel passes through them; no reader at this pin can catch one. A real
-  restart, measured: 190 consecutive catalog reads, all `active`, while
+  restart, measured: 189 consecutive catalog reads, all `active`, while
   the kernel's ledger recorded `Active → Unloading → Pending → Loading →
   Active`. Anything built on watching a plugin's life through this seam
-  will silently miss every transition.
+  will silently miss every transition. The three words are therefore
+  marked UNREACHABLE in the definition itself
+  (`jinn_plugins::UNREACHABLE_AT_PIN`, carrying the qualifier and the
+  citation), the variants say so where a consumer reads the vocabulary,
+  and `no-transient-reading-at-this-pin` is the canary: at this pin a
+  catalog answer that DELIVERS one is a defect, so the day the kernel
+  gains a publish path the suite goes red and the reading law is re-read
+  rather than quietly outliving its measurement.
 - **The surface is READ-ONLY.** A plugin is reshaped by patching the
   profile through `/v1/profile`, which this seam consumes. There is no
   enable, disable, restart or remove here, deliberately: two ways to
