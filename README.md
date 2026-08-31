@@ -40,10 +40,14 @@ evidence that produced it, and `active` is reachable from exactly one
 input, so every other combination falls to a conservative answer by
 construction. A disabled entry reads `no-incarnation` with `reason:
 disabled`; an entry whose `jinn:net` grant admits one port while its
-config names another reads `failed` with the kernel's OWN recorded prose;
-an entry a catalog names and the machine does not run reads `not-mounted`.
-There is no `unknown` in the vocabulary: a reason searched for and not
-found is `not-found-in-window` carrying the span that was searched.
+config names another reads `failed`; an entry a catalog names and the
+machine does not run reads `not-mounted`. There is no `unknown` in the
+vocabulary, and no CORRELATED reason either: `jinn:ledger` v0.1 records
+no causal parent, so a failure's reason is `no-recorded-cause` carrying
+the span that was searched, a COUNT of the reason-bearing lines it
+declines to cite, and the qualifier that says why. The lines themselves
+are read with `history(id)`, where they are that entry's history and not
+a cause (`FINDINGS.md` #38).
 
 **The pin was NOT bumped, on evidence.** jinnd main has moved past
 `3a8e5c0` (M2-K10's cycle refusal, M2-K12's Linux CI and keystore fix),

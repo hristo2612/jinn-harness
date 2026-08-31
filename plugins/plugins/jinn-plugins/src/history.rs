@@ -84,13 +84,20 @@ impl History {
         }
     }
 
-    /// The last reason-bearing line for this plugin, if the window holds
-    /// one: the newest line whose kind is in [`REASON_BEARING`].
+    /// How many reason-bearing lines this plugin wrote inside the
+    /// window. A COUNT, never a citation: at this pin no ledger line can
+    /// be shown to be the cause of a reading (`FINDINGS.md` #38), so the
+    /// honest thing a lifecycle answer can say about them is how many
+    /// there are and where to read them. Returning the line itself is
+    /// what the round-1 defect did, and there is no accessor for it.
     #[must_use]
-    pub fn last_reason(&self) -> Option<&Line> {
-        self.lines
-            .iter()
-            .rev()
-            .find(|line| REASON_BEARING.contains(&line.kind.as_str()))
+    pub fn reason_bearing(&self) -> u32 {
+        u32::try_from(
+            self.lines
+                .iter()
+                .filter(|line| REASON_BEARING.contains(&line.kind.as_str()))
+                .count(),
+        )
+        .unwrap_or(u32::MAX)
     }
 }

@@ -40,11 +40,19 @@ fn snapshot(state: Option<&str>, incarnation: Option<u64>, unserved: Option<Unse
     }
 }
 
+fn searched(candidates: u32) -> Reason {
+    Reason::NoRecordedCause {
+        window: window(),
+        candidates,
+        qualifier: crate::lifecycle::NO_CAUSE_QUALIFIER.to_owned(),
+    }
+}
+
 fn read(snapshot: Option<&Snapshot>) -> Lifecycle {
     Lifecycle::read(
         snapshot,
-        Reason::NotFoundInWindow { window: window() },
-        Reason::NotFoundInWindow { window: window() },
+        searched(0),
+        searched(0),
     )
 }
 
@@ -159,7 +167,9 @@ fn a_loading_fiber_that_already_owes_a_change_is_never_eternally_activating() {
 #[test]
 fn a_failed_activation_reports_failed_with_a_reason_and_never_a_default() {
     let failed = snapshot(Some("failed"), None, None);
-    // With a reason-bearing line in the window, the reason is THAT line.
+    // A window holding a refusal — the shape that USED to be cited as a
+    // cause. The reason a failure carries is the searched statement, and
+    // the refusal is COUNTED so an operator knows to go and read it.
     let history = History::of(
         "a",
         vec![
@@ -179,8 +189,8 @@ fn a_failed_activation_reports_failed_with_a_reason_and_never_a_default() {
         window(),
     );
     // Precondition: the window really does hold a reason-bearing line,
-    // so "the reason is ledgered" is not vacuously true of an empty scan.
-    assert!(history.last_reason().is_some());
+    // so the count below is not vacuously zero over an empty scan.
+    assert_eq!(history.reason_bearing(), 1);
     let reading = Catalog::entry(
         &Declared {
             id: "a".to_owned(),
@@ -194,11 +204,19 @@ fn a_failed_activation_reports_failed_with_a_reason_and_never_a_default() {
     .lifecycle;
     match reading {
         Lifecycle::Failed {
-            reason: Reason::Ledgered { seq, kind, detail },
+            reason:
+                Reason::NoRecordedCause {
+                    window: searched,
+                    candidates,
+                    qualifier,
+                },
         } => {
-            assert_eq!(seq, 12);
-            assert_eq!(kind, "GrantRefused");
-            assert_eq!(detail, "bind 1 is outside the grant");
+            assert_eq!(searched, window(), "the reason carries the span it read");
+            assert_eq!(candidates, 1, "the lines it declines to cite are counted");
+            assert!(
+                qualifier.contains("no causal parent"),
+                "the limit travels in the answer: {qualifier}"
+            );
         }
         other => panic!("a failed activation must name its reason: {other:?}"),
     }
@@ -207,7 +225,7 @@ fn a_failed_activation_reports_failed_with_a_reason_and_never_a_default() {
 #[test]
 fn a_failure_with_no_reason_in_the_window_says_so_and_carries_the_window() {
     // The kernel does not put a guest activation's prose on the ledger at
-    // this pin (FINDINGS.md #37), so this is the COMMON case and it must
+    // this pin (FINDINGS.md #38), so this is the COMMON case and it must
     // never read as `unknown` or as a made-up sentence.
     let empty = History::of("a", Vec::new(), window());
     // Precondition: the scan happened and found nothing — not that no
@@ -227,9 +245,13 @@ fn a_failure_with_no_reason_in_the_window_says_so_and_carries_the_window() {
     assert_eq!(
         reading,
         Lifecycle::Failed {
-            reason: Reason::NotFoundInWindow { window: window() }
+            reason: Reason::NoRecordedCause {
+                window: window(),
+                candidates: 0,
+                qualifier: crate::lifecycle::NO_CAUSE_QUALIFIER.to_owned(),
+            }
         },
-        "a searched-and-not-found reason carries the window it searched"
+        "a searched-and-no-cause reason carries the window it searched"
     );
 }
 
@@ -487,4 +509,117 @@ fn describe_says_what_a_plugin_may_do_and_what_it_has_done() {
         "only its own"
     );
     assert!(description.legal_next.contains(&"restarting".to_owned()));
+}
+
+// ------------------------------------------------- the fabrication proofs
+//
+// The verifier's round-1 reproduction, kept as law. `Catalog::entry` used
+// to hand a failed activation the LAST reason-bearing line in the window
+// as its reason, with no link of any kind between the two. An unrelated
+// refusal from an EARLIER incarnation therefore surfaced as this
+// activation's cause: a real, plausible, FALSE sentence, which is worse
+// than an absence because it looks like evidence.
+
+/// The verifier's reproduction, verbatim in shape: one refusal, written
+/// by an earlier incarnation of this same entry, and a failure that has
+/// nothing to do with it.
+fn an_unrelated_earlier_refusal() -> History {
+    History::of(
+        "a",
+        vec![
+            line(
+                1,
+                "a",
+                "GrantRefused",
+                serde_json::json!({"detail": "unrelated refusal from an earlier incarnation"}),
+            ),
+            line(
+                2,
+                "a",
+                "FiberTransition",
+                serde_json::json!({"to": "Pending", "cause": "ConfigChanged"}),
+            ),
+            line(
+                3,
+                "a",
+                "FiberTransition",
+                serde_json::json!({"to": "Failed", "cause": "InitialLoad"}),
+            ),
+        ],
+        window(),
+    )
+}
+
+#[test]
+fn an_unrelated_earlier_refusal_is_never_this_failures_reason() {
+    let history = an_unrelated_earlier_refusal();
+    // Precondition: the window really does hold that refusal, so what is
+    // ruled out below is the seam CITING it and not an empty search.
+    assert!(
+        history
+            .lines
+            .iter()
+            .any(|line| line.kind == "GrantRefused"),
+        "the reproduction needs the refusal it is about"
+    );
+    let reading = Catalog::entry(
+        &Declared {
+            id: "a".to_owned(),
+            ..Declared::default()
+        },
+        GrantSource::ProfileDocument,
+        Some(&snapshot(Some("failed"), None, None)),
+        &history,
+        window(),
+    );
+    let reason = reading.lifecycle.reason().expect("a failure names a reason");
+    assert_eq!(
+        reason,
+        &Reason::NoRecordedCause {
+            window: window(),
+            candidates: 1,
+            qualifier: crate::lifecycle::NO_CAUSE_QUALIFIER.to_owned(),
+        },
+        "a neighbouring refusal presented as a cause is a fabrication: {reason:?}"
+    );
+}
+
+#[test]
+fn an_unrelated_earlier_refusal_is_never_a_dark_entrys_reason_either() {
+    // The same defect one arm over: an entry the kernel reports with NO
+    // live fiber took its reason from the same unlinked line.
+    let reading = Catalog::entry(
+        &Declared {
+            id: "a".to_owned(),
+            ..Declared::default()
+        },
+        GrantSource::ProfileDocument,
+        Some(&snapshot(None, None, None)),
+        &an_unrelated_earlier_refusal(),
+        window(),
+    );
+    let reason = reading.lifecycle.reason().expect("a reading names a reason");
+    assert!(
+        matches!(reason, Reason::NoRecordedCause { candidates: 1, .. }),
+        "{reason:?}"
+    );
+}
+
+#[test]
+fn the_document_is_still_allowed_to_say_why_a_dark_entry_is_dark() {
+    // The precondition that keeps the two tests above from passing for
+    // the wrong reason: a POSITIVE reading of the document still wins,
+    // so the fix removed a fabrication and not the seam's whole answer.
+    let reading = Catalog::entry(
+        &Declared {
+            id: "a".to_owned(),
+            disabled: true,
+            ..Declared::default()
+        },
+        GrantSource::ProfileDocument,
+        Some(&snapshot(None, None, None)),
+        &an_unrelated_earlier_refusal(),
+        window(),
+    );
+    assert_eq!(reading.lifecycle.reason(), Some(&Reason::Disabled));
 }

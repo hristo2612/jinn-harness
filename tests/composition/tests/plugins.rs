@@ -258,28 +258,54 @@ fn a_failed_activation_reports_failed_with_a_reason_and_never_unknown() {
     // There is no `unknown` in this vocabulary at all, and no default:
     // the reason names WHERE it came from.
     assert!(
-        ["ledgered", "not-found-in-window", "composition", "disabled"]
+        ["no-recorded-cause", "composition", "disabled"]
             .contains(&reason["from"].as_str().unwrap_or_default()),
         "a failure's reason names its source: {failed}"
     );
     assert_ne!(reason["from"], "unknown", "{failed}");
-    // The kernel records the bind refusal, so the reason IS ledgered and
-    // carries the kernel's own prose. If a future pin stops recording it,
-    // this assertion fails LOUDLY rather than the seam quietly inventing
-    // a sentence (FINDINGS.md #37).
+    // THE FABRICATION PROOF, through the real daemon. This entry's bind
+    // really was refused and the kernel really did record it, so the
+    // window genuinely holds a plausible sentence to steal — that is the
+    // precondition, and it is asserted, not assumed.
+    assert!(
+        reason["candidates"].as_u64().unwrap_or_default() >= 1,
+        "the reproduction needs a real refusal in the window to decline: {failed}"
+    );
+    // And the seam declines it. `jinn:ledger` v0.1 records no causal
+    // parent (FINDINGS.md #38), so nothing in that window can be shown
+    // to BE this failure's cause, and the answer says exactly that —
+    // counting the lines it will not cite, and naming where to read
+    // them, rather than presenting one of them as the reason.
     assert_eq!(
-        reason["from"], "ledgered",
-        "the refusal the kernel recorded is the reason this seam reports: {failed}"
+        reason["from"], "no-recorded-cause",
+        "a neighbouring refusal presented as a cause is a fabrication: {failed}"
     );
     assert!(
-        reason["detail"]
-            .as_str()
-            .is_some_and(|detail| !detail.trim().is_empty()),
-        "a failure nobody can explain: {failed}"
+        reason.get("seq").is_none() && reason.get("detail").is_none(),
+        "no ledger line rides a failure's reason at this pin: {failed}"
     );
-    // And a reason that had NOT been found would still carry the window
-    // it searched — the narrower answer names its own bound.
-    assert!(failed["lifecycle"]["reason"].is_object(), "{failed}");
+    // The limit travels in the answer the consumer reads, not only in a
+    // README, and the window it searched travels with it.
+    assert!(
+        reason["qualifier"]
+            .as_str()
+            .is_some_and(|text| text.contains("no causal parent")),
+        "the qualifier is part of the answer: {failed}"
+    );
+    assert!(reason["window"].is_object(), "{failed}");
+    // The prose is not LOST — it is where it can be read honestly, as
+    // this entry's own ledger lines rather than as a cause.
+    let refusals = history(port, MAIN, FAILING_ID);
+    let lines = refusals["lines"].as_array().expect("lines");
+    assert!(
+        lines
+            .iter()
+            .any(|line| line["kind"] == "GrantRefused"),
+        "the refusal an operator needs is readable in history(id): {refusals}"
+    );
+    println!("FINDINGS #38 transcript — GET /v1/plugins/{MAIN}/{FAILING_ID}\n  lifecycle: {}\n  history kinds: {:?}",
+        failed["lifecycle"],
+        lines.iter().map(|line| line["kind"].clone()).collect::<Vec<_>>());
     daemon.interrupt();
 }
 

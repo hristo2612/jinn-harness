@@ -24,6 +24,20 @@
 //! schedule is [`Lifecycle::Interrupted`], never an eternal
 //! [`Lifecycle::Activating`].
 //!
+//! # A reason is never CORRELATED into existence
+//!
+//! `jinn:ledger` v0.1 records no causal parent (it is a v0.2 column), so
+//! at this pin NOTHING in the ledger can be shown to BE the cause of a
+//! failed activation or of a dark entry. The reading law therefore never
+//! reaches for one: the only reasons it can produce are the kernel's own
+//! composition word ([`Reason::Composition`]), the document of record's
+//! own word ([`Reason::Disabled`]), and the positive statement that the
+//! window was read and holds no cause ([`Reason::NoRecordedCause`],
+//! which COUNTS the lines it declines to cite). There is deliberately no
+//! variant that carries a ledger line as a cause: the fabrication is
+//! unrepresentable rather than merely unreached, because a filter is
+//! something a later edit can loosen and a missing variant is not.
+//!
 //! # There is no `unknown`
 //!
 //! A kernel `state` string this table does not know is answered
@@ -68,7 +82,7 @@ impl Unserved {
 
 /// The ledger span a catalog actually consulted while answering. It
 /// travels with every answer, because every reason of kind
-/// [`Reason::NotFoundInWindow`] is only as strong as the window that was
+/// [`Reason::NoRecordedCause`] is only as strong as the window that was
 /// searched (the M2-K12 shape: a limit travels with the evidence it
 /// qualifies).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,17 +108,25 @@ pub enum Reason {
     Composition { unserved: Unserved },
     /// The document of record says this entry is disabled.
     Disabled,
-    /// A ledger line said it: its sequence, its kind, and its detail.
-    Ledgered {
-        seq: u64,
-        kind: String,
-        detail: String,
+    /// The window WAS read and the kernel attributes no cause to this
+    /// reading. `candidates` counts the reason-bearing lines this entry
+    /// wrote inside `window` — they are all in `history(id)`, and NOT
+    /// ONE of them is offered as this reading's cause.
+    NoRecordedCause {
+        window: Window,
+        candidates: u32,
+        qualifier: String,
     },
-    /// Searched, positively, and not there — with the window searched.
-    /// This is a statement about a read that HAPPENED, which is why it
-    /// is admissible where a sentinel is not.
-    NotFoundInWindow { window: Window },
 }
+
+/// What a [`Reason::NoRecordedCause`] means, travelling in the answer
+/// itself rather than only in a README. Its one home.
+pub const NO_CAUSE_QUALIFIER: &str =
+    "the window was read and the kernel records no cause for this reading: `jinn:ledger` \
+     v0.1 carries no causal parent, so no line in this entry's history can be shown to BE \
+     this reading's cause. `candidates` counts the reason-bearing lines this entry wrote \
+     inside `window`; read them with `history(id)`. None of them is presented as a cause, \
+     because a neighbouring refusal offered as one would be a fabrication (FINDINGS.md #38)";
 
 /// One plugin's life as a catalog reports it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -204,7 +226,8 @@ impl Lifecycle {
     /// with no live fiber, and `failure` the reason to give when it
     /// reports `failed`: both are resolved by the caller from the
     /// document and the ledger, and both are already positive readings —
-    /// a [`Reason::NotFoundInWindow`] at worst, never a sentinel.
+    /// a [`Reason::NoRecordedCause`] at worst, never a sentinel and never a
+    /// correlated one.
     #[must_use]
     pub fn read(snapshot: Option<&Snapshot>, no_fiber: Reason, failure: Reason) -> Self {
         let Some(snapshot) = snapshot else {

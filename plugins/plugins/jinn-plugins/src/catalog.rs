@@ -127,22 +127,23 @@ impl Catalog {
         history: &History,
         window: Window,
     ) -> Entry {
-        // The two reasons, resolved BEFORE the reading, so the reading
-        // law never has to invent one. Both are positive: a ledger line
-        // that exists, the document's own word, or a statement that the
-        // window was searched and held neither.
-        let ledgered = history.last_reason().map(|line| Reason::Ledgered {
-            seq: line.seq,
-            kind: line.kind.clone(),
-            detail: reason_detail(line),
-        });
-        let searched = Reason::NotFoundInWindow { window };
+        // The reasons, resolved BEFORE the reading, so the reading law
+        // never has to invent one — and resolved in the ONE order that
+        // cannot fabricate: a positive reading of the document first,
+        // and the searched-and-no-cause statement for everything else.
+        // The ledger is COUNTED, never cited: see the reading law's
+        // module doc, and `FINDINGS.md` #38.
+        let searched = Reason::NoRecordedCause {
+            window,
+            candidates: history.reason_bearing(),
+            qualifier: crate::lifecycle::NO_CAUSE_QUALIFIER.to_owned(),
+        };
         let no_fiber = if declared.disabled {
             Reason::Disabled
         } else {
-            ledgered.clone().unwrap_or_else(|| searched.clone())
+            searched.clone()
         };
-        let failure = ledgered.unwrap_or(searched);
+        let failure = searched;
         Entry {
             id: declared.id.clone(),
             package: declared.package.clone(),
@@ -236,25 +237,4 @@ fn declared_effect(grant: &Grant) -> String {
         .map(|ops| format!(" limited to {}", ops.join(", ")))
         .unwrap_or_default();
     format!("may call {}{scope}{ops}", grant.contract)
-}
-
-/// The prose a reason-bearing ledger line carries, or a statement that
-/// the kind carried none. Never an invented sentence: the fields are the
-/// kernel's own, and a kind whose payload holds no prose says exactly
-/// that.
-fn reason_detail(line: &Line) -> String {
-    for field in ["message", "detail", "reason"] {
-        if let Some(text) = line.payload.get(field).and_then(serde_json::Value::as_str) {
-            return text.to_owned();
-        }
-    }
-    if let Some(error) = line.payload.get("error") {
-        if let Some(text) = error.get("message").and_then(serde_json::Value::as_str) {
-            return text.to_owned();
-        }
-    }
-    format!(
-        "the {} line at sequence {} carries no prose field; its payload is {}",
-        line.kind, line.seq, line.payload
-    )
 }
