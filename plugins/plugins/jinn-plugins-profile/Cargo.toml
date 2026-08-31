@@ -1,0 +1,21 @@
+# The plugins seam's LIVE catalog provider: the entry set derived from the
+# document of record through `jinn:profile`, so the catalog is the machine
+# as it is actually configured. Compiles for wasm32-unknown-unknown ONLY
+# and is deliberately NOT a workspace member (see the workspace manifest).
+[package]
+name = "jinn-plugins-profile"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-plugins = { path = "../jinn-plugins" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+wit-bindgen = "0.43.0"
+
+[workspace]

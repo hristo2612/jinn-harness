@@ -1,0 +1,22 @@
+# The plugins seam's FIXED catalog provider: the entry set declared in this
+# entry's own config. For tests and for a READ-ONLY APPLIANCE profile: it
+# holds no `jinn:profile` grant at all, so it could not read the document
+# if its code tried. Compiles for wasm32-unknown-unknown ONLY and is
+# deliberately NOT a workspace member (see the workspace manifest).
+[package]
+name = "jinn-plugins-static"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-plugins = { path = "../jinn-plugins" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+wit-bindgen = "0.43.0"
+
+[workspace]
