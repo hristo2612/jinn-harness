@@ -33,6 +33,7 @@ fn tracked_assets_carry_no_machine_paths() {
     for name in [
         "soak-run.sh",
         "install-launchd.sh",
+        "record-build.sh",
         "run.jinn.harness-soak.plist.template",
         "detach.py",
     ] {
@@ -89,7 +90,7 @@ fn plist_template_declares_the_supervision_contract() {
 /// least parse, and the wrapper must log its start reason to `ops.log`.
 #[test]
 fn shell_assets_parse_and_log_their_reason() {
-    for name in ["soak-run.sh", "install-launchd.sh"] {
+    for name in ["soak-run.sh", "install-launchd.sh", "record-build.sh"] {
         let status = Command::new("/bin/sh")
             .arg("-n")
             .arg(soak_dir().join(name))
@@ -884,4 +885,373 @@ fn no_branch_of_the_exit_status_space_claims_agency() {
             );
         }
     }
+}
+
+// What it is RUNNING, derived (PLA-297 round 7, 2026-08-31).
+//
+// A COO drift audit found three sources disagreeing about which kernel the
+// M2 duty soak was running: `meta.json` — the artifact the +7d audit reads —
+// said `41cb2f47`; the installed binary and `ops.log` said `57360cc`;
+// `KERNEL-PIN.md`, what M2 actually SHIPS, said `3a8e5c03`. A third pin bump
+// happened and was never written to the file whose only job is to record
+// exactly that, because a person writes that file by hand.
+//
+// No gate caught it and none could have: every one of those readings is
+// internally consistent. The record was not damaged, it was STALE, and a
+// stale record is indistinguishable from a current one when nothing binds it
+// to the thing it describes.
+//
+// So it is bound. The wrapper hashes the binary it is about to exec and the
+// pin is licensed by that hash matching an install record derived from the
+// composition marker — never typed. A record that describes a DIFFERENT
+// binary is not a weaker reading of the current one, it is a reading of
+// something else, and the answer is `unknown` with the mismatch named. This
+// is the same inversion the start reason took across six rounds, applied one
+// level out: the wrapper told the truth about how it started while nothing
+// told the truth about what it was running.
+//
+// And the two pins are two READINGS. `running_pin` is what is executing;
+// `harness_pin` is what `KERNEL-PIN.md` says should be. They never share a
+// field, because the drift the audit found is exactly the distance between
+// them, and a field that can hold either cannot show it.
+
+#[cfg(target_os = "macos")]
+impl Scratch {
+    /// The binary the wrapper is about to exec. Distinct bodies hash
+    /// distinctly, which is the whole mechanism under test.
+    fn install_daemon(&self, body: &str) {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::create_dir_all(self.root.join("bin")).expect("bin");
+        let daemon = self.root.join("bin/jinnd");
+        std::fs::write(&daemon, body).expect("stub daemon");
+        std::fs::set_permissions(&daemon, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    }
+
+    /// The install record `tools/soak/record-build.sh` writes: the identity of
+    /// the binary it was derived beside, and the two pins as two fields.
+    fn build_record(&self, binary_sha256: &str, running_pin: &str, harness_pin: &str) {
+        std::fs::create_dir_all(self.root.join("bin")).expect("bin");
+        std::fs::write(
+            self.root.join("bin/jinnd.build"),
+            format!(
+                "binary-sha256={binary_sha256}\n\
+                 running-pin={running_pin}\n\
+                 harness-pin={harness_pin}\n\
+                 recorded-utc=2026-08-31T00:00:00Z\n"
+            ),
+        )
+        .expect("build record");
+    }
+
+    /// The sha256 of the installed daemon, computed the way an auditor would.
+    fn daemon_sha256(&self) -> String {
+        let out = Command::new("shasum")
+            .args(["-a", "256"])
+            .arg(self.root.join("bin/jinnd"))
+            .output()
+            .expect("shasum");
+        assert!(out.status.success(), "shasum failed");
+        String::from_utf8_lossy(&out.stdout)
+            .split_whitespace()
+            .next()
+            .expect("digest")
+            .to_owned()
+    }
+}
+
+/// THE DRIFT FIXTURE. The record names a pin and a binary; the binary that
+/// will actually run is a different one. Reporting the record's pin here is
+/// precisely what `meta.json` did for two days, so the wrapper reports
+/// nothing and names the mismatch.
+#[cfg(target_os = "macos")]
+#[test]
+fn a_recorded_pin_that_does_not_describe_the_running_binary_is_never_reported() {
+    let scratch = Scratch::new("pin-drift");
+    scratch.ancient_pid_record("file");
+    scratch.install_daemon("#!/bin/sh\n# the binary that is really here\nexit 0\n");
+    // A record left behind by an earlier install: a real pin, a real digest,
+    // and neither of them this binary's.
+    scratch.build_record(
+        &"a".repeat(64),
+        "41cb2f47bdd18838e43096607f0b7c3e8800a61d",
+        "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4",
+    );
+    let out = scratch.dry_run();
+    assert!(
+        out.contains("running_pin=unknown"),
+        "a record describing another binary was reported as this one's pin: {out}"
+    );
+    assert!(
+        !out.contains("41cb2f47"),
+        "the stale pin reached the record anyway: {out}"
+    );
+    assert!(
+        out.contains("build-record-mismatch"),
+        "the mismatch must be named, not merely absorbed: {out}"
+    );
+    // The identity that DID read is still reported: the auditor sees which
+    // binary is running even when nothing can name its commit.
+    assert!(
+        out.contains(&format!("binary_sha256={}", scratch.daemon_sha256())),
+        "the binary's own identity is a proven reading and is always reported: {out}"
+    );
+}
+
+/// The licensed case: the record describes the binary that is about to run,
+/// so the pin it names is this binary's pin.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_running_pin_is_derived_from_the_binary_that_is_about_to_run() {
+    let scratch = Scratch::new("pin-derived");
+    scratch.ancient_pid_record("file");
+    scratch.install_daemon("#!/bin/sh\nexit 0\n");
+    let sha = scratch.daemon_sha256();
+    scratch.build_record(
+        &sha,
+        "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4",
+        "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4",
+    );
+    let out = scratch.dry_run();
+    assert!(
+        out.contains("running_pin=3a8e5c03fdbe2f21144faee8daba73beeb75d8b4"),
+        "{out}"
+    );
+    assert!(out.contains(&format!("binary_sha256={sha}")), "{out}");
+    assert!(
+        out.contains("unproven=none"),
+        "nothing was unreadable here: {out}"
+    );
+}
+
+/// No record at all. There is no last value to fall back to, and the harness
+/// pin is not an answer to this question.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_absent_build_record_claims_no_pin() {
+    let scratch = Scratch::new("pin-no-record");
+    scratch.ancient_pid_record("file");
+    scratch.install_daemon("#!/bin/sh\nexit 0\n");
+    let out = scratch.dry_run();
+    assert!(out.contains("running_pin=unknown"), "{out}");
+    assert!(out.contains("harness_pin=unknown"), "{out}");
+    assert!(
+        out.contains("build-record"),
+        "the missing input is named: {out}"
+    );
+    // The binary is still there and still identifiable.
+    assert!(
+        out.contains(&format!("binary_sha256={}", scratch.daemon_sha256())),
+        "{out}"
+    );
+}
+
+/// The binary cannot be read — a directory in its place is a read failure for
+/// every uid, root included. Nothing can be derived from an artifact that was
+/// never read, so nothing is claimed about it.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_unreadable_running_binary_claims_no_pin() {
+    let scratch = Scratch::new("pin-no-binary");
+    scratch.ancient_pid_record("file");
+    std::fs::create_dir_all(scratch.root.join("bin/jinnd")).expect("daemon dir");
+    scratch.build_record(
+        &"b".repeat(64),
+        "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4",
+        "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4",
+    );
+    let out = scratch.dry_run();
+    assert!(out.contains("binary_sha256=unknown"), "{out}");
+    assert!(out.contains("running_pin=unknown"), "{out}");
+    assert!(
+        out.contains("running-binary"),
+        "the unreadable artifact is named: {out}"
+    );
+    assert!(
+        !out.contains("3a8e5c03fdbe2f21144faee8daba73beeb75d8b4\u{20}running_pin"),
+        "{out}"
+    );
+}
+
+/// Two readings, two fields, and the fallback direction that must not exist:
+/// when the running pin is unprovable, the harness pin — which is READABLE
+/// and looks like an answer — does not fill it. What it SHOULD be running is
+/// a different question from what it IS running, and conflating them is the
+/// drift itself.
+#[cfg(target_os = "macos")]
+#[test]
+fn the_harness_pin_can_never_fill_the_running_pin_field() {
+    let scratch = Scratch::new("pin-two-readings");
+    scratch.ancient_pid_record("file");
+    scratch.install_daemon("#!/bin/sh\nexit 0\n");
+    // A soak two pins behind what the harness ships — the audit's finding,
+    // as a fixture: the record is honest, the two pins simply differ.
+    scratch.build_record(
+        &scratch.daemon_sha256(),
+        "57360ccd3e6493cc2d20e8e6e480daaa88486817",
+        "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4",
+    );
+    let out = scratch.dry_run();
+    assert!(
+        out.contains("running_pin=57360ccd3e6493cc2d20e8e6e480daaa88486817"),
+        "{out}"
+    );
+    assert!(
+        out.contains("harness_pin=3a8e5c03fdbe2f21144faee8daba73beeb75d8b4"),
+        "the divergence is only visible if both readings are printed: {out}"
+    );
+
+    // Now break only the running side. The harness pin still reads.
+    scratch.build_record(
+        &"c".repeat(64),
+        "57360ccd3e6493cc2d20e8e6e480daaa88486817",
+        "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4",
+    );
+    let out = scratch.dry_run();
+    assert!(out.contains("running_pin=unknown"), "{out}");
+    assert!(
+        !out.contains("running_pin=3a8e5c03"),
+        "the harness pin filled the running field: {out}"
+    );
+}
+
+/// The +7d audit reports duty PER PIN, so the wrapper records which pin ran
+/// from when. Each start opens a segment; the next start closes the previous
+/// one at the last moment the daemon was seen alive — a BOUND, labelled as
+/// one, because the wrapper `exec`s and nobody is standing beside the daemon
+/// when it dies.
+#[cfg(target_os = "macos")]
+#[test]
+fn each_start_opens_a_duty_segment_and_closes_the_previous_one() {
+    let scratch = Scratch::new("pin-segments");
+    scratch.ancient_pid_record("file");
+    scratch.install_daemon("#!/bin/sh\nexit 0\n");
+    scratch.build_record(
+        &scratch.daemon_sha256(),
+        "57360ccd3e6493cc2d20e8e6e480daaa88486817",
+        "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4",
+    );
+    let start = || {
+        let status = Command::new("/bin/sh")
+            .arg(soak_dir().join("soak-run.sh"))
+            .env("SOAK", &scratch.root)
+            .env("PATH", &scratch.path)
+            .status()
+            .expect("/bin/sh");
+        assert!(status.success(), "the wrapper failed on its real start path");
+    };
+    start();
+    let duty = scratch.root.join("logs/pin-duty.log");
+    let first = std::fs::read_to_string(&duty).expect("pin-duty.log");
+    assert_eq!(
+        first.lines().filter(|l| l.contains("segment-opened")).count(),
+        1,
+        "the first start opens exactly one segment: {first}"
+    );
+    assert!(
+        first.contains("pin=57360ccd3e6493cc2d20e8e6e480daaa88486817"),
+        "{first}"
+    );
+    assert!(
+        !first.contains("segment-closed"),
+        "nothing was open to close: {first}"
+    );
+
+    // A pin bump: a different binary, a record that describes it.
+    scratch.install_daemon("#!/bin/sh\n# bumped\nexit 0\n");
+    scratch.build_record(
+        &scratch.daemon_sha256(),
+        "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4",
+        "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4",
+    );
+    start();
+    let after = std::fs::read_to_string(&duty).expect("pin-duty.log");
+    let closed = after
+        .lines()
+        .find(|l| l.contains("segment-closed"))
+        .unwrap_or_else(|| panic!("the previous segment was never closed: {after}"));
+    assert!(
+        closed.contains("pin=57360ccd3e6493cc2d20e8e6e480daaa88486817"),
+        "the closed segment names the pin that ran, not the new one: {closed}"
+    );
+    assert!(
+        closed.contains("to_bound=2026-08-29T14:18:19.162106Z"),
+        "the end is the last-seen bound: {closed}"
+    );
+    assert!(
+        closed.contains("bound=last-log-line"),
+        "an end nobody observed is labelled a bound: {closed}"
+    );
+    assert_eq!(
+        after.lines().filter(|l| l.contains("segment-opened")).count(),
+        2,
+        "the bump opened the new pin's segment: {after}"
+    );
+    assert!(
+        after.contains("pin=3a8e5c03fdbe2f21144faee8daba73beeb75d8b4"),
+        "{after}"
+    );
+}
+
+/// `record-build.sh` writes every field by DERIVATION — the digest it
+/// computes itself, the running pin from the composition harness's `.commit`
+/// marker, the harness pin from `KERNEL-PIN.md`. Nothing is a parameter a
+/// person types, which is why the record cannot go stale silently.
+#[cfg(target_os = "macos")]
+#[test]
+fn record_build_derives_every_field_it_writes() {
+    let scratch = Scratch::new("record-build");
+    scratch.install_daemon("#!/bin/sh\nexit 0\n");
+    let built = scratch.root.join("built");
+    std::fs::create_dir_all(&built).expect("built");
+    std::fs::write(built.join("jinnd"), "#!/bin/sh\nexit 0\n").expect("built daemon");
+    std::fs::write(
+        built.join(".commit"),
+        "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4\n",
+    )
+    .expect("marker");
+    let repo = scratch.root.join("repo");
+    std::fs::create_dir_all(&repo).expect("repo");
+    std::fs::write(
+        repo.join("KERNEL-PIN.md"),
+        "```\nrepo: https://example.invalid/jinnd\n\
+         commit: 3a8e5c03fdbe2f21144faee8daba73beeb75d8b4\n```\n",
+    )
+    .expect("KERNEL-PIN.md");
+
+    let run = |args: &[&std::ffi::OsStr]| -> std::process::Output {
+        Command::new("/bin/sh")
+            .arg(soak_dir().join("record-build.sh"))
+            .args(args)
+            .env("SOAK", &scratch.root)
+            .output()
+            .expect("/bin/sh")
+    };
+    let ok = run(&[built.as_os_str(), repo.as_os_str()]);
+    assert!(
+        ok.status.success(),
+        "{}",
+        String::from_utf8_lossy(&ok.stderr)
+    );
+    let record = std::fs::read_to_string(scratch.root.join("bin/jinnd.build")).expect("record");
+    assert!(
+        record.contains(&format!("binary-sha256={}", scratch.daemon_sha256())),
+        "the digest is of the binary that was installed: {record}"
+    );
+    assert!(
+        record.contains("running-pin=3a8e5c03fdbe2f21144faee8daba73beeb75d8b4"),
+        "{record}"
+    );
+    assert!(
+        record.contains("harness-pin=3a8e5c03fdbe2f21144faee8daba73beeb75d8b4"),
+        "{record}"
+    );
+
+    // A missing marker is a refusal, never a record with a hole in it: half a
+    // record is what an auditor cannot tell from a whole one.
+    std::fs::remove_file(built.join(".commit")).expect("rm marker");
+    let refused = run(&[built.as_os_str(), repo.as_os_str()]);
+    assert!(
+        !refused.status.success(),
+        "a derivation that could not read its source still wrote a record"
+    );
 }
