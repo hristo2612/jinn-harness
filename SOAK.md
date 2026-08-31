@@ -9,9 +9,10 @@ process on duty.
 
 **Soak started:** 2026-08-28T04:28:59Z · kernel pin `a17df864` (the pin at
 soak start; bumped mid-soak to `01133c45`, `41cb2f47`, `4eb4a93` and
-`9e61e47`, all on 2026-08-28, and to `1b098be` on 2026-08-29 — see §Pin
-bump mid-soak, and `KERNEL-PIN.md` owns the current pin) · harness `5c828c6` · job `health` every 900 000 ms, wake cadence
-900 000 ms.
+`9e61e47`, all on 2026-08-28, to `1b098be` and `57360cc` on 2026-08-29, and
+to `3a8e5c03` on 2026-08-31 — seven bumps, see §Pin bump mid-soak, and
+`KERNEL-PIN.md` owns the current pin) · harness `5c828c6` · job `health`
+every 900 000 ms, wake cadence 900 000 ms.
 
 ## Layout
 
@@ -23,14 +24,14 @@ SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
 
 | Path | What |
 |---|---|
-| `$SOAK/bin/` | `jinnd` (built from the pinned commit by the composition harness's git-archive build) + `jinnd.commit` (its pin marker), `api-kit` (release; `cron-kit` until the sixth bump), `detach.py` and `soak-run.sh` (copies of the `tools/soak/` originals) |
+| `$SOAK/bin/` | `jinnd` (built from the pinned commit by the composition harness's git-archive build) + `jinnd.build` (the install record that BINDS a pin to that binary's digest — since the seventh bump; the unbound `jinnd.commit` marker it replaced is deleted), `api-kit` (release; `cron-kit` until the sixth bump), `detach.py` and `soak-run.sh` (copies of the `tools/soak/` originals, refreshed at the next supervised start after a change) |
 | `$SOAK/data/profile.json`, `$SOAK/artifacts/` | The generated kit (`api-kit kit`: the cron seam plus the operator-API trio since the sixth bump; `cron-kit kit` before it) — never hand-edited. The profile moved INTO the data root at the sixth bump so the api consumers can read it through their scoped `jinn:fs` (FINDINGS.md #25); the wrapper passes `--artifacts`/`--data` explicitly. |
 | `$SOAK/ledger.sqlite` | The daemon's append-only ledger (the evidence surface) |
 | `$SOAK/data/` | The daemon's data root: `cron/` (state, the append-only history log, per-fire run records), `health/` (the consumer's reports), and since the sixth bump `profile.json` (the daemon's watcher is non-recursive on the profile's directory, so the fibers' subdirectories never wake it) |
 | `$SOAK/data.inverses/` | The kernel's `jinn:fs` effect-retention store (since pin `41cb2f47`): one durable inverse per live revertible effect, keyed by effect id — the byte curve FINDINGS.md #8 asked for is measured here |
 | `$SOAK/logs/` | `jinnd.log`, `ops.log` (operator actions, one timestamped line each — restarts and the pin bump count toward the +7d audit) |
 | `$SOAK/run/` | `jinnd.pid` (pid and mtime are ONE previous-start record: the wrapper proves both or neither, then compares the mtime to `kern.boottime` to derive whether the readings are consistent with a reboot or with a crash restart); `launchd.reason` (one word an operator drops to name a planned start; the wrapper consumes it) |
-| `$SOAK/meta.json` | Start timestamp + pins, written once at soak start |
+| `$SOAK/meta.json` | Start timestamp, written once at soak start. It records NO pin: a hand-maintained pin is what drifted two bumps behind (§What the record is), and `bin/jinnd.build` is now the one home for that fact |
 
 ## Setup (how the runtime root is stood up)
 
@@ -99,6 +100,19 @@ evidence on every `ops.log` line carries three new readings:
 - `harness_pin=` — what `KERNEL-PIN.md` said the harness ships when the
   record was written. A SEPARATE reading, in a separate field, which
   never fills `running_pin`.
+- `running_pin_checked=` / `harness_pin_checked=` — WHICH CHECK licensed
+  each pin, because looking like a commit and being one are two readings.
+  A value is a pin only if it is exactly 40 lowercase hex characters
+  (`a` is not a commit, and the round-1 wrapper took it); that shape
+  check alone reads `well-formed`. Where a kernel checkout is reachable
+  (`JINND_DIR`) the wrapper asks the repo and reads
+  `resolves-in-kernel-repo`; a well-formed sha the repo does NOT hold
+  reads `absent-from-kernel-repo` and takes the value down to `unknown`
+  with `running-pin-absent-from-kernel-repo` among the unproven inputs.
+  Under launchd no checkout is in sight, so a live start reads
+  `well-formed` and claims exactly that much. `record-build.sh` refuses
+  at install time on both readings rather than writing a record it cannot
+  stand behind.
 
 **Why the two pins never share a field.** On 2026-08-31 a COO drift audit
 found three sources disagreeing: `meta.json` said `41cb2f47`, the binary
@@ -380,7 +394,10 @@ curl -s 127.0.0.1:7921/v1/health
 
 Healthy: the daemon alive, last fire under 30 min old (two wakes), ledger
 rows growing, size growing slowly, `/v1/health` answering `"ok":true` with
-five entries. Any `DOWN`, a stale last fire, or a
+`entries` equal to the number of entries in the BOOTED PROFILE — seven at
+the current composition, measured 2026-08-31. That count moves whenever the
+profile does, so check it against the profile rather than against a number
+written down here. Any `DOWN`, a stale last fire, or a
 shrinking/exploding size is a soak event — record it in `ops.log`, keep the
 evidence, investigate before restarting. (The ledger count opens the live
 database read-write as the composition suite does — SELECT only; a
