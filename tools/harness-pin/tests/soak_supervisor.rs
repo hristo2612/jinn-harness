@@ -1561,3 +1561,32 @@ fn a_well_formed_pin_the_kernel_repo_does_not_hold_is_not_a_commit() {
         "an unproven pin must be named among the unproven inputs: {out}"
     );
 }
+
+/// COULD NOT ASK is not an answer of no. A `JINND_DIR` that holds a `.git`
+/// entry git cannot read makes no statement about the pin, so the pin keeps
+/// the reading it did earn and the missing one is named. Sinking a good pin
+/// on a reading nobody took would be this packet's own defect wearing the
+/// fix's clothes.
+#[cfg(target_os = "macos")]
+#[test]
+fn an_unreadable_kernel_repo_answers_nothing_rather_than_no() {
+    let scratch = Scratch::new("pin-repo-unreadable");
+    scratch.ancient_pid_record("file");
+    // A `.git` that is a directory and not a repository: `-d` succeeds, git
+    // refuses, and nothing about the pin has been established either way.
+    let repo = scratch.root.join("not-a-repo");
+    std::fs::create_dir_all(repo.join(".git")).expect("decoy");
+    let out = scratch.dry_run_against(&repo);
+    assert!(
+        out.contains(&format!("running_pin={RUNNING_PIN}")),
+        "a pin was sunk by a repo that never answered: {out}"
+    );
+    assert!(
+        out.contains("running_pin_checked=well-formed-kernel-repo-unreadable"),
+        "the reading that could not be taken must be named as untaken: {out}"
+    );
+    assert!(
+        !out.contains("absent-from-kernel-repo"),
+        "a repo that could not be read was made to say no: {out}"
+    );
+}

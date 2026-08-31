@@ -109,8 +109,10 @@ evidence on every `ops.log` line carries three new readings:
   `resolves-in-kernel-repo`; a well-formed sha the repo does NOT hold
   reads `absent-from-kernel-repo` and takes the value down to `unknown`
   with `running-pin-absent-from-kernel-repo` among the unproven inputs.
-  Under launchd no checkout is in sight, so a live start reads
-  `well-formed` and claims exactly that much. `record-build.sh` refuses
+  A checkout that is present but unreadable answers nothing rather than no:
+  `well-formed-kernel-repo-unreadable`, with the value kept. Under launchd
+  no checkout is in sight at all, so a live start reads `well-formed` and
+  claims exactly that much. `record-build.sh` refuses
   at install time on both readings rather than writing a record it cannot
   stand behind.
 

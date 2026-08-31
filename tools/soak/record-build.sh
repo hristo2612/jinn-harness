@@ -92,11 +92,17 @@ harness_pin=$(sed -n 's/^commit:[[:space:]]*\([0-9a-f]\{40\}\)[[:space:]]*$/\1/p
 # is taken: a well-formed sha nothing holds is not a commit. Which check was
 # performed is REPORTED rather than assumed, because the install path can run
 # with no checkout in sight and "well-formed" is a different claim.
+# A repo that cannot be READ answers nothing, and is reported as answering
+# nothing rather than as answering no.
 pin_check=well-formed
 if [ -n "${JINND_DIR:-}" ] && [ -d "${JINND_DIR:-}/.git" ]; then
-    git -C "$JINND_DIR" cat-file -e "$running_pin^{commit}" 2>/dev/null \
-        || fail "the .commit marker names no commit in $JINND_DIR: '$running_pin'"
-    pin_check=resolves-in-kernel-repo
+    if git -C "$JINND_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+        git -C "$JINND_DIR" cat-file -e "$running_pin^{commit}" 2>/dev/null \
+            || fail "the .commit marker names no commit in the kernel repo: '$running_pin'"
+        pin_check=resolves-in-kernel-repo
+    else
+        pin_check=well-formed-kernel-repo-unreadable
+    fi
 fi
 
 mkdir -p "$SOAK/bin"

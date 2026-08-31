@@ -143,11 +143,18 @@ proven_hex() {
 #
 # A pin the repo provably does NOT hold is not a weaker pin, it is not a
 # commit, and the value falls to `unknown` with the failed reading named.
+# COULD NOT ASK is not an answer of no. A repo that cannot be read makes no
+# statement about the pin, so it yields the weaker reading it did earn —
+# well-formed — and says why the stronger one is missing. Reporting
+# `absent-from-kernel-repo` there would sink a good pin on a reading nobody
+# took, which is this packet's own defect wearing the fix's clothes.
 commit_check() {
     if [ "$1" = unknown ]; then
         printf 'no-pin'
     elif [ -z "${JINND_DIR:-}" ] || [ ! -d "${JINND_DIR:-}/.git" ]; then
         printf 'well-formed'
+    elif ! git -C "$JINND_DIR" rev-parse --git-dir >/dev/null 2>&1; then
+        printf 'well-formed-kernel-repo-unreadable'
     elif git -C "$JINND_DIR" cat-file -e "$1^{commit}" 2>/dev/null; then
         printf 'resolves-in-kernel-repo'
     else

@@ -39,6 +39,13 @@ performed is reported beside the value:
 - `absent-from-kernel-repo` — a checkout was reachable and it does not. The
   value falls to `unknown`; a sha nothing holds is not a weak pin, it is not
   a commit.
+- `well-formed-kernel-repo-unreadable` — a checkout was *there* and could not
+  be asked. This one was missing from the first draft of the fix, and its
+  absence made a repo that never answered say no, sinking a good pin on a
+  reading nobody took. That is the packet's own defect wearing the fix's
+  clothes, which is how easily this class comes back: failing to read and
+  reading a failure are not the same event, and only the second one is
+  evidence.
 
 This is the same rule that already keeps `running_pin` and `harness_pin`
 apart. A field that can hold either of two readings cannot say which one it
