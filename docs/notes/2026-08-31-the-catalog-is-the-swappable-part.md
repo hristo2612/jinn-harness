@@ -75,6 +75,18 @@ composition proof uses a failure the kernel really does record (a
 so that "with a reason" is proven with real prose rather than asserted
 over the case where none exists.
 
+> **CORRECTION, round 2 (2026-08-31).** The paragraph above is what round
+> 1 INTENDED and not what round 1 shipped. `Catalog::entry` did exactly
+> the thing it says it refused: it took the last reason-bearing line in
+> the window and called it the reason, with no link at all, so an
+> unrelated refusal from an earlier incarnation surfaced as a failed
+> activation's cause. The verifier proved it and the reproduction is now
+> a test. This paragraph is left standing rather than rewritten, because
+> a note is a record of a round and the useful thing about this one is
+> that its author believed it. See
+> `docs/notes/2026-08-31-a-reason-is-not-a-neighbour.md` for the fix, and
+> `FINDINGS.md` #38 for the corrected record.
+
 ## 3. Red-first was not satisfied by ordering, and the substitute is mutation
 
 I wrote `lifecycle.rs`, `entry.rs` and `catalog.rs` before `tests.rs`.

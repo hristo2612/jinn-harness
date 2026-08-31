@@ -47,10 +47,11 @@ that needs positive proof:
   `interrupted`,** with the word the kernel used as its reason. There is
   no eternal `activating`.
 - **There is no `unknown`.** A kernel state this table does not know is
-  `unrecognised` carrying the word verbatim. A reason searched for and not
-  found is `not-found-in-window` carrying the window that was searched — a
-  statement about a read that happened, which is why it is admissible
-  where a sentinel is not.
+  `unrecognised` carrying the word verbatim. A reason the ledger does not
+  record is `no-recorded-cause` carrying the window that was searched, a
+  COUNT of the reason-bearing lines it declines to cite, and the
+  qualifier that says why — a statement about a read that happened, which
+  is why it is admissible where a sentinel is not.
 
 ## Two authorities, never mixed
 
@@ -69,8 +70,9 @@ authority.
   moved between them.
 - **A history is bounded by its window.** `ledger-limit` lines, `jinn:ledger`'s
   own 500 cap above that, one page and no more. `window.truncated` says
-  when older lines exist unread, and a `not-found-in-window` reason under
-  a truncated window means less.
+  when older lines exist unread, and a `no-recorded-cause` reason under a
+  truncated window means less: its `candidates` count is a count of the
+  window, never of the entry's whole history.
 - **A guest's own activation failure carries no reason at this pin**
   (`FINDINGS.md` #38). Pre-activation faults and broker refusals do, and
   the composition proof counts one of those and cites none of it. The

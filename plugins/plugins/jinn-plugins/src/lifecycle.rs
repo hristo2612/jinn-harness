@@ -95,7 +95,7 @@ pub struct Window {
     /// How many lines were read.
     pub scanned: u32,
     /// Whether the read stopped at its cap with lines still unread — so
-    /// a `not-found-in-window` under a truncated window means LESS.
+    /// a `no-recorded-cause` under a truncated window means LESS.
     pub truncated: bool,
 }
 

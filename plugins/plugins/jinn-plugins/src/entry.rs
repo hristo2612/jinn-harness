@@ -148,7 +148,7 @@ pub struct Entry {
 }
 
 /// The read a catalog actually performed to answer. It travels with
-/// EVERY answer, because a `not-found-in-window` reason and an entry's
+/// EVERY answer, because a `no-recorded-cause` reason and an entry's
 /// lifecycle are both only as strong as the reads behind them.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
