@@ -45,6 +45,27 @@ an entry a catalog names and the machine does not run reads `not-mounted`.
 There is no `unknown` in the vocabulary: a reason searched for and not
 found is `not-found-in-window` carrying the span that was searched.
 
+**The pin was NOT bumped, on evidence.** jinnd main has moved past
+`3a8e5c0` (M2-K10's cycle refusal, M2-K12's Linux CI and keystore fix),
+so the question was asked rather than assumed. Every surface this seam
+consumes is byte-identical at the pin and at main: `jinn:profile` and
+`jinn:ledger` are unchanged verbatim, and `jinn:introspect`'s 0.2.0 →
+0.3.0 is additive — a new `waits` operation, with `record entry` (the
+only thing read here) untouched, no field added, removed or retyped. The
+`jinn:plugin` world's 0.6.0 → 0.7.0 adds a `cycle` case to
+`kernel-error`; nothing here emits a reply-expecting dispatch, so no
+crossing this seam makes can close a wait cycle. M2-K12's keystore fix is
+a `dev`-profile codegen change with zero runtime source delta and no
+keystore consumer in this seam. Bumping for tidiness would have moved the
+whole distribution onto a new contract surface to buy nothing.
+
+One consequence of NOT bumping is carried in code rather than in this
+paragraph: main adds a `CycleRefused` ledger kind, so a catalog that
+matched ledger kinds exhaustively would break on a later pin. The reader
+treats kinds as an open set with an honest fallthrough — reason-bearing
+kinds are a named known set and every other kind is history — which is
+the right shape at any pin.
+
 **The reason gap is named rather than papered over.** A guest's own
 activation failure — a trap, a panic, a deadline kill — records its STATE
 and never its REASON: the kernel puts the `KernelError` in
