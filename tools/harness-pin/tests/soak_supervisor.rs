@@ -234,6 +234,16 @@ fn wrapper_dry_run_classifies_each_start() {
 // The tests below are one per input: make that read fail or tear, and assert
 // the wrapper claims nothing.
 
+/// The daemon body every scratch root installs unless a test replaces it.
+/// Distinct bodies hash distinctly, which is the mechanism under test.
+#[cfg(target_os = "macos")]
+const STUB_DAEMON: &str = "#!/bin/sh\nexit 0\n";
+/// The pin a coherent scratch root is running, and the one its harness ships.
+#[cfg(target_os = "macos")]
+const RUNNING_PIN: &str = "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4";
+#[cfg(target_os = "macos")]
+const HARNESS_PIN: &str = "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4";
+
 /// A scratch runtime root with a stub directory first on `PATH`.
 #[cfg(target_os = "macos")]
 struct Scratch {
@@ -267,6 +277,10 @@ impl Scratch {
             "launchctl",
             "#!/bin/sh\nprintf '{\\n\\t\"LastExitStatus\" = 15;\\n};\\n'\n",
         );
+        // The kernel it is running is an input too, so it is readable by
+        // default and only the test under way makes it otherwise.
+        scratch.install_daemon(STUB_DAEMON);
+        scratch.build_record(&scratch.daemon_sha256(), RUNNING_PIN, HARNESS_PIN);
         scratch
     }
 
@@ -616,16 +630,6 @@ fn the_ops_log_lines_carry_the_evidence_and_the_derivation() {
     let scratch = Scratch::new("ops-log");
     scratch.ancient_pid_record("file");
     scratch.fixed_mtime("946684800");
-    std::fs::create_dir_all(scratch.root.join("bin")).expect("bin");
-    std::fs::write(scratch.root.join("bin/jinnd"), "#!/bin/sh\nexit 0\n").expect("stub daemon");
-    use std::os::unix::fs::PermissionsExt as _;
-    std::fs::set_permissions(
-        scratch.root.join("bin/jinnd"),
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .expect("chmod");
-    std::fs::write(scratch.root.join("bin/jinnd.commit"), "3fd7b05\n").expect("commit");
-
     let status = Command::new("/bin/sh")
         .arg(soak_dir().join("soak-run.sh"))
         .env("SOAK", &scratch.root)
@@ -706,11 +710,6 @@ impl Scratch {
     /// audit reads. The dry run prints only the evidence record, so the
     /// narrative can only be caught here — which is where it hid.
     fn death_line(&self) -> String {
-        std::fs::create_dir_all(self.root.join("bin")).expect("bin");
-        let daemon = self.root.join("bin/jinnd");
-        std::fs::write(&daemon, "#!/bin/sh\nexit 0\n").expect("stub daemon");
-        use std::os::unix::fs::PermissionsExt as _;
-        std::fs::set_permissions(&daemon, std::fs::Permissions::from_mode(0o755)).expect("chmod");
         let status = Command::new("/bin/sh")
             .arg(soak_dir().join("soak-run.sh"))
             .env("SOAK", &self.root)
@@ -1030,7 +1029,7 @@ fn the_running_pin_is_derived_from_the_binary_that_is_about_to_run() {
 fn an_absent_build_record_claims_no_pin() {
     let scratch = Scratch::new("pin-no-record");
     scratch.ancient_pid_record("file");
-    scratch.install_daemon("#!/bin/sh\nexit 0\n");
+    std::fs::remove_file(scratch.root.join("bin/jinnd.build")).expect("rm record");
     let out = scratch.dry_run();
     assert!(out.contains("running_pin=unknown"), "{out}");
     assert!(out.contains("harness_pin=unknown"), "{out}");
@@ -1053,7 +1052,8 @@ fn an_absent_build_record_claims_no_pin() {
 fn an_unreadable_running_binary_claims_no_pin() {
     let scratch = Scratch::new("pin-no-binary");
     scratch.ancient_pid_record("file");
-    std::fs::create_dir_all(scratch.root.join("bin/jinnd")).expect("daemon dir");
+    std::fs::remove_file(scratch.root.join("bin/jinnd")).expect("displace the daemon");
+    std::fs::create_dir(scratch.root.join("bin/jinnd")).expect("daemon dir");
     scratch.build_record(
         &"b".repeat(64),
         "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4",
@@ -1137,13 +1137,19 @@ fn each_start_opens_a_duty_segment_and_closes_the_previous_one() {
             .env("PATH", &scratch.path)
             .status()
             .expect("/bin/sh");
-        assert!(status.success(), "the wrapper failed on its real start path");
+        assert!(
+            status.success(),
+            "the wrapper failed on its real start path"
+        );
     };
     start();
     let duty = scratch.root.join("logs/pin-duty.log");
     let first = std::fs::read_to_string(&duty).expect("pin-duty.log");
     assert_eq!(
-        first.lines().filter(|l| l.contains("segment-opened")).count(),
+        first
+            .lines()
+            .filter(|l| l.contains("segment-opened"))
+            .count(),
         1,
         "the first start opens exactly one segment: {first}"
     );
@@ -1182,7 +1188,10 @@ fn each_start_opens_a_duty_segment_and_closes_the_previous_one() {
         "an end nobody observed is labelled a bound: {closed}"
     );
     assert_eq!(
-        after.lines().filter(|l| l.contains("segment-opened")).count(),
+        after
+            .lines()
+            .filter(|l| l.contains("segment-opened"))
+            .count(),
         2,
         "the bump opened the new pin's segment: {after}"
     );

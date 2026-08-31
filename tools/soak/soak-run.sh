@@ -114,6 +114,14 @@ proven_digits() {
     esac
 }
 
+# A digest or a commit is a run of lowercase hex, or it is not a reading.
+proven_hex() {
+    case "$1" in
+        '' | *[!0-9a-f]*) printf 'unknown' ;;
+        *) printf '%s' "$1" ;;
+    esac
+}
+
 # A wait status is an optionally-signed run of digits, or it is not one.
 proven_status() {
     case "${1#-}" in
@@ -240,6 +248,70 @@ case "$prev_end_clean" in
     no)      prev_end_phrase="ended UNCLEAN: $prev_end" ;;
     *)       prev_end_phrase="ended, HOW UNKNOWN: $prev_end" ;;
 esac
+# --- Input 5: WHAT IS RUNNING, and what SHOULD be.
+#
+# The soak's account of its own kernel used to be two files sitting in one
+# directory — the binary, and a `jinnd.commit` copied beside it — plus a
+# `meta.json` a person kept by hand. Two files in a directory make no claim
+# about each other, so on 2026-08-31 all three disagreed and nothing could
+# have noticed: a third pin bump had happened and the audit's own artifact
+# still named the pin from two bumps earlier (SOAK.md §What the record is).
+#
+# The reading is therefore taken from the ARTIFACT, not from a neighbour of
+# it. The wrapper digests the binary it is about to exec and accepts a pin
+# only from a record that describes THAT digest. A record left behind by an
+# earlier install describes a different binary, which is a readable fact:
+# `running_pin=unknown` with `build-record-mismatch` named, never the pin the
+# stale record happens to hold.
+#
+# `running-pin` and `harness-pin` are two READINGS and get two fields. What
+# the soak IS running and what `KERNEL-PIN.md` says it SHOULD be are the
+# distance the audit exists to measure; a field that can hold either cannot
+# show it, and the harness pin never fills the running one.
+daemon_path="$SOAK/bin/jinnd"
+build_record="$SOAK/bin/jinnd.build"
+pin_unproven=
+binary_sha256=unknown
+if [ -f "$daemon_path" ]; then
+    binary_sha256=$(proven_hex "$(shasum -a 256 "$daemon_path" 2>/dev/null | awk '{print $1}' || true)")
+fi
+[ "$binary_sha256" != unknown ] || pin_unproven="$pin_unproven running-binary"
+
+recorded_sha=unknown
+recorded_running=unknown
+recorded_harness=unknown
+if [ -f "$build_record" ]; then
+    record_field() {
+        proven_hex "$(sed -n "s/^$1=//p" "$build_record" 2>/dev/null | head -1 | tr -d '[:space:]' || true)"
+    }
+    recorded_sha=$(record_field binary-sha256)
+    recorded_running=$(record_field running-pin)
+    recorded_harness=$(record_field harness-pin)
+else
+    pin_unproven="$pin_unproven build-record"
+fi
+
+# The join. Both sides proven AND equal is the only path to a pin; every
+# other one — no binary, no record, a record about something else, a record
+# whose own fields do not parse — names what went wrong and claims nothing.
+running_pin=unknown
+harness_pin=unknown
+if [ "$binary_sha256" != unknown ] && [ "$recorded_sha" != unknown ]; then
+    if [ "$binary_sha256" = "$recorded_sha" ]; then
+        running_pin=$recorded_running
+        harness_pin=$recorded_harness
+        if [ "$running_pin" = unknown ] || [ "$harness_pin" = unknown ]; then
+            pin_unproven="$pin_unproven build-record-unreadable"
+        fi
+    else
+        # The record is about a DIFFERENT binary. Its `harness-pin` goes with
+        # it: a stale record is unusable whole, not field by field.
+        pin_unproven="$pin_unproven build-record-mismatch"
+    fi
+elif [ "$recorded_sha" = unknown ] && [ -f "$build_record" ]; then
+    pin_unproven="$pin_unproven build-record-unreadable"
+fi
+
 esc=$(printf '\033')
 last_seen=$(LC_ALL=C sed "s/${esc}\[[0-9;]*m//g" "$SOAK/logs/jinnd.log" 2>/dev/null \
     | grep -o '^[0-9][0-9-]*T[0-9:.]*Z' | tail -1)
@@ -264,6 +336,7 @@ unproven=
 if [ "$prev_record" != absent ] && [ "$prev_start" = unknown ]; then
     unproven="$unproven previous-start-record"
 fi
+unproven="$unproven$pin_unproven"
 unproven=${unproven# }
 unproven=${unproven:-none}
 
@@ -283,9 +356,10 @@ fi
 
 # Built ONCE, printed everywhere: the dry run, the death line and the start
 # line are three views of one record, so they cannot drift apart.
-evidence=$(printf 'host_boot_sec=%s host_boot=%s prev_record=%s prev_pid=%s prev_start_sec=%s prev_start=%s prev_end_raw=%s prev_end="%s" prev_end_clean=%s last_seen=%s unproven=%s' \
+evidence=$(printf 'host_boot_sec=%s host_boot=%s prev_record=%s prev_pid=%s prev_start_sec=%s prev_start=%s prev_end_raw=%s prev_end="%s" prev_end_clean=%s last_seen=%s binary_sha256=%s running_pin=%s harness_pin=%s unproven=%s' \
     "$boot_sec" "$boot_at" "$prev_record" "$prev_pid" "$prev_start" "$prev_start_at" \
-    "$prev_end_raw" "$prev_end" "$prev_end_clean" "$last_seen" "$unproven")
+    "$prev_end_raw" "$prev_end" "$prev_end_clean" "$last_seen" \
+    "$binary_sha256" "$running_pin" "$harness_pin" "$unproven")
 
 # Dry run (the harness-pin gate, and an operator checking the decision):
 # print it, touch nothing, start nothing. An unproven decision names what
@@ -322,10 +396,37 @@ case "$reason" in
             "$now" "$prev_pid" "$prev_end_phrase" "$unproven" "$evidence" >>"$SOAK/logs/ops.log" ;;
 esac
 
-pin=$(cat "$SOAK/bin/jinnd.commit" 2>/dev/null || echo unknown)
+started_at=$(date -u +%FT%TZ)
 printf '%s started (launchd; reason=%s): jinnd %s (pin %s) evidence: %s\n' \
-    "$(date -u +%FT%TZ)" "$reason" "$$" "$pin" "$evidence" >>"$SOAK/logs/ops.log"
+    "$started_at" "$reason" "$$" "$running_pin" "$evidence" >>"$SOAK/logs/ops.log"
 printf '%s\n' "$$" >"$SOAK/run/jinnd.pid"
+
+# --- The duty ledger: which pin ran, from when to when.
+#
+# The +7d audit reports duty PER PIN (PLA-297's standing ruling: a supervised
+# bump does not reset the week, and no single pin may carry the whole week and
+# be reported as though the current one did). Summing that off the start lines
+# means re-deriving segment boundaries from prose every time, so the segments
+# are their own append-only record.
+#
+# An END is a BOUND, and is labelled one. The wrapper `exec`s the daemon, so
+# nobody is standing beside it when it stops; the latest moment it is PROVEN
+# to have been alive is its last log line, which is what closes the segment.
+# The real end is somewhere at or after that, and the file says so rather
+# than implying a precision nobody measured.
+duty_log="$SOAK/logs/pin-duty.log"
+tail_line=$(tail -1 "$duty_log" 2>/dev/null || true)
+case "$tail_line" in
+    *segment-opened*)
+        open_pin=$(printf '%s' "$tail_line" | sed -n 's/.* pin=\([^ ]*\).*/\1/p')
+        open_at=$(printf '%s' "$tail_line" | sed -n 's/.* at=\([^ ]*\).*/\1/p')
+        printf '%s segment-closed pin=%s from=%s to_bound=%s bound=last-log-line\n' \
+            "$started_at" "${open_pin:-unknown}" "${open_at:-unknown}" "$last_seen" \
+            >>"$duty_log" ;;
+esac
+printf '%s segment-opened pin=%s at=%s binary_sha256=%s harness_pin=%s reason=%s\n' \
+    "$started_at" "$running_pin" "$started_at" "$binary_sha256" "$harness_pin" "$reason" \
+    >>"$duty_log"
 
 exec "$SOAK/bin/jinnd" \
     --profile "$SOAK/data/profile.json" \
