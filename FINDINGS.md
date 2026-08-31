@@ -2030,3 +2030,361 @@ frictions, not buried in a test:
   wide fan-out, a join with several followed inbound edges, and a deep
   chain are unit-proven in `jinn_workflow` and are NOT driven through the
   daemon.
+
+## 37. `jinn:profile.patch-entry` writes only `config`, so the ONE swap every seam proves — package and hash — is unreachable through the operator API
+
+**Grade: reproducible WITH A TRANSCRIPT, shaped, packet-card-ready.** Hit
+building the plugins seam (phase 2.7) on pin `3a8e5c0`. The transcript is
+at the end of this entry; it is driven by
+`tests/composition/tests/plugins.rs::the_operator_api_cannot_change_what_a_plugin_is_only_what_it_is_configured_with`,
+which fails loudly if a later pin makes the swap reachable.
+
+Every seam from 2.3 onward proves its malleability contract the same way:
+a provider is swapped by changing one entry's `package` and `hash` in the
+profile document, and the layer above is untouched. Every one of those
+proofs edits the profile FILE behind the daemon and waits for the
+watcher — `Daemon::edit_profile_restarting`
+(`tests/composition/tests/workflows.rs::the_run_store_swaps_by_a_profile_edit_with_every_layer_below_untouched`,
+and its twins in `todos.rs`, `sessions.rs`, `engines.rs`, `settings.rs`,
+`api.rs`).
+
+None of them is reachable through the operator API, because
+`jinn:profile.patch-entry` applies its merge-patch to **the entry's
+`config` subtree** and nothing else (`kernel-pin/contracts/jinn-profile/contract.wit`:
+"Merges `merge-patch` (RFC 7396, an object) onto the entry's `config`
+subtree — the only subtree a plugin may write"). `package` and `hash` are
+siblings of `config`, not children of it. So the operator API can change
+what a plugin is CONFIGURED with and never what a plugin IS.
+
+That is a defensible confinement — an editing plugin that could rewrite
+another entry's artifact hash would be a Law-1 side door — and this entry
+is not asking for it to be removed. What it names is the consequence: the
+distribution's headline claim, *a product is a profile, and swapping a
+provider is a profile edit*, is only true of an operator with **filesystem
+access to the document**. Through the surface a person or an agent
+actually uses, a provider swap is not expressible at all unless the seam
+was DESIGNED so that its binding is decided by config.
+
+The plugins seam works around it exactly that way, and the workaround is
+the evidence: both catalog providers read their catalog id from
+`config.data.catalog` and are granted both catalog names up front, so two
+`PATCH /v1/profile/entries/{id}` calls move `jinn:plugins.main` from one
+package to the other
+(`tests/composition/tests/plugins.rs::the_catalog_provider_swaps_through_the_api_with_the_layer_above_untouched`,
+`tools/plugin-kit/src/lib.rs`). It costs: a second contract name reserved
+purely to park an incumbent, both providers granted both names, and an
+ordering rule (park, then claim) that exists only because the kernel holds
+one provider slot per contract name (#29). A seam that did not think of
+this in advance simply has no API-driven swap.
+
+**The capability shape that would retire it.** Either an operator-intent
+operation that replaces a whole entry under the same confinement
+`patch-entry` already has (validated by the loader, ledgered as
+`ProfilePatched`, no fiber journal entry) — call it `replace-entry`, with
+its own grant op so a settings provider does not get it by accident — or
+an explicit statement in the contract that artifact identity is
+deliberately out of reach of every plugin, so a seam author designs for a
+config-decided binding from the start instead of discovering it at
+composition time. The second is cheaper and may be the right answer; what
+is not right is the current state, where the law and the reachable surface
+disagree in silence.
+
+**Transcript** (round 2, `cargo test -p composition --test plugins
+the_operator_api_cannot_change_what_a_plugin_is_only_what_it_is_configured_with
+-- --nocapture`, against the pinned daemon at `3a8e5c0`). The attempt to
+move the entry to the other package, and then — as the precondition that
+makes it mean something — a CONFIG patch on the same entry through the
+same route, which IS applied:
+
+```
+FINDINGS #37 transcript — PATCH /v1/profile/entries/jinn-plugins-appliance {"package": "plugins/jinn-plugins-profile"}
+HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: 743
+Connection: close
+
+{"api-version":"0.3.0","changed":false,"entry":{ ... ,"id":"jinn-plugins-appliance",
+ "package":"plugins/jinn-plugins-static","hash":"c8200f5...","parent":null,"version":""},
+ "id":"jinn-plugins-appliance"}
+
+  (then, as the precondition, on the same entry through the same route:)
+  PATCH {"config": {"data": {"ledger-limit": 64}}}  ->  200, changed: true,
+  entry.config.data.ledger-limit == 64, entry.package == "plugins/jinn-plugins-static"
+```
+
+The route works, the grant is held, the entry is patchable — and the
+package is exactly what it was. What an operator may change is what a
+plugin is CONFIGURED with; what a plugin IS stays out of reach.
+
+## 38. A guest's activation failure records its STATE and never its REASON, so no plugin can report why a plugin failed
+
+**Grade: source-cited, with the pre-activation half reproduced under a
+transcript; the guest-trap half is NOT reproduced and is argued from the
+kernel's own code.** Hit building the plugins seam on pin `3a8e5c0`.
+Downgraded from `reproducible` in round 2: this harness mounts no guest
+that traps, so the claim about a guest's OWN activation failure is a
+reading of `jinnd`'s source and not something this repo has driven.
+
+**CORRECTION (round 2, 2026-08-31).** The paragraph below beginning "The
+honest thing a plugin can do" asserted, in round 1, that this seam
+answers `not-found-in-window` and does not correlate. **That was false
+about the code as shipped in round 1**, and the verifier proved it: the
+reading handed a failed activation the last reason-bearing line in its
+window with no causal link at all, so an unrelated `GrantRefused` from an
+earlier incarnation was reported as the activation's cause. The entry
+described the seam that was intended, not the one that existed. The code
+is fixed (`Reason::Ledgered` no longer exists, so the fabrication is
+unrepresentable rather than merely unreached) and the paragraph now
+describes what the code does. A false line in this file is worse than a
+missing one, because the next round trusts it.
+
+The plugins seam's acceptance is that a failed activation reports **failed
+with a reason, never `unknown`, never a default**. At this pin that is
+only satisfiable for SOME failures, and the split is invisible from
+outside.
+
+- **Pre-activation faults DO carry prose.** A document fault, a missing
+  lane, a parent with no live context, and every per-grant admission
+  refusal land `ErrorRecorded { error: { code, message, fiber } }` with
+  the entry attributed (`crates/jinnd-daemon/src/daemon.rs` `apply`;
+  `crates/jinnd-wasm/src/lane.rs` grant admission). A broker refusal on
+  the way lands `GrantRefused { contract, reason, detail }`. The plugins
+  seam reports these, and its composition proof rests on one: an entry
+  whose `jinn:net` grant admits one port while its config names another
+  reads `failed` with the kernel's own sentence
+  (`tests/composition/tests/plugins.rs::a_failed_activation_reports_failed_with_a_reason_and_never_unknown`).
+
+- **The guest's OWN activation failing carries nothing.** A trap, a panic,
+  or a guest-deadline overrun becomes `Err(KernelError)` returned from
+  `WasmBody::activate`, and the supervisor puts it in memory:
+  `self.shared.fail(error)` pushes onto `FiberRecord.failures`
+  (`crates/jinnd-fiber/src/shared.rs`, `record.rs`). The bridge that feeds
+  the ledger drains `transitions` and **only** `transitions`
+  (`crates/jinnd-daemon/src/support.rs` `sync_transitions`); nothing in
+  `jinnd-daemon` or `jinnd-adapter` ever reads `failures`. So the ledger
+  shows three `FiberTransition` rows ending `→ Failed`, and
+  `jinn:introspect` shows the four-letter string `"failed"`. No code, no
+  message, no cause.
+
+`FiberRecord`'s own doc comment says the opposite — *"This is the ledger's
+feed (R6): transitions, failures and withdrawal reports as values, never a
+`last_error` string"* — and half of it is not wired up. That is the sharp
+end of this entry: the kernel already models the reason correctly and
+simply does not publish it.
+
+The honest thing a plugin can do, and what this seam does **as of round
+2**, is answer `failed` with `reason: no-recorded-cause` carrying the
+ledger span it searched, a COUNT of the reason-bearing lines it declines
+to cite, and the qualifier that says why — a positive statement about a
+read that happened, never a sentinel. What it must NOT do, and what round
+1 did do, is correlate the failure with whatever refusal happens to
+precede the `→ Failed` transition on the same entry and call that the
+reason. There is no recorded causal link to justify it (`jinn:ledger`
+v0.1 records no causal parent; it is a v0.2 column), and a plausible
+neighbouring line presented as a cause is exactly the fabrication class
+this seam exists to kill. The lines are not lost: they are read with
+`history(id)`, where they are that entry's history and not a cause.
+
+**Transcript** (round 2, `cargo test -p composition --test plugins
+a_failed_activation_reports_failed_with_a_reason_and_never_unknown --
+--nocapture`, against the pinned daemon at `3a8e5c0`). The misbound entry
+whose `jinn:net` grant admits one port while its config names another —
+the PRE-ACTIVATION half, which the kernel does record — and the seam's
+answer, which counts the refusal in its window and cites none of it:
+
+```
+FINDINGS #38 transcript — GET /v1/plugins/main/jinn-api-http-misbound
+  lifecycle: {"reason":{"candidates":1,"from":"no-recorded-cause","qualifier":"the window
+    was read and the kernel records no cause for this reading: `jinn:ledger` v0.1 carries
+    no causal parent, so no line in this entry's history can be shown to BE this reading's
+    cause. `candidates` counts the reason-bearing lines this entry wrote inside `window`;
+    read them with `history(id)`. None of them is presented as a cause, because a
+    neighbouring refusal offered as one would be a fabrication (FINDINGS.md #38)",
+    "window":{"from":1,"scanned":118,"to":116,"truncated":false}},"state":"failed"}
+  history kinds: ["ContractCall", "GrantRefused", "EffectRegistered", "EffectWithdrawn",
+                  "FiberTransition", "FiberTransition", "FiberTransition"]
+test a_failed_activation_reports_failed_with_a_reason_and_never_unknown ... ok
+```
+
+`GrantRefused` is right there in the entry's own history, one line the
+answer could have stolen and did not. What no transcript in this repo
+shows, because nothing here can produce it, is the guest-trap half: for
+that, see the code citations above.
+
+**The capability shape that would retire it.** Drain `FiberRecord.failures`
+in `sync_transitions` as `ErrorRecorded` under the same attribution the
+transitions already get — a few lines, no contract change, and it closes
+the gap for every consumer at once. A typed `ActivationFailed { error }`
+kind would be better still, because it distinguishes the activation's own
+death from a host provider's error that merely happened nearby.
+
+## 39. `state: null` from `jinn:introspect` is four different situations, and nothing distinguishes them
+
+**Grade: source-cited, with two of the four situations reproduced under a
+transcript.** Hit building the plugins seam on pin `3a8e5c0`. A card
+wants a decision on which of the four matter. Downgraded from
+`reproducible` in round 2: the transcript below separates the DISABLED
+and SPAWN-FAILED situations; the group and disposed-but-named ones are
+read from the loader's source and are not driven here.
+
+`jinn:introspect.entries()` fills `state` from `entry_fiber(id)` and
+answers `null` whenever an entry has no `live` runtime
+(`crates/jinnd-daemon/src/daemon/introspect.rs`). Four situations reach
+that: a **group** entry (`GROUP_PACKAGE`, which never gets a fiber), an
+entry **disabled** in the document, an entry **disposed but still named**,
+and an entry whose **spawn failed before a runtime was stored**
+(`crates/jinnd-loader/src/apply.rs`). All four report `fiber: null`,
+`state: null`, `incarnation: null`, `unserved: null`, `provisions: []`,
+every registration count zero. They are byte-identical.
+
+The contract comment names the ambiguity — "absent for an entry with no
+live fiber (disabled, faulted, or a group)" — and does not resolve it. A
+consumer holding a `jinn:profile` `entry-ids` grant can separate two of
+them by cross-reading the document (`disabled: true`; the group package),
+which is what the plugins seam does: the disabled case reads
+`no-incarnation` with `reason: disabled`, a POSITIVE reading of the
+document. The other two are not separable at all, and a catalog without a
+profile grant — the appliance case — cannot separate any of them.
+
+There is a fifth situation that is worse, because it is invisible rather
+than ambiguous: an entry whose realm directive or body does not parse is
+split out by `Document::resolve` into an `EntryFault` and is **never
+committed to the profile**, so it appears in neither
+`jinn:introspect.entries()` nor `jinn:profile.document()`. Its
+`ErrorRecorded` line is on the ledger and nothing else. A surface that
+claims to report "every plugin" therefore silently omits exactly the
+plugins that are most broken. This seam names that limit in its README
+rather than pretending its list is complete.
+
+**The capability shape that would retire it.** A `presence` field on the
+introspect `entry` record with a closed value space — `group` | `disabled`
+| `disposed` | `spawn-failed` | `live` — answered from the loader's own
+knowledge, which already has it. And, separately, an `unresolved` list on
+`entries()` (or a `faults()` operation) so an entry the document could not
+resolve is reported as absent-with-a-reason rather than not reported.
+
+**Transcript** (round 2, `cargo test -p composition --test
+plugins_lifecycle an_entry_mounted_and_never_activated_never_reads_active
+-- --nocapture`, against the pinned daemon at `3a8e5c0`). An entry added
+to the document whose artifact hash the machine refuses — the
+spawn-failed situation — beside the disabled one, both reporting through
+the same catalog:
+
+```
+FINDINGS #39 transcript — a refused artifact reads:
+  {"state":"failed","reason":{"from":"no-recorded-cause","candidates":1,
+    "window":{"from":1,"scanned":214,"to":220,"truncated":false},"qualifier":"..."}}
+
+  and beside it, the DISABLED entry in the same listing:
+  jinn-plugins-shelf -> {"state":"no-incarnation","reason":{"from":"disabled"}}
+test an_entry_mounted_and_never_activated_never_reads_active ... ok
+```
+
+Two situations, two readings, and the difference between them comes
+entirely from the catalog holding a `jinn:profile` grant: the disabled
+one is separable because the DOCUMENT says so. Strip that grant — the
+appliance case — and both collapse into the same answer.
+
+## 40. A plugin cannot OBSERVE the composition, only poll it: there is no lifecycle event surface at all
+
+**Grade: source-cited, and measured — see #41 for the measurement.** Hit
+building the plugins seam (phase 2.7) on pin `3a8e5c0`.
+
+The plugins packet's acceptance asks the service definition for typed
+events. Building them showed there is nothing truthful to emit, and the
+reason is a kernel gap rather than a seam decision.
+
+`jinn:introspect@0.2.0` is a pair of pull operations — `entries()` and
+`readiness()` — each answered from a snapshot of kernel-owned state
+(`kernel-pin/contracts/jinn-introspect/contract.wit`). The kernel commits
+every fiber transition to the ledger as `FiberTransition { fiber, from,
+to, cause }` (`crates/jinnd-daemon/src/support.rs` `sync_transitions`),
+and a plugin holding a `jinn:ledger` grant can READ that record — but
+only by asking, after the fact, on its own schedule. Nothing pushes. The
+one event bus (`jinn:plugin` world, `interface events`) carries only what
+plugins themselves emit; the kernel is not a publisher on it, and there
+is no `listen` topic for a lifecycle change.
+
+So a catalog knows what the composition looks like at the instant it is
+asked, and knows nothing between two asks. A typed
+`PluginLifecycleChanged` event on this seam could therefore only be
+emitted by a poller comparing two snapshots — which would announce, as an
+event, a transition it did not witness and cannot time. That is the
+fabrication class this seam exists to kill, one layer up: an event whose
+payload asserts more than its emitter can know. **The seam ships no event
+type**, and this entry is the reason, so the absence is a recorded
+decision rather than an oversight. The decision is written where it will
+be READ — the `jinn-plugins` module doc, at the place a person comes to
+add an event surface — because a gap recorded only in this file gets
+closed by the next reader with exactly the poller it refuses.
+
+**The capability shape that would retire it.** Kernel-published typed
+events on the existing bus for the transitions the kernel already
+commits — the `FiberTransition` it writes to the ledger, delivered to
+listeners holding an `jinn:introspect` grant, under the same attribution
+the ledger row carries. The kernel already has the value, the bus, the
+attribution and the grant check; what is missing is the publish. With it,
+a catalog emits what it WITNESSED, and this seam's event surface becomes
+truthful rather than inferred.
+
+## 41. Every reading between two rests is unobservable: a real restart is invisible to the fastest read the operator API allows
+
+**Grade: reproducible, measured, packet-card-ready.** Hit building the
+plugins seam (phase 2.7) on pin `3a8e5c0`.
+
+The plugins seam's reading law names eleven readings. Three of them —
+`mounted` (a fiber resting in `pending`), `activating` (`loading`) and
+`interrupted` (`unloading`) — describe a fiber between two rests. The
+kernel genuinely passes through all three. No consumer at this pin can
+ever see one.
+
+The measurement, driven through the real pinned daemon
+(`tests/composition/tests/plugins_lifecycle.rs::the_kernel_passes_through_mounted_and_interrupted_and_no_read_can_see_it`):
+a real restart is triggered through the operator API (a `config` patch
+the plugin's own typed config reads), the catalog is read in a tight loop
+for the whole window, and the kernel's own ledger is then read back.
+
+```
+KERNEL RECORD across the restart (189 catalog reads):
+  {"FiberTransition":{"fiber":4,"from":"Pending","to":"Loading","cause":"InitialLoad"}}
+  {"FiberTransition":{"fiber":4,"from":"Loading","to":"Active","cause":"InitialLoad"}}
+  {"FiberTransition":{"fiber":4,"from":"Active","to":"Unloading","cause":"ConfigChanged"}}
+  {"FiberTransition":{"fiber":4,"from":"Unloading","to":"Pending","cause":"ConfigChanged"}}
+  {"FiberTransition":{"fiber":4,"from":"Pending","to":"Loading","cause":"ConfigChanged"}}
+  {"FiberTransition":{"fiber":4,"from":"Loading","to":"Active","cause":"ConfigChanged"}}
+READINGS OBSERVED: {"active"}
+test the_kernel_passes_through_mounted_and_interrupted_and_no_read_can_see_it ... ok
+```
+
+The kernel committed `Active → Unloading → Pending → Loading → Active`
+with cause `ConfigChanged`. Every one of those catalog reads returned
+`active`. The catalog is not wrong: it answers what `jinn:introspect`
+holds when it is asked, and a WASM plugin's unload-and-reload completes
+well inside the time one HTTP read takes, so there is no rate at which a
+poller catches it. This is #40's consequence stated as a number: without
+a push, a transient state is not merely hard to observe, it is
+unobservable in principle by anything slower than the transition.
+
+Three things follow, and this seam does all three. Its transient readings
+are proven on the kernel's OWN recorded state words, taken from that run's
+ledger, with the join exercised in the test process because there is
+nowhere else to run it — stated as exactly that, never as a composition
+proof it is not. The README's limits section carries it, because a
+consumer that believes it can watch a plugin's life through this seam
+will build something that silently misses every transition. And, since a
+vocabulary three of whose words nothing can produce is a claim that is
+right for a reason nothing enforces, the limit is marked IN THE
+DEFINITION — `jinn_plugins::UNREACHABLE_AT_PIN` with its qualifier, and
+on the three variants themselves — and guarded by a canary check,
+`no-transient-reading-at-this-pin`: at this pin a catalog answer that
+DELIVERS one of the three is itself a defect. The mutation harness proves
+the canary non-vacuous rather than passing because nothing produces the
+input. The day the capability shape below lands, that check goes red and
+forces the reading law to be re-read.
+
+**The capability shape that would retire it.** #40's kernel-published
+lifecycle events. Failing that, a `transitions(since)` operation on
+`jinn:introspect` answered from the same record the ledger gets, so a
+consumer that polls at least once per transition-burst can RECONSTRUCT
+the path it did not witness — weaker than a push, and enough to stop a
+reader believing a resting state is the whole story.

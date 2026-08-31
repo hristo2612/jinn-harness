@@ -23,12 +23,14 @@ use std::sync::Mutex;
 use jinn_api::{
     decode_engine_answer, decode_session_answer, decode_todo_answer, decode_workflow_answer,
     engine_list, engine_routable, engine_route, is_engines_path, is_sessions_path, is_todos_path,
-    is_workflows_path, route, run_id_payload, run_payload, session_payload, session_route,
+    is_workflows_path, plugin_catalog_list, plugin_catalog_routable, plugin_payload,
+    plugin_route, route, run_id_payload, run_payload, session_payload, session_route,
     store_list, store_routable, todo_payload, todo_route, todo_store_list, todo_store_routable,
     workflow_payload, workflow_route, workflow_store_list, workflow_store_routable, Answer,
-    ApiError, EngineRoute, ErrorCode, Outcome, SessionRoute, TodoRoute, WorkflowRoute,
-    ENGINE_METHODS, SESSION_METHODS, TODO_METHODS, WORKFLOW_METHODS,
+    ApiError, EngineRoute, ErrorCode, Outcome, PluginRoute, SessionRoute, TodoRoute, WorkflowRoute,
+    ENGINE_METHODS, PLUGIN_METHODS, SESSION_METHODS, TODO_METHODS, WORKFLOW_METHODS,
 };
+use jinn_api::{decode_plugin_answer, is_plugins_path, OP_CATALOG_DESCRIBE};
 use jinn_api_http_wire::{error_answer_response, error_response, parse, response, Parse};
 use jinn_engine::{engine_contract, OP_DESCRIBE};
 use jinn_session::{store_contract, OP_DESCRIBE as OP_DESCRIBE_STORE};
@@ -91,6 +93,12 @@ struct HttpConfig {
     /// another.
     #[serde(default)]
     workflow_stores: Vec<String>,
+    /// The plugin CATALOGS this API may route to, written from the same
+    /// source as this entry's `jinn:plugins.<id>` grants. A separate list
+    /// again, for the reason every other seam's is separate: a catalog id
+    /// is this seam's own and may never stand in for another seam's.
+    #[serde(default)]
+    catalogs: Vec<String>,
 }
 
 fn default_host() -> String {
@@ -109,6 +117,7 @@ static ENGINES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static TODO_STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static WORKFLOW_STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
+static CATALOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 
 fn fault(context: &str, error: impl std::fmt::Debug) -> GuestFault {
     GuestFault::Failed(format!("{context}: {error:?}"))
@@ -449,6 +458,78 @@ fn dispatch_workflows(method: &str, path: &str, query: serde_json::Value, body: 
     })
 }
 
+/// One granted catalog call: resolve `jinn:plugins.<id>`, call it, decode
+/// its answer into this seam's outcome. A catalog with no provider
+/// mounted is an ordinary typed answer naming it — never a fault.
+fn plugin_call(
+    contract: &str,
+    operation: &str,
+    payload: &[u8],
+) -> Result<serde_json::Value, ApiError> {
+    let handle = services::resolve(contract).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Unavailable,
+            format!("{contract} is not resolvable: {error:?}"),
+        )
+    })?;
+    let bytes = services::call(handle, operation, payload).map_err(|error| {
+        ApiError::new(
+            ErrorCode::Refused,
+            format!("{contract}/{operation} refused: {error:?}"),
+        )
+    })?;
+    decode_plugin_answer(&bytes)
+}
+
+/// The plugins surface: the catalogs this API may route to, the plugin
+/// tree one of them holds, and one plugin's life and ledger lines. Every
+/// route is exactly one granted contract call per catalog addressed, and
+/// every route is a READ — this surface has no write at all, because a
+/// plugin is reshaped by patching the profile through `/v1/profile`, and
+/// two ways to change one thing is how they drift apart.
+fn dispatch_plugins(method: &str, path: &str, query: serde_json::Value) -> Vec<u8> {
+    let Some(plugins_route) = plugin_route(method, path) else {
+        return route_miss(
+            PLUGIN_METHODS
+                .iter()
+                .any(|candidate| plugin_route(candidate, path).is_some()),
+        );
+    };
+    let catalogs = CATALOGS.lock().unwrap().clone();
+    let outcome = match &plugins_route {
+        PluginRoute::Catalogs => Ok(serde_json::to_value(plugin_catalog_list(
+            catalogs.iter().map(|catalog| {
+                (
+                    catalog.clone(),
+                    plugin_call(
+                        &jinn_plugins::catalog_contract(catalog),
+                        OP_CATALOG_DESCRIBE,
+                        &[],
+                    ),
+                )
+            }),
+        ))
+        .expect("encodes")),
+        _ => {
+            let catalog = plugins_route
+                .catalog()
+                .expect("a call route names its catalog");
+            let operation = plugins_route
+                .operation()
+                .expect("a call route names its operation");
+            plugin_catalog_routable(&catalogs, catalog).and_then(|contract| {
+                let payload =
+                    serde_json::to_vec(&plugin_payload(&plugins_route, query)).expect("encodes");
+                plugin_call(&contract, operation, &payload)
+            })
+        }
+    };
+    answered(&match outcome {
+        Ok(value) => Answer::ok(value),
+        Err(error) => Answer::error(error),
+    })
+}
+
 /// One request → one contract call → one response.
 fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> Vec<u8> {
     // The engines surface is routed first: its paths carry two
@@ -471,6 +552,11 @@ fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> 
     // run within it, on a per-store contract.
     if is_workflows_path(path) {
         return dispatch_workflows(method, path, query, body);
+    }
+    // And the plugins surface: a catalog id, then one plugin within it,
+    // on a per-catalog contract.
+    if is_plugins_path(path) {
+        return dispatch_plugins(method, path, query);
     }
     let Some((route, id)) = route(method, path) else {
         return route_miss(
@@ -621,6 +707,7 @@ impl Guest for Http {
         *STORES.lock().unwrap() = config.stores;
         *TODO_STORES.lock().unwrap() = config.todo_stores;
         *WORKFLOW_STORES.lock().unwrap() = config.workflow_stores;
+        *CATALOGS.lock().unwrap() = config.catalogs;
         Ok(())
     }
 

@@ -24,6 +24,7 @@ jinn-api-http-wire = { path = "../jinn-api-http-wire" }
 # their one home rather than spelled again here.
 jinn-engine = { path = "../../engines/jinn-engine" }
 # The sessions seam's operation and contract names, from their one home.
+jinn-plugins = { path = "../../plugins/jinn-plugins" }
 jinn-session = { path = "../../sessions/jinn-session" }
 jinn-todo = { path = "../../todos/jinn-todo" }
 # The workflows seam's operation and contract names, from their one home.

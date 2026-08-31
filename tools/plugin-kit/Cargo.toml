@@ -1,0 +1,23 @@
+# The plugins seam's kit builder. Usage:
+#
+#     cargo run -p plugin-kit -- kit <root> --port N [--every-ms N] [--tick-ms N]
+#
+# Builds the two catalog providers and mounts them beside the api trio,
+# the settings pair and the cron seam, pinned by content hash, and writes
+# `<root>/profile.json`. The seam's profile ENTRIES live in the library
+# half (one home per fact).
+[package]
+name = "plugin-kit"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+api-kit = { path = "../api-kit" }
+cron-kit = { path = "../cron-kit" }
+jinn-api = { path = "../../plugins/api/jinn-api" }
+jinn-cron = { path = "../../plugins/cron/jinn-cron" }
+jinn-plugins = { path = "../../plugins/plugins/jinn-plugins" }
+serde_json = "1.0"

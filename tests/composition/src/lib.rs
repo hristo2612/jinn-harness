@@ -6,3 +6,4 @@
 pub mod api;
 pub mod daemon;
 pub mod kit;
+pub mod plugins;

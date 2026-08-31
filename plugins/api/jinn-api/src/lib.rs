@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 pub mod engines;
 pub mod kernel;
+pub mod plugins;
 pub mod sessions;
 pub mod todos;
 pub mod workflows;
@@ -38,6 +39,12 @@ pub use workflows::{
     decode_workflow_answer, is_workflows_path, no_such_workflow_store, workflow_api_error,
     workflow_payload, workflow_route, workflow_store_list, workflow_store_routable, WorkflowRoute,
     WorkflowStoreEntry, WorkflowStoreList, RUNS_SEGMENT, WORKFLOWS_PATH, WORKFLOW_METHODS,
+};
+
+pub use plugins::{
+    decode_plugin_answer, is_plugins_path, plugin_api_error, plugin_catalog_list,
+    plugin_catalog_routable, plugin_payload, plugin_route, PluginCatalogEntry, PluginCatalogList,
+    PluginRoute, HISTORY_SEGMENT, OP_CATALOG_DESCRIBE, PLUGINS_PATH, PLUGIN_METHODS,
 };
 
 pub use kernel::{

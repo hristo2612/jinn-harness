@@ -188,6 +188,53 @@ pub fn shared_workflow_kit() -> &'static Path {
 /// A fresh scratch root holding a copy of the shared WORKFLOW kit, its
 /// HTTP provider re-pointed at a free loopback port. A restart proof
 /// re-boots over the SAME root, so the port stays with it.
+/// Builds the plugins kit (the two catalog providers beside the api trio)
+/// once per process into a shared cache.
+///
+/// # Panics
+///
+/// If the kit builder fails.
+pub fn shared_plugins_kit() -> &'static Path {
+    static KIT: OnceLock<PathBuf> = OnceLock::new();
+    KIT.get_or_init(|| {
+        let root = workspace_root().join("target/composition/plugin-kit");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("kit cache dir");
+        let status = Command::new("cargo")
+            .args(["run", "-p", "plugin-kit", "--", "kit"])
+            .arg(&root)
+            .args(["--port", &KIT_PORT.to_string()])
+            .args(["--every-ms", &JOB_PERIOD_MS.to_string()])
+            .args(["--tick-ms", &TICK_MS.to_string()])
+            .current_dir(workspace_root())
+            .status()
+            .expect("cargo run -p plugin-kit");
+        assert!(status.success(), "the plugin kit builds");
+        root
+    })
+}
+
+/// A fresh copy of the plugins kit on a free port.
+///
+/// # Panics
+///
+/// If the copy or the profile rewrite fails.
+#[must_use]
+pub fn fresh_plugins_root(name: &str) -> (PathBuf, u16) {
+    let root = copy_kit(shared_plugins_kit(), name);
+    let port = free_port();
+    let path = root.join("profile.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("profile")).expect("profile parses");
+    set_provider_port(&mut document, "jinn-api-http", port);
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&document).expect("encodes"),
+    )
+    .expect("profile");
+    (root, port)
+}
+
 #[must_use]
 pub fn fresh_workflow_root(name: &str) -> (PathBuf, u16) {
     let root = copy_kit(shared_workflow_kit(), name);

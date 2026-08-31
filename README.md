@@ -13,7 +13,73 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
-Phase 2.6 — kernel pin `3a8e5c0` (M2-K9), UNCHANGED. The workflows seam
+Phase 2.7 — kernel pin `3a8e5c0` (M2-K9), UNCHANGED. The plugins seam
+(`plugins/plugins/`) is the SEVENTH and LAST core-port seam, and the one
+that makes the malleability contract something an operator does rather
+than something a suite asserts.
+
+**A provider is swapped THROUGH THE API.** Two
+`PATCH /v1/profile/entries/{id}` calls move `jinn:plugins.main` from
+`jinn-plugins-profile` to `jinn-plugins-static`; `list()` reports the new
+binding and the new entry set's own qualifier, and the layer above is
+untouched as a MEASURED fact — the API's incarnation number is asserted
+EQUAL across the swap, not merely "it still answers"
+(`tests/composition/tests/plugins.rs::the_catalog_provider_swaps_through_the_api_with_the_layer_above_untouched`).
+
+That is only possible because this seam was designed for it.
+`jinn:profile.patch-entry` writes ONE subtree, `config`, so the
+package-and-hash swap the other six seams prove by editing the profile
+file is not reachable through the operator API at all (`FINDINGS.md` #37).
+Both catalog providers therefore read their catalog id from config and are
+granted both catalog names up front. The distribution's headline claim —
+*swapping a provider is a profile edit* — was true only of an operator
+with filesystem access to the document, and now says so.
+
+**A catalog READS; it does not run.** Every value is licensed by the
+evidence that produced it, and `active` is reachable from exactly one
+input, so every other combination falls to a conservative answer by
+construction. A disabled entry reads `no-incarnation` with `reason:
+disabled`; an entry whose `jinn:net` grant admits one port while its
+config names another reads `failed`; an entry a catalog names and the
+machine does not run reads `not-mounted`. There is no `unknown` in the
+vocabulary, and no CORRELATED reason either: `jinn:ledger` v0.1 records
+no causal parent, so a failure's reason is `no-recorded-cause` carrying
+the span that was searched, a COUNT of the reason-bearing lines it
+declines to cite, and the qualifier that says why. The lines themselves
+are read with `history(id)`, where they are that entry's history and not
+a cause (`FINDINGS.md` #38).
+
+**The pin was NOT bumped, on evidence.** jinnd main has moved past
+`3a8e5c0` (M2-K10's cycle refusal, M2-K12's Linux CI and keystore fix),
+so the question was asked rather than assumed. Every surface this seam
+consumes is byte-identical at the pin and at main: `jinn:profile` and
+`jinn:ledger` are unchanged verbatim, and `jinn:introspect`'s 0.2.0 →
+0.3.0 is additive — a new `waits` operation, with `record entry` (the
+only thing read here) untouched, no field added, removed or retyped. The
+`jinn:plugin` world's 0.6.0 → 0.7.0 adds a `cycle` case to
+`kernel-error`; nothing here emits a reply-expecting dispatch, so no
+crossing this seam makes can close a wait cycle. M2-K12's keystore fix is
+a `dev`-profile codegen change with zero runtime source delta and no
+keystore consumer in this seam. Bumping for tidiness would have moved the
+whole distribution onto a new contract surface to buy nothing.
+
+One consequence of NOT bumping is carried in code rather than in this
+paragraph: main adds a `CycleRefused` ledger kind, so a catalog that
+matched ledger kinds exhaustively would break on a later pin. The reader
+treats kinds as an open set with an honest fallthrough — reason-bearing
+kinds are a named known set and every other kind is history — which is
+the right shape at any pin.
+
+**The reason gap is named rather than papered over.** A guest's own
+activation failure — a trap, a panic, a deadline kill — records its STATE
+and never its REASON: the kernel puts the `KernelError` in
+`FiberRecord.failures` and never drains it to the ledger (`FINDINGS.md`
+#38). This seam refuses to correlate such a failure with whatever refusal
+happens to precede it, because `jinn:ledger` v0.1 records no causal parent
+and a plausible neighbour presented as a cause is the fabrication the seam
+exists to kill.
+
+### Phase 2.6 — kernel pin `3a8e5c0` (M2-K9), UNCHANGED. The workflows seam
 (`plugins/workflows/`) is the sixth core-port seam and the FOURTH layer of
 the stack: a workflow node dispatches work through the `jinn-todo`
 DEFINITION, which dispatches to a session through `jinn-session`, which
@@ -204,12 +270,200 @@ iteration channel — kernel changes are never made here).
 | `tools/session-kit` | Builds the sessions profile: the two store providers beside the engine providers |
 | `tools/todo-kit` | Builds the todos profile: the two Todo stores above the two session stores |
 | `tools/workflow-kit` | Builds the workflows profile: the two run stores above the two Todo stores |
+| `tools/plugin-kit` | Builds the plugins profile: the two catalogs beside the api trio, plus the disabled and misbound entries the honesty proofs need |
 | `plugins/` | First-party plugin crates (wasm components) — land per phase, one seam triple at a time |
 | `profiles/` | Named plugin trees — a product is a profile |
 | `tests/composition` | Real-composition gates: boot generated profiles through the REAL pinned jinnd daemon |
 | `FINDINGS.md` | Kernel frictions logged as jinnd packet-card candidates (two-way iteration) |
 | `docs/notes/` | Agent notes: rationale for non-obvious decisions, one per non-trivial change |
 | `docs/postmortems/` | Defects that hardened into rules (AGENTS.md standing order 5) |
+
+## What the core port did NOT achieve
+
+Seams 2.1 through 2.7 are landed. This section is the honest close: every
+named known limit, gathered in one place, so the M3 parity conversation
+starts from a list rather than from optimism. Where a limit was previously
+IMPLIED rather than named, it is named here for the first time and marked
+**(named here)**.
+
+Each seam's own README carries its limits in full; this is the index, not
+a second home. `FINDINGS.md` carries the kernel-side frictions and the
+per-seam "could NOT prove" sections.
+
+### The whole port
+
+- **No 2.x seam has soak evidence. (named here)** `SOAK.md` is the CRON
+  seam, phase 1.4. Nothing from 2.1–2.7 has had a week of real duty.
+- **Nothing anywhere races two concurrent writers.** Todos, workflows,
+  sessions and the plugins catalog all drive one caller at a time. "Not
+  reachable by inspection" is written down in each case, and it is not a
+  proof.
+- **The threat model is ACCIDENTAL throughout** — races, crashes, torn
+  writes, a daemon that stopped. Not an adversary with write access to the
+  data root or the profile. A forged journal is not detected as forgery;
+  what a reader catches is damage.
+- **Six seams hand-roll journal replay** and each got absence wrong
+  differently (`FINDINGS.md` #36). The shared typed replay outcome and the
+  typed NEGATIVE lookup answer are proposed and **not built**.
+- **The nested-dispatch deadlock (#4/#32) is unretired,** and it is the
+  root cause of every polling decision in the stack: it is why every event
+  feed is a cursor rather than a push, why every composing seam polls the
+  one below, and therefore why latency compounds per layer (#35, measured:
+  513 ms at two layers, 755 at three, 1084 at four).
+- **`jinn:fs` cannot drop a suffix** (#34), so every heal in all three
+  durable stores rewrites the whole prefix.
+- **Sibling activation order is unspecified** (#7), which is what keeps
+  #30's window open.
+- **A vendor CLI is exercised only where an operator names one.** The
+  todos and workflows vendor legs self-skip in CI; sessions has no vendor
+  test at all.
+
+### 2.1 — Operator API
+
+- **There is no authentication or authorization. (named here)** Loopback
+  plus the port the `jinn:net` grant scopes is the ENTIRE boundary. No
+  token, no bearer, no per-route authority. Anything on the machine that
+  can reach the port is an operator.
+- **No outbound HTTP exists at any pin so far.** `jinn:net` v0.1 has no
+  `request`, no TLS, no non-loopback listen. **Connectors — Slack,
+  Telegram, webhooks, any vendor API — are therefore structurally
+  impossible in this repo today. (named here)**
+- **The swap proof for this seam swaps a second entry of the SAME
+  artifact,** because no second transport shape can exist.
+- **`patch-entry`'s `idempotency-key` is accepted and unused.**
+- **The API seam recorded no "could not prove" section of its own.
+  (named here)** No concurrency proof, no load proof, no auth proof.
+
+### 2.2 — Settings
+
+- **The shadowed-refusal recovery is unproven end to end.** The repo's
+  only `#[ignore]`d test, blocked on #32.
+- **A mixed hot+cold patch across two layers cannot be applied
+  atomically** (#28). The shipped shape is a whole refusal carrying an
+  executable recovery.
+- **Per-entry config layering is a guest-side emulation of a kernel
+  concept** (#27, #29).
+- **Secret references are names only. (named here)** No rotation, no
+  revocation, no lifecycle: nothing addresses what happens when a key
+  changes under a running provider.
+
+### 2.3 — Engines
+
+- **`run-get` cannot tell a REAPED run from an id that never existed.** A
+  consumer polling a reaped run reads "no run" and takes the conservative
+  branch, reporting `failed` for work that SUCCEEDED. Named in
+  `docs/postmortems/2026-08-30-the-run-bound-reaped-by-key-order.md` and
+  **carrying no FINDINGS number** — the sharpest untracked item in the
+  repo, and the same class as #36's typed negative lookup.
+- **N engines coexisting is N contract names,** a guest-side encoding the
+  kernel cannot see (#29): nothing refuses two entries claiming one engine
+  id, and a typo is a resolve-time `missing-dependency` rather than a
+  profile-load refusal.
+- **A provision made in `activate` binds the STAGING instance** (#30);
+  one call before the swap commit kills the contract permanently, with no
+  fault, no refusal and no log line. The harness narrowed the window and
+  did not close it.
+- **The echo provider's token counts and `cost-micro-usd: 0` are
+  stand-ins.** Every CI-runnable usage-path proof runs on fabricated
+  numbers.
+- **No concurrency or load proof, and no record that there is none.
+  (named here)**
+
+### 2.4 — Sessions
+
+- **One unreplayable journal takes the WHOLE durable store down.** A
+  per-document quarantine is the better shape and is not built.
+- **A store POLLS its engine;** listening would deadlock (#4/#32).
+- **The event ring is bounded** and a session past it loses its oldest.
+- **An append-only journal grows the fiber's effect journal without
+  bound** (#33) — one entry per line for the life of the incarnation.
+  Graded *derived, not measured*; the harness does nothing about it.
+- **No vendor engine was ever driven under a session.**
+
+### 2.5 — Todos
+
+- **A comment cannot be edited or removed, and neither can a Todo. There
+  is no DELETE.**
+- **The torn tail is manufactured, not observed** — the suite writes a
+  short document behind the daemon's back. What is proven is the reader,
+  not that the kernel tears.
+- **The event ring's drop count and the `declared-status` divergence are
+  unit-proven only,** never driven through the daemon.
+
+### 2.6 — Workflows
+
+- **`spec-digest` is a 64-bit FNV-1a change detector, not a cryptographic
+  hash,** and its stability rests on this workspace's lockfile.
+- **A run is NOT resumed across a restart** — a decision, not a gap. And
+  nothing here proves a resumable run would be safe, because nothing here
+  builds one.
+- **There is no retry and no delete.**
+- **The graph walk is proven on TWO shapes through the daemon.** A wide
+  fan-out, a join with several followed inbound edges and a deep chain are
+  unit-proven only — the biggest single parity exposure in the seam.
+- **A record-less document is proven for the RUN family only.**
+
+### 2.7 — Plugins
+
+Its own README carries these in full; the load-bearing ones:
+
+- **A plugin's swap through the operator API can only ever be a CONFIG
+  swap** (#37). Every seam from 2.3 onward proves its malleability by
+  changing an entry's `package` and `hash` in the profile FILE; this one
+  operated the surface a person or an agent actually has and found that
+  `jinn:profile.patch-entry` writes one subtree — `config` — and nothing
+  else. The distribution's headline claim, *a product is a profile and
+  swapping a provider is a profile edit*, is true today only of an
+  operator with filesystem access to the document. This seam's own swap
+  works because it was DESIGNED so its binding is decided by config; a
+  seam that did not think of that in advance has no API-driven swap at
+  all. It has a transcript, and it goes to the M3 parity conversation
+  intact.
+- **A guest's own activation failure has no reason at this pin** (#38),
+  and this seam refuses to invent one from a neighbouring line. Round 1
+  of this packet DID invent one — an unrelated refusal from an earlier
+  incarnation, reported as the cause — and the fix removed the variant
+  that could carry it, so the fabrication is unrepresentable rather than
+  unreached.
+- **`state: null` is four situations and this seam separates two** (#39).
+- **Three of the eleven readings are UNREACHABLE at this pin** (#41).
+  `mounted`, `activating` and `interrupted` each name a fiber between two
+  rests. The kernel passes through all three; no consumer here can be
+  handed one, because `jinn:introspect@0.2.0` answers from a snapshot
+  taken at rest and a real restart — measured through this seam —
+  completed inside one HTTP read while 189 consecutive reads all returned
+  `active` and the kernel's own ledger recorded the whole path. The
+  vocabulary keeps the words because the kernel really does pass through
+  them; the limit is marked **in the definition itself**
+  (`jinn_plugins::UNREACHABLE_AT_PIN`) rather than only here, and a canary
+  check refuses any catalog answer that delivers one, so the day the
+  kernel gains a publish path the suite goes red instead of the claim
+  quietly outliving its measurement. A consumer that believes it can
+  follow a plugin's life through this seam today will build something that
+  silently misses every transition.
+- **There is no lifecycle event surface at all, anywhere** (#40), and
+  this seam ships no typed event as a recorded decision rather than an
+  oversight. The kernel commits every `FiberTransition` to the ledger but
+  is not a publisher on the plugin event bus, and there is no listen topic
+  for a lifecycle change, so the only event this seam could emit is one a
+  poller synthesised by diffing two snapshots — announcing a transition it
+  did not witness and cannot time. The refusal is written at the place a
+  person would go to add one (`jinn-plugins`'s module doc), because
+  without it the next reader closes the gap with exactly that poller. The
+  kernel-side fix is carded as **M2-K13**.
+- **An entry the document could not RESOLVE appears in no catalog at
+  all** — a list here omits exactly the entries that are most broken.
+- **The surface is read-only,** and the join is three reads at three
+  instants rather than one atomic view.
+
+### What is not here at all
+
+Beyond the six ported seams and this one, the old gateway's surface has
+**no plugin in this repo**: connectors, chats, notes, experiments, the
+org and its employees, delegation, approvals, knowledge, the MCP surface,
+and the web UI. Cron exists as phase 1's seam and has not been revisited
+as a product surface. Parity is a long way from here, and the cutover rule
+below is what keeps that honest.
 
 ## The cutover rule
 
