@@ -576,6 +576,52 @@ kernel's own view and holds no alarm; the scheduler consumes its job
 table through `jinn:settings`). The idle-growth measurement that
 qualifies the API is in the next paragraph.
 
+**Executed 2026-08-31 (seventh bump):** `57360cc` → `3a8e5c03` (jinnd
+M2-K9 — the pin the harness SHIPS; harness packet
+`packet/1.11-soak-pin-derived`, PLA-297). Motivated by a COO drift audit
+rather than by a kernel change: the soak was accruing M2 §7(b) duty on a
+kernel the milestone does not deliver, while three sources disagreed
+about which kernel that even was (§What the record is). This bump is also
+the FIRST EXERCISE of the derived record, and the two halves are in that
+order deliberately — the record had to stop being hand-written before a
+bump could be trusted to say what it had done.
+
+Supervised, per this procedure: a clean SIGINT of daemon 11459 at
+16:05:06.392Z reaching `quiescent; ledger flushed; bye` at 16:05:06.417Z
+(exit 0, so `KeepAlive` left it stopped); `record-build.sh` installing the
+pinned daemon and writing `bin/jinnd.build` as ONE step — the digest and
+the pin cannot flip apart, and the hand-copied `bin/jinnd.commit` is gone;
+`api-kit` rebuilt and the seven-entry profile regenerated with the
+composition UNCHANGED (the cron pair + api trio + settings pair, the same
+duty at the same cadence); `printf planned-start` + `kickstart`; readiness
+line at 16:05:52.323Z. **Duty gap 45.9 s**, counted against the week per
+the standing ruling, not against the restart that ended it.
+
+The start line is the proof the derived record works, and it is worth
+reading in full for the two fields that could not both appear before:
+
+```
+2026-08-31T16:05:32Z started (launchd; reason=planned-start): jinnd 21597
+(pin 3a8e5c03fdbe2f21144faee8daba73beeb75d8b4) evidence: … prev_end="exit 0"
+prev_end_clean=yes last_seen=2026-08-31T16:05:06.417671Z
+binary_sha256=302881e61f1f647edf9cc4b27c3e4a172dea1f872625519536defbc5eb0d3d21
+running_pin=3a8e5c03fdbe2f21144faee8daba73beeb75d8b4
+harness_pin=3a8e5c03fdbe2f21144faee8daba73beeb75d8b4 unproven=none
+```
+
+The pin is there because the wrapper digested the binary it was about to
+exec and `bin/jinnd.build` described that digest — not because a file
+happened to hold the value. Before this bump the two pins were `57360cc`
+and `3a8e5c03`, and no line anywhere printed both.
+
+Post-bump evidence: the boot reconcile fired the 16:00:00Z boundary as a
+catch-up at 16:05:52.4Z (`tick-seq 0`, `answers 1`) with its run record
+and history append, all seven fibers `Active`, ledger 7179 → 7397 rows.
+Duty was declared live only on the first UNASSISTED wake, at 16:20:52.5Z:
+boundary 1788192900000, `tick-seq 1`, `answers 1`, ledger → 7419. The
+alarm is period-from-wake, so that first post-boot wake lands one period
+after the start rather than on the boundary.
+
 **Idle ledger growth with the API mounted (2026-08-29):** measured over a 971 s window starting right
 after the two post-boot operator requests (ledger rows 1926 → 1948, no
 operator request made inside it). The window contained exactly one
