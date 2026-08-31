@@ -38,6 +38,14 @@
 //! unrepresentable rather than merely unreached, because a filter is
 //! something a later edit can loosen and a missing variant is not.
 //!
+//! # Three of these readings are UNREACHABLE at this pin
+//!
+//! `mounted`, `activating` and `interrupted` each name a fiber between
+//! two rests, and no consumer at this pin can be handed one — measured,
+//! not assumed. The marking and its evidence live in [`crate::pin`]; the
+//! variants below carry it, and `checks::CHECKS` carries the canary that
+//! goes red the day it stops holding.
+//!
 //! # There is no `unknown`
 //!
 //! A kernel `state` string this table does not know is answered
@@ -137,12 +145,19 @@ pub enum Lifecycle {
     /// In the composition with a fiber that has never left `pending`.
     /// This is the mounted-but-never-activated answer, and it is not
     /// `Active` for the structural reason the module doc gives.
+    ///
+    /// UNREACHABLE at this pin ([`crate::pin::UNREACHABLE_AT_PIN`],
+    /// FINDINGS.md #41): a fiber resting in `pending` is never what
+    /// `jinn:introspect` is asked about.
     Mounted,
     /// In the composition with NO live fiber at all. The kernel does not
     /// say why in the snapshot, so the reason comes from the document or
     /// the ledger — and says which.
     NoIncarnation { reason: Reason },
     /// An incarnation is installing, and it owes nothing.
+    ///
+    /// UNREACHABLE at this pin ([`crate::pin::UNREACHABLE_AT_PIN`],
+    /// FINDINGS.md #41): `loading` completes inside one read.
     Activating,
     /// Serving. The only answer requiring three positive facts.
     Active,
@@ -153,6 +168,11 @@ pub enum Lifecycle {
     /// The activation failed, with the reason it failed.
     Failed { reason: Reason },
     /// Torn down, or owing a change nothing will schedule, mid-life.
+    ///
+    /// UNREACHABLE at this pin ([`crate::pin::UNREACHABLE_AT_PIN`],
+    /// FINDINGS.md #41): `unloading` is never observed, and the `gone` /
+    /// `stalled` owed changes that also read here are not reported by
+    /// the pinned `jinn:introspect` either.
     Interrupted { reason: Reason },
     /// Gone, terminally.
     Disposed { reason: Reason },

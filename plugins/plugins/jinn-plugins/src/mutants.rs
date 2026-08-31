@@ -1,24 +1,32 @@
 //! The MUTATION HARNESS: inject each named defect, show exactly which
-//! honesty checks go red.
+//! honesty checks go red, and for the reason the defect is named after.
 //!
 //! # Why this exists, and what it stands in for
 //!
 //! Red-first ordering shows that a test COULD fail. It was missed on this
 //! seam's round 1 and cannot be un-missed, so what stands in its place is
 //! strictly stronger evidence — and it is an ARTIFACT that runs, not a
-//! sentence in a note. Each mutant below is a defective IMPLEMENTATION of
-//! the reading, reading the same [`Inputs`] the honest one reads: the
-//! round-1 defect is the deleted code restored verbatim, over a real
-//! ledger page. Each is then measured with the same [`crate::checks`]
-//! predicates the real composition proof runs against the daemon's own
-//! answers.
+//! sentence in a note. Each defect in [`crate::defects`] is a defective
+//! IMPLEMENTATION of the reading, computed from the same [`Inputs`] the
+//! honest one reads. Each is then measured with the same
+//! [`crate::checks`] predicates the real composition proof runs against
+//! the daemon's own answers.
 //!
 //! A mutant no check catches is a hole in the suite; a check no mutant
 //! reaches is unproven law. The sweep at the bottom fails on either.
+//!
+//! # A mutant must go red for its OWN reason
+//!
+//! Round 3 found `active-needs-positive-proof` documented for two
+//! exclusions and enforcing one. The sweep had not noticed, because the
+//! check WAS reached — by the other half. So every mutant now names the
+//! [`Mutant::evidence`] its red message must carry, and a mutant caught
+//! by a neighbouring reason no longer counts as caught.
 
 use crate::catalog::Declared;
+use crate::defects;
 use crate::entry::GrantSource;
-use crate::history::{History, Line, REASON_BEARING};
+use crate::history::History;
 use crate::lifecycle::{Snapshot, Window};
 use crate::Catalog;
 
@@ -39,47 +47,80 @@ pub struct Mutant {
     pub provenance: &'static str,
     /// The check that must go red on it.
     pub caught_by: &'static str,
+    /// A fragment the red message must carry, so a mutant caught for a
+    /// NEIGHBOURING reason does not pass for one caught by its own.
+    pub evidence: &'static str,
+    /// The input shape this defect is reachable on.
+    pub on: fn() -> Inputs,
     /// The defective reading, over the same inputs the honest one reads.
     pub read: fn(&Inputs) -> serde_json::Value,
 }
 
 /// Every defect this seam is built to exclude.
-pub const MUTANTS: [Mutant; 6] = [
+pub const MUTANTS: [Mutant; 8] = [
     Mutant {
         name: "the reason is the last reason-bearing line in the window",
         provenance: "round 1, catalog.rs:134 — the verifier's reproduction",
         caught_by: "no-reason-is-correlated",
-        read: fabricated_reason,
+        evidence: "carried `seq`",
+        on: defects::a_failure_with_an_unrelated_refusal_in_its_window,
+        read: defects::fabricated_reason,
     },
     Mutant {
         name: "`active` is read from the kernel's state string alone",
         provenance: "the class the reading law exists to exclude",
         caught_by: "active-needs-positive-proof",
-        read: active_without_proof,
+        evidence: "with no incarnation to prove it",
+        on: defects::a_failure_with_an_unrelated_refusal_in_its_window,
+        read: defects::active_without_proof,
+    },
+    Mutant {
+        name: "`active` survives an incarnation that already owes a change",
+        provenance: "round 3, checks.rs — the half the doc claimed and the code did not enforce",
+        caught_by: "active-needs-positive-proof",
+        evidence: "its live incarnation owes",
+        on: defects::a_loading_incarnation_that_already_owes_a_change,
+        read: defects::active_while_the_incarnation_owes_a_change,
+    },
+    Mutant {
+        name: "a loading fiber that already owes a change remains eternally activating",
+        provenance: "round 2 verify — the named defect no mutant reached",
+        caught_by: "no-transient-reading-at-this-pin",
+        evidence: "which this pin cannot produce",
+        on: defects::a_loading_incarnation_that_already_owes_a_change,
+        read: defects::eternally_activating,
     },
     Mutant {
         name: "an unrecognised kernel state folds to `unknown`",
         provenance: "the sentinel class — sessions, todos, workflows",
         caught_by: "no-sentinel-in-the-vocabulary",
-        read: unknown_sentinel,
+        evidence: "a sentinel state",
+        on: defects::a_failure_with_an_unrelated_refusal_in_its_window,
+        read: defects::unknown_sentinel,
     },
     Mutant {
         name: "a failure whose window held nothing reports no reason",
         provenance: "the absence class, FINDINGS #36",
         caught_by: "every-reading-that-owes-one-has-a-reason",
-        read: reasonless_failure,
+        evidence: "with no reason at all",
+        on: defects::a_failure_with_an_unrelated_refusal_in_its_window,
+        read: defects::reasonless_failure,
     },
     Mutant {
         name: "a grant list is reported without its authority",
         provenance: "an appliance's declaration passing for enforcement",
         caught_by: "grants-name-their-authority",
-        read: unsourced_grants,
+        evidence: "unnamed authority",
+        on: defects::a_failure_with_an_unrelated_refusal_in_its_window,
+        read: defects::unsourced_grants,
     },
     Mutant {
         name: "the qualifier is dropped from the answer",
         provenance: "M2-K12: a limit that lives only in a README",
         caught_by: "the-limit-travels-in-the-answer",
-        read: silent_qualifier,
+        evidence: "grants with no qualifier",
+        on: defects::a_failure_with_an_unrelated_refusal_in_its_window,
+        read: defects::silent_qualifier,
     },
 ];
 
@@ -96,160 +137,75 @@ pub fn honest(inputs: &Inputs) -> serde_json::Value {
     .expect("an entry encodes")
 }
 
-/// A failed entry whose window really does hold a plausible sentence to
-/// steal — the shape the round-1 defect was found on.
-#[must_use]
-pub fn a_failure_with_an_unrelated_refusal_in_its_window() -> Inputs {
-    let window = Window {
-        from: 1,
-        to: 20,
-        scanned: 20,
-        truncated: false,
-    };
-    Inputs {
-        declared: Declared {
-            id: "a".to_owned(),
-            package: Some("plugins/a".to_owned()),
-            grants: vec![crate::entry::Grant {
-                contract: "jinn:net".to_owned(),
-                scope: None,
-                ops: None,
-            }],
-            disabled: false,
-        },
-        snapshot: Some(Snapshot {
-            state: Some("failed".to_owned()),
-            incarnation: None,
-            unserved: None,
-            provisions: Vec::new(),
-        }),
-        history: History::of(
-            "a",
-            vec![Line {
-                seq: 3,
-                wall_ms: 30,
-                entry: "a".to_owned(),
-                kind: "GrantRefused".to_owned(),
-                payload: serde_json::json!({"detail": "an earlier incarnation's refusal"}),
-                sensitivity: "public".to_owned(),
-            }],
-            window,
-        ),
-        window,
-    }
-}
-
-/// The round-1 code, restored: the newest reason-bearing line in the
-/// window, presented as this activation's cause. It reads the real
-/// ledger page — nothing here is a literal.
-fn fabricated_reason(inputs: &Inputs) -> serde_json::Value {
-    let mut wire = honest(inputs);
-    let cited = inputs
-        .history
-        .lines
-        .iter()
-        .rev()
-        .find(|line| REASON_BEARING.contains(&line.kind.as_str()));
-    if let Some(line) = cited {
-        wire["lifecycle"] = serde_json::json!({
-            "state": "failed",
-            "reason": {
-                "from": "ledgered",
-                "seq": line.seq,
-                "kind": line.kind,
-                "detail": line.payload.get("detail").cloned().unwrap_or_default(),
-            },
-        });
-    }
-    wire
-}
-
-/// The reading law with its three-fact requirement collapsed to one.
-fn active_without_proof(inputs: &Inputs) -> serde_json::Value {
-    let mut wire = honest(inputs);
-    let live = inputs
-        .snapshot
-        .as_ref()
-        .and_then(|snapshot| snapshot.state.clone());
-    if live.is_some() {
-        wire["lifecycle"] = serde_json::json!({ "state": "active" });
-        wire.as_object_mut()
-            .expect("an entry object")
-            .remove("incarnation");
-    }
-    wire
-}
-
-/// A state this build does not know, folded into a sentinel instead of
-/// carried verbatim.
-fn unknown_sentinel(inputs: &Inputs) -> serde_json::Value {
-    let mut wire = honest(inputs);
-    wire["lifecycle"] = serde_json::json!({ "state": "unknown" });
-    wire
-}
-
-/// A failure that reports the state and drops the reason.
-fn reasonless_failure(inputs: &Inputs) -> serde_json::Value {
-    let mut wire = honest(inputs);
-    let state = wire["lifecycle"]["state"].clone();
-    wire["lifecycle"] = serde_json::json!({ "state": state });
-    wire
-}
-
-/// Grants on the wire with the authority that read them stripped off.
-fn unsourced_grants(inputs: &Inputs) -> serde_json::Value {
-    let mut wire = honest(inputs);
-    let values = wire["grants"]["values"].clone();
-    let qualifier = wire["grants"]["qualifier"].clone();
-    wire["grants"] = serde_json::json!({ "values": values, "qualifier": qualifier });
-    wire
-}
-
-/// The limit that lives only in a README.
-fn silent_qualifier(inputs: &Inputs) -> serde_json::Value {
-    let mut wire = honest(inputs);
-    wire["grants"]["qualifier"] = serde_json::json!("");
-    wire
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::checks::{failures, CHECKS};
 
     #[test]
-    fn the_honest_reading_passes_every_check() {
-        // The precondition for the whole harness: if the honest answer
-        // failed a check, every mutant below would go red for free and
-        // the matrix would prove nothing.
-        let inputs = a_failure_with_an_unrelated_refusal_in_its_window();
-        assert_eq!(failures(&honest(&inputs)), Vec::<String>::new());
+    fn the_honest_reading_passes_every_check_on_every_fixture() {
+        // The precondition for the whole harness: if an honest answer
+        // failed a check, every mutant on that fixture would go red for
+        // free and the matrix would prove nothing. Checked on EVERY
+        // input shape the table uses, not only the first.
+        for mutant in &MUTANTS {
+            let inputs = (mutant.on)();
+            assert_eq!(
+                failures(&honest(&inputs)),
+                Vec::<String>::new(),
+                "the honest reading behind `{}` is not clean",
+                mutant.name
+            );
+        }
     }
 
     #[test]
-    fn the_reproduction_really_does_hold_a_sentence_worth_stealing() {
-        // Without this, the fabrication mutant would be caught for the
-        // wrong reason: an empty window fabricates nothing.
-        let inputs = a_failure_with_an_unrelated_refusal_in_its_window();
-        assert_eq!(inputs.history.reason_bearing(), 1);
+    fn each_fixture_really_holds_what_its_defects_need_to_reach() {
+        // Without this, a mutant would be caught for the wrong reason:
+        // an empty window fabricates nothing, and an incarnation owing
+        // nothing cannot be reported as serving while it owes.
+        let stealable = defects::a_failure_with_an_unrelated_refusal_in_its_window();
+        assert_eq!(stealable.history.reason_bearing(), 1);
         assert_eq!(
-            (MUTANTS[0].read)(&inputs)["lifecycle"]["reason"]["detail"],
+            defects::fabricated_reason(&stealable)["lifecycle"]["reason"]["detail"],
             serde_json::json!("an earlier incarnation's refusal"),
             "the mutant must genuinely reproduce the round-1 answer"
+        );
+
+        let owing = defects::a_loading_incarnation_that_already_owes_a_change();
+        let snapshot = owing.snapshot.as_ref().expect("a live fiber");
+        assert!(
+            snapshot.incarnation.is_some() && snapshot.unserved.is_some(),
+            "the owed-change fixture must genuinely owe a change"
+        );
+        assert_eq!(
+            honest(&owing)["lifecycle"]["state"],
+            serde_json::json!("restarting"),
+            "its honest reading has to be a rest, or both defects on it are the fixture's \
+             own shape rather than an injected one"
         );
     }
 
     #[test]
     fn every_named_defect_goes_red_on_the_check_it_is_named_against() {
-        let inputs = a_failure_with_an_unrelated_refusal_in_its_window();
         for mutant in &MUTANTS {
-            let red = failures(&(mutant.read)(&inputs));
+            let red = failures(&(mutant.read)(&(mutant.on)()));
+            let own = red
+                .iter()
+                .find(|name| name.starts_with(mutant.caught_by))
+                .unwrap_or_else(|| {
+                    panic!(
+                        "MUTANT SURVIVED — `{}` ({}) was expected red on `{}`; it went red on \
+                         {red:?}",
+                        mutant.name, mutant.provenance, mutant.caught_by
+                    )
+                });
             assert!(
-                red.iter().any(|name| name.starts_with(mutant.caught_by)),
-                "MUTANT SURVIVED — `{}` ({}) was expected red on `{}`; it went red on {red:?}",
+                own.contains(mutant.evidence),
+                "`{}` was caught by `{}` for the WRONG reason: expected {:?} in {own:?}",
                 mutant.name,
-                mutant.provenance,
-                mutant.caught_by
+                mutant.caught_by,
+                mutant.evidence
             );
         }
     }
@@ -259,10 +215,9 @@ mod tests {
         // A mutant nothing catches is a hole in the suite. A check no
         // mutant reaches is unproven law — the shape that shipped an
         // assertion which could not fail.
-        let inputs = a_failure_with_an_unrelated_refusal_in_its_window();
         let mut exercised = std::collections::BTreeSet::new();
         for mutant in &MUTANTS {
-            let red = failures(&(mutant.read)(&inputs));
+            let red = failures(&(mutant.read)(&(mutant.on)()));
             assert!(!red.is_empty(), "MUTANT SURVIVED: {}", mutant.name);
             for name in red {
                 exercised.insert(name.split(':').next().unwrap_or_default().to_owned());

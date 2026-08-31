@@ -25,6 +25,7 @@ use composition::api::patch;
 use composition::plugins::{booted, entry, listing, state, MAIN};
 use jinn_plugins::checks::{failures, listing_states_the_join};
 use jinn_plugins::lifecycle::{Lifecycle, Reason, Snapshot, Window};
+use jinn_plugins::UNREACHABLE_AT_PIN;
 
 const API_ID: &str = "jinn-api-http";
 const SHELVED_ID: &str = "jinn-plugins-shelf";
@@ -201,11 +202,25 @@ fn the_kernel_passes_through_mounted_and_interrupted_and_no_read_can_see_it() {
     // And not one of those states was ever visible. The catalog is not
     // wrong here — it answers what `jinn:introspect` holds when it is
     // asked, and the kernel is only ever asked at rest. FINDINGS #41.
-    for invisible in ["mounted", "interrupted", "activating"] {
+    // Read from the DEFINITION's own marking, not from a literal here,
+    // so the limit the consumer's vocabulary carries and the limit this
+    // proof measures cannot drift apart.
+    assert_eq!(UNREACHABLE_AT_PIN.len(), 3);
+    for invisible in UNREACHABLE_AT_PIN {
         assert!(
             !seen.contains(invisible),
             "if a transient reading became observable at this pin, FINDINGS #41 is stale \
              and this seam owes it a direct proof: {seen:?}"
+        );
+    }
+    // The canary is the standing answer to "would we notice the day this
+    // stops holding?": every reading the daemon actually delivered here
+    // passes it, and the day one of the three arrives it goes red.
+    for observed in &seen {
+        assert!(
+            jinn_plugins::deliverable_at_pin(observed),
+            "the daemon delivered `{observed}`: {}",
+            jinn_plugins::UNREACHABLE_QUALIFIER
         );
     }
 

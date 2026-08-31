@@ -31,9 +31,25 @@
 //! `jinn:plugins.main` is decided by the `catalog` field of each
 //! provider's own config, and config is the one subtree
 //! `jinn:profile.patch-entry` may write. See `FINDINGS.md` #37.
+//!
+//! # There is NO event surface here, and that is a decision
+//!
+//! This is the place a person comes to add one. Do not. The operations
+//! below are the whole contract: four pulls and no `listen` topic, no
+//! `PluginLifecycleChanged`, no subscription. `jinn:introspect@0.2.0` is
+//! a pair of pull operations answered from a snapshot; the kernel commits
+//! every `FiberTransition` to the ledger but is not a publisher on the
+//! plugin event bus, and there is no listen topic for a lifecycle change
+//! (`FINDINGS.md` #40, and #41 for the measurement). So the only event
+//! this seam could emit is one a poller synthesised by diffing two
+//! snapshots — announcing a transition it did not witness and cannot
+//! time, which is the fabrication class this seam exists to kill, one
+//! layer up. The absence is the honest answer until the kernel gains the
+//! publish; the fix belongs there, not in a poller here.
 
 pub mod catalog;
 pub mod checks;
+pub mod defects;
 pub mod entry;
 pub mod history;
 pub mod lifecycle;
@@ -52,6 +68,7 @@ pub use entry::{Entry, Grant, GrantSource, Grants, Listing, ReadWindow, JOIN_QUA
 pub use history::{History, Line};
 pub use lifecycle::{Lifecycle, Reason, Snapshot, Unserved, Window};
 pub use mutants::{Mutant, MUTANTS};
+pub use pin::{deliverable_at_pin, UNREACHABLE_AT_PIN, UNREACHABLE_QUALIFIER};
 pub use transition::{legal_next, may_follow};
 
 use serde::{Deserialize, Serialize};

@@ -20,6 +20,46 @@
 //! [`crate::checks`] carries the canary that goes red the day it stops
 //! being true.
 
+use crate::lifecycle::Lifecycle;
+
+/// The readings this pin's `jinn:introspect` can never deliver, named in
+/// the vocabulary a consumer reads. Each one describes a fiber between
+/// two rests; the kernel passes through all three and answers only at
+/// rest.
+pub const UNREACHABLE_AT_PIN: [&str; 3] = ["mounted", "activating", "interrupted"];
+
+/// What being on [`UNREACHABLE_AT_PIN`] MEANS, travelling with the
+/// definition rather than only in a README. Its one home.
+pub const UNREACHABLE_QUALIFIER: &str =
+    "unreachable at kernel pin 3a8e5c0: this reading names a fiber between two rests, and \
+     `jinn:introspect@0.2.0` is a pull answered from a snapshot taken at rest. A real \
+     restart, measured through this seam, completed inside one HTTP read while 189 \
+     consecutive reads all returned `active` and the kernel's own ledger recorded the \
+     whole path (FINDINGS.md #41, and #40 for the missing publish). The reading law keeps \
+     the word because the kernel really does pass through it; a catalog answer that \
+     CARRIES it at this pin is a defect, and `checks::CHECKS` holds the canary that says so";
+
+/// Whether a catalog at this pin can legitimately deliver this reading.
+/// It asks EXACTLY ONE question — is this word on [`UNREACHABLE_AT_PIN`]
+/// — so the canary built on it has one meaning. A word that is no
+/// reading at all is a different defect with its own check
+/// (`no-sentinel-in-the-vocabulary`), and folding the two together would
+/// let either pass for the other.
+#[must_use]
+pub fn deliverable_at_pin(reading: &str) -> bool {
+    !UNREACHABLE_AT_PIN.contains(&reading)
+}
+
+impl Lifecycle {
+    /// Whether THIS reading is one a consumer can actually be handed at
+    /// this pin. `false` is not a statement about the plugin — it is a
+    /// statement about the kernel's read surface.
+    #[must_use]
+    pub fn deliverable_at_pin(&self) -> bool {
+        deliverable_at_pin(self.name())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -63,6 +103,30 @@ mod tests {
             unserved,
             provisions: Vec::new(),
         }
+    }
+
+    #[test]
+    fn every_reading_marked_unreachable_is_a_reading_this_seam_can_name() {
+        // A marking that named a word outside the vocabulary would mark
+        // nothing, and the canary built on it would be unreachable law.
+        for unreachable in crate::pin::UNREACHABLE_AT_PIN {
+            assert!(
+                NAMES.contains(&unreachable),
+                "`{unreachable}` is marked unreachable and is not a reading"
+            );
+            assert!(!crate::pin::deliverable_at_pin(unreachable));
+        }
+        // Precondition: the marking is a RESTRICTION and not a blanket —
+        // the rest of the vocabulary is deliverable.
+        let deliverable = NAMES
+            .iter()
+            .filter(|name| crate::pin::deliverable_at_pin(name))
+            .count();
+        assert_eq!(
+            deliverable,
+            NAMES.len() - crate::pin::UNREACHABLE_AT_PIN.len()
+        );
+        assert!(crate::pin::UNREACHABLE_QUALIFIER.contains("FINDINGS.md #41"));
     }
 
     #[test]

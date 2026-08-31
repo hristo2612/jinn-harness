@@ -148,6 +148,7 @@ impl Catalog {
             id: declared.id.clone(),
             package: declared.package.clone(),
             incarnation: snapshot.and_then(|s| s.incarnation),
+            owes: snapshot.and_then(|s| s.unserved),
             provides: snapshot.map(|s| s.provisions.clone()).unwrap_or_default(),
             grants: Grants::read(source, declared.grants.clone()),
             lifecycle: Lifecycle::read(snapshot, no_fiber, failure),

@@ -27,7 +27,7 @@ pub struct Check {
 }
 
 /// Every honesty property this seam claims about one entry's reading.
-pub const CHECKS: [Check; 6] = [
+pub const CHECKS: [Check; 7] = [
     Check {
         name: "active-needs-positive-proof",
         run: active_needs_positive_proof,
@@ -52,6 +52,10 @@ pub const CHECKS: [Check; 6] = [
         name: "the-limit-travels-in-the-answer",
         run: the_limit_travels_in_the_answer,
     },
+    Check {
+        name: "no-transient-reading-at-this-pin",
+        run: no_transient_reading_at_this_pin,
+    },
 ];
 
 /// Runs every check, collecting the names that went red.
@@ -74,17 +78,25 @@ fn state(entry: &serde_json::Value) -> &str {
 /// `active` is the claim an operator acts on, so it is the one answer
 /// that needs three positive facts. An entry reading `active` without an
 /// incarnation, or while its live incarnation already owes a change, is
-/// the defect this excludes.
+/// the defect this excludes — BOTH halves, because a check documented
+/// for more than it enforces is the exact class this artifact exists to
+/// stop, and it was found here in round 3.
 fn active_needs_positive_proof(entry: &serde_json::Value) -> Result<(), String> {
     if state(entry) != "active" {
         return Ok(());
     }
-    // The evidence rides on the wire beside the claim, so a consumer
-    // checks it rather than trusting it: the reading law reaches
-    // `active` only with an installed incarnation.
+    // Both facts ride on the wire beside the claim, so a consumer checks
+    // them rather than trusting the reader: the reading law reaches
+    // `active` only with an installed incarnation AND nothing owed.
     if entry["incarnation"].as_u64().is_none() {
         return Err(format!(
             "read `active` with no incarnation to prove it: {entry}"
+        ));
+    }
+    if !entry["owes"].is_null() {
+        return Err(format!(
+            "read `active` while its live incarnation owes {}: {entry}",
+            entry["owes"]
         ));
     }
     Ok(())
@@ -165,6 +177,23 @@ fn the_limit_travels_in_the_answer(entry: &serde_json::Value) -> Result<(), Stri
         }
     }
     Ok(())
+}
+
+/// The pin canary. Three readings name a fiber between two rests and
+/// `jinn:introspect@0.2.0` answers only at rest, so at this pin a
+/// catalog that DELIVERS one is reporting something it cannot have seen
+/// (`crate::pin`, FINDINGS #41). The day the kernel gains a publish path
+/// this goes red, and the reading law gets re-read instead of quietly
+/// outliving its measurement.
+fn no_transient_reading_at_this_pin(entry: &serde_json::Value) -> Result<(), String> {
+    if crate::pin::deliverable_at_pin(state(entry)) {
+        return Ok(());
+    }
+    Err(format!(
+        "delivered `{}`, which this pin cannot produce: {}",
+        state(entry),
+        crate::pin::UNREACHABLE_QUALIFIER
+    ))
 }
 
 /// The listing-level qualifier: the join is three reads, and the answer

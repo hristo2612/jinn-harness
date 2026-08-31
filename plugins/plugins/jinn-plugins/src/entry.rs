@@ -23,7 +23,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::lifecycle::{Lifecycle, Window};
+use crate::lifecycle::{Lifecycle, Unserved, Window};
 use crate::{Extensions, API_VERSION};
 
 /// Where a grant list came from. On the wire beside the values.
@@ -134,6 +134,15 @@ pub struct Entry {
     /// no installed incarnation, which is a reading and not a gap.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub incarnation: Option<u64>,
+    /// What the entry's LIVE incarnation already owes, as the kernel
+    /// reports it. The THIRD fact behind `active`: the reading law
+    /// reaches [`Lifecycle::Active`] only with an incarnation installed
+    /// AND nothing owed, and until this rode beside the claim a consumer
+    /// could check two of those three facts and had to TRUST the reader
+    /// on the last. Absent means "the incarnation owes nothing", which
+    /// is a positive reading and the only shape `active` may take.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owes: Option<Unserved>,
     /// The contracts this entry PROVIDES, as the kernel reports them —
     /// the binding an operator swaps. Empty for an entry with no live
     /// incarnation, which is a reading and not an absence of one.
