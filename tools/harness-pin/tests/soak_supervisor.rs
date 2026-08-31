@@ -1262,8 +1262,11 @@ fn record_build_derives_every_field_it_writes() {
     let flat = scratch.root.join("flat");
     std::fs::create_dir_all(&flat).expect("flat");
     std::fs::write(flat.join("jinnd"), STUB_DAEMON).expect("flat daemon");
-    std::fs::write(flat.join(".commit"), "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4\n")
-        .expect("flat marker");
+    std::fs::write(
+        flat.join(".commit"),
+        "3a8e5c03fdbe2f21144faee8daba73beeb75d8b4\n",
+    )
+    .expect("flat marker");
     let flat_ok = run(&[flat.as_os_str(), repo.as_os_str()]);
     assert!(
         flat_ok.status.success(),
