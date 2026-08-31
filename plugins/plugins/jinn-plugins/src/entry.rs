@@ -126,6 +126,14 @@ pub struct Entry {
     /// The package the entry names, when the source carries one.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub package: Option<String>,
+    /// The incarnation the kernel reports for this entry, when it has
+    /// one. The EVIDENCE behind `active`: the reading law reaches
+    /// `Lifecycle::Active` only with an installed incarnation and
+    /// nothing owed, so carrying the number is what lets a consumer
+    /// check the claim instead of trusting it. Absent for an entry with
+    /// no installed incarnation, which is a reading and not a gap.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incarnation: Option<u64>,
     /// The contracts this entry PROVIDES, as the kernel reports them —
     /// the binding an operator swaps. Empty for an entry with no live
     /// incarnation, which is a reading and not an absence of one.

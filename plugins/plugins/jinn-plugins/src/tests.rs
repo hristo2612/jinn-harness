@@ -49,11 +49,7 @@ fn searched(candidates: u32) -> Reason {
 }
 
 fn read(snapshot: Option<&Snapshot>) -> Lifecycle {
-    Lifecycle::read(
-        snapshot,
-        searched(0),
-        searched(0),
-    )
+    Lifecycle::read(snapshot, searched(0), searched(0))
 }
 
 // ---------------------------------------------------------------- reading
@@ -556,10 +552,7 @@ fn an_unrelated_earlier_refusal_is_never_this_failures_reason() {
     // Precondition: the window really does hold that refusal, so what is
     // ruled out below is the seam CITING it and not an empty search.
     assert!(
-        history
-            .lines
-            .iter()
-            .any(|line| line.kind == "GrantRefused"),
+        history.lines.iter().any(|line| line.kind == "GrantRefused"),
         "the reproduction needs the refusal it is about"
     );
     let reading = Catalog::entry(
@@ -572,7 +565,10 @@ fn an_unrelated_earlier_refusal_is_never_this_failures_reason() {
         &history,
         window(),
     );
-    let reason = reading.lifecycle.reason().expect("a failure names a reason");
+    let reason = reading
+        .lifecycle
+        .reason()
+        .expect("a failure names a reason");
     assert_eq!(
         reason,
         &Reason::NoRecordedCause {
@@ -598,7 +594,10 @@ fn an_unrelated_earlier_refusal_is_never_a_dark_entrys_reason_either() {
         &an_unrelated_earlier_refusal(),
         window(),
     );
-    let reason = reading.lifecycle.reason().expect("a reading names a reason");
+    let reason = reading
+        .lifecycle
+        .reason()
+        .expect("a reading names a reason");
     assert!(
         matches!(reason, Reason::NoRecordedCause { candidates: 1, .. }),
         "{reason:?}"
@@ -622,4 +621,36 @@ fn the_document_is_still_allowed_to_say_why_a_dark_entry_is_dark() {
         window(),
     );
     assert_eq!(reading.lifecycle.reason(), Some(&Reason::Disabled));
+}
+
+#[test]
+fn an_active_entry_carries_the_incarnation_that_proves_it() {
+    let live = Catalog::entry(
+        &Declared {
+            id: "a".to_owned(),
+            ..Declared::default()
+        },
+        GrantSource::ProfileDocument,
+        Some(&snapshot(Some("active"), Some(7), None)),
+        &History::of("a", Vec::new(), window()),
+        window(),
+    );
+    // Precondition: this really is the `active` reading, so the number
+    // below is the evidence for a claim and not decoration on a dark
+    // entry.
+    assert!(live.lifecycle.is_serving());
+    assert_eq!(live.incarnation, Some(7));
+    // And an entry with no installed incarnation carries none — the
+    // absence is a reading, and it is what makes the claim checkable.
+    let dark = Catalog::entry(
+        &Declared {
+            id: "a".to_owned(),
+            ..Declared::default()
+        },
+        GrantSource::ProfileDocument,
+        Some(&snapshot(None, None, None)),
+        &History::of("a", Vec::new(), window()),
+        window(),
+    );
+    assert_eq!(dark.incarnation, None);
 }

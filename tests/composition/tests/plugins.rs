@@ -11,88 +11,18 @@
 //! indistinguishable from one that passes.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
-use std::sync::OnceLock;
 
-use composition::api::{get, patch, Response};
-use composition::daemon::{jinnd_source, pinned_commit, pinned_daemon};
-use composition::kit::{fresh_plugins_root, Daemon};
+use composition::api::{get, patch};
+use composition::plugins::{booted, described, entry, history, listing, state, MAIN, PARKED};
 
 const LIVE_ID: &str = "jinn-plugins-live";
 const FIXED_ID: &str = "jinn-plugins-appliance";
 const SHELVED_ID: &str = "jinn-plugins-shelf";
 const FAILING_ID: &str = "jinn-api-http-misbound";
 const API_ID: &str = "jinn-api-http";
-const MAIN: &str = "main";
-const PARKED: &str = "parked";
 
 const LIVE_PACKAGE: &str = "plugins/jinn-plugins-profile";
 const FIXED_PACKAGE: &str = "plugins/jinn-plugins-static";
-
-/// The pinned daemon binary, or a LOUD skip.
-fn gate() -> Option<&'static PathBuf> {
-    static BINARY: OnceLock<Option<PathBuf>> = OnceLock::new();
-    BINARY
-        .get_or_init(|| {
-            let commit = pinned_commit().expect("KERNEL-PIN.md parses");
-            let Some(source) = jinnd_source(&commit) else {
-                eprintln!(
-                    "SKIPPED (loudly): real-composition gate found no jinnd checkout holding \
-                     pinned commit {commit} — set JINND_DIR, add a sibling ../jinnd, or set \
-                     JINND_CLONE_URL (KERNEL-PIN.md Gate 2 discipline)"
-                );
-                return None;
-            };
-            Some(pinned_daemon(&source, &commit).expect("the pinned daemon builds"))
-        })
-        .as_ref()
-}
-
-fn booted(name: &str) -> Option<(Daemon, u16)> {
-    let binary = gate()?;
-    let (root, port) = fresh_plugins_root(name);
-    let daemon = Daemon::boot_operator(binary, &root);
-    daemon.await_ready();
-    let health = get(port, "/v1/health");
-    assert_eq!(health.status, 200, "{}", health.raw);
-    Some((daemon, port))
-}
-
-/// One catalog's listing.
-fn listing(port: u16, catalog: &str) -> serde_json::Value {
-    let read = get(port, &format!("/v1/plugins/{catalog}"));
-    assert_eq!(read.status, 200, "{}", read.raw);
-    read.body
-}
-
-/// One entry out of a listing.
-fn entry(listing: &serde_json::Value, id: &str) -> serde_json::Value {
-    listing["entries"]
-        .as_array()
-        .unwrap_or_else(|| panic!("a listing: {listing}"))
-        .iter()
-        .find(|entry| entry["id"] == id)
-        .unwrap_or_else(|| panic!("entry {id:?} in the listing: {listing}"))
-        .clone()
-}
-
-fn described(port: u16, catalog: &str, id: &str) -> Response {
-    get(port, &format!("/v1/plugins/{catalog}/{id}"))
-}
-
-fn history(port: u16, catalog: &str, id: &str) -> serde_json::Value {
-    let read = get(port, &format!("/v1/plugins/{catalog}/{id}/history"));
-    assert_eq!(read.status, 200, "{}", read.raw);
-    read.body
-}
-
-/// The `state` an entry reads as.
-fn state(entry: &serde_json::Value) -> String {
-    entry["lifecycle"]["state"]
-        .as_str()
-        .unwrap_or_else(|| panic!("a lifecycle: {entry}"))
-        .to_owned()
-}
 
 // ------------------------------------------------------------ legibility
 
@@ -298,9 +228,7 @@ fn a_failed_activation_reports_failed_with_a_reason_and_never_unknown() {
     let refusals = history(port, MAIN, FAILING_ID);
     let lines = refusals["lines"].as_array().expect("lines");
     assert!(
-        lines
-            .iter()
-            .any(|line| line["kind"] == "GrantRefused"),
+        lines.iter().any(|line| line["kind"] == "GrantRefused"),
         "the refusal an operator needs is readable in history(id): {refusals}"
     );
     println!("FINDINGS #38 transcript — GET /v1/plugins/{MAIN}/{FAILING_ID}\n  lifecycle: {}\n  history kinds: {:?}",

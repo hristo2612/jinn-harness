@@ -33,18 +33,22 @@
 //! `jinn:profile.patch-entry` may write. See `FINDINGS.md` #37.
 
 pub mod catalog;
+pub mod checks;
 pub mod entry;
 pub mod history;
 pub mod lifecycle;
+pub mod mutants;
 pub mod transition;
 
 #[cfg(test)]
 mod tests;
 
 pub use catalog::{Catalog, Source};
+pub use checks::{failures, Check, CHECKS};
 pub use entry::{Entry, Grant, GrantSource, Grants, Listing, ReadWindow, JOIN_QUALIFIER};
 pub use history::{History, Line};
 pub use lifecycle::{Lifecycle, Reason, Snapshot, Unserved, Window};
+pub use mutants::{Mutant, MUTANTS};
 pub use transition::{legal_next, may_follow};
 
 use serde::{Deserialize, Serialize};
