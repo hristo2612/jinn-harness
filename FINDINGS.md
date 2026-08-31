@@ -2388,3 +2388,68 @@ lifecycle events. Failing that, a `transitions(since)` operation on
 consumer that polls at least once per transition-burst can RECONSTRUCT
 the path it did not witness — weaker than a push, and enough to stop a
 reader believing a resting state is the whole story.
+
+## 42. `jinnd` does not report its own build commit, so nothing running can say which kernel it is
+
+**Grade: reproducible, shaped — the workaround is shipped and is the
+evidence.**
+
+**What happened.** A COO drift audit on 2026-08-31 found three sources
+disagreeing about which kernel the M2 duty soak was running:
+`meta.json` — the artifact the +7d audit reads — said `41cb2f47`; the
+installed binary and `ops.log` said `57360cc`; `KERNEL-PIN.md`, what M2
+actually ships, said `3a8e5c03`. A third pin bump had happened and was
+never written to the file whose only job is to record exactly that.
+
+No gate caught it and none could have. Every one of those readings was
+internally consistent; the record was not damaged, it was STALE. The
+audit on 2026-09-04 would have reported the week's duty against a kernel
+that stopped running two days earlier, and it would have been believed.
+
+**The evidence.** The daemon cannot be asked:
+
+```
+$ "$SOAK/bin/jinnd" --version
+usage: jinnd --profile <profile.json> --ledger <ledger.sqlite> [--artifacts <dir>] [--data <dir>]
+stdin: revert <effect-id> <key> | status
+$ strings -a "$SOAK/bin/jinnd" | grep -cE '\b57360ccd3e6493cc2d20e8e6e480daaa88486817\b'
+0
+```
+
+`--version` is not a flag (the usage line is the answer to every
+unrecognised argument), the stdin protocol is `revert`/`status` only, and
+the build embeds no commit string — the sole 40-hex literal in the whole
+62 MB binary is an unrelated dependency digest. There is no boot line
+carrying it either: `logs/jinnd.log`'s readiness line names no build.
+
+So a commit reaches the soak only as a file copied to sit BESIDE the
+binary, and two files in one directory make no claim about each other.
+That is the whole defect: the pin was a neighbour of the artifact rather
+than a property of it, and a neighbour can be replaced, forgotten, or
+left behind without anything being detectably wrong.
+
+**The workaround, and what it costs.** The harness now binds the record
+to the artifact by content: `tools/soak/record-build.sh` writes an
+install record carrying the SHA-256 of the installed bytes together with
+the pin derived from the composition build's `.commit` marker, and
+`soak-run.sh` re-computes that digest at every start and accepts the pin
+only where the two agree. A record left by an earlier install describes a
+different binary and reads `running_pin=unknown` with
+`build-record-mismatch` named.
+
+It works, and it is strictly weaker than the kernel answering for itself.
+The join proves *this binary is the one some install recorded as built
+from commit C* — it can never prove *this binary WAS built from commit
+C*, because nothing in the artifact says so. Every consumer that wants
+the answer has to re-implement the same bookkeeping, and each one can get
+it wrong differently — the shape #36 names one seam down. A deployment
+that did not go through `record-build.sh` has no answer at all.
+
+**The capability shape that would retire it.** A build commit compiled
+INTO the daemon and reported on demand: `jinnd --version` printing the
+commit and the two contract hashes `KERNEL-PIN.md` already pins, and the
+same triple on the readiness line so a running daemon's log is
+self-describing. Then the reading is taken from the artifact, the
+harness's install record becomes a convenience rather than the only
+source of truth, and a daemon that cannot say what it is is a daemon that
+does not start.

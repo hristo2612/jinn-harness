@@ -41,8 +41,7 @@ reachable (`KERNEL-PIN.md` Gate-2 lanes):
 SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
 mkdir -p "$SOAK/bin" "$SOAK/logs" "$SOAK/run"
 cargo test -p composition          # builds the PINNED daemon via git archive + proves the seam
-cp target/composition/pinned-jinnd/target/debug/jinnd "$SOAK/bin/jinnd"
-cp target/composition/pinned-jinnd/.commit "$SOAK/bin/jinnd.commit"   # the wrapper logs this pin
+tools/soak/record-build.sh target/composition/pinned-jinnd   # installs the daemon AND records what it is
 cargo build --release -p api-kit && cp target/release/api-kit "$SOAK/bin/api-kit"
 install -m 0755 tools/soak/detach.py "$SOAK/bin/detach.py"
 tools/soak/install-launchd.sh                  # wrapper + LaunchAgent, files only (§Supervisor)
@@ -62,8 +61,73 @@ stand-in had, so the +7d comparison across the pin bump stays apples to
 apples.
 
 The composition suite is the setup's preflight: a red gate means do not
-start the soak. The `.commit` marker beside the cached binary must equal
-the pin in `KERNEL-PIN.md`.
+start the soak. `record-build.sh` installs the daemon and writes the
+record of what it is; before the seventh bump this step was two `cp`s and
+a `jinnd.commit` marker, which is the shape §What the record is describes.
+
+## What the record is (and why it is not typed)
+
+The soak's account of its own kernel is DERIVED at every start, never
+written by hand.
+
+`record-build.sh` installs `$SOAK/bin/jinnd` and writes
+`$SOAK/bin/jinnd.build` beside it, with every field read from something
+rather than supplied by someone:
+
+| field | derived from |
+|---|---|
+| `binary-sha256` | the installed bytes, digested here |
+| `running-pin` | the composition build's `.commit` marker, which the git-archive build took from the commit it checked out |
+| `harness-pin` | `KERNEL-PIN.md`'s `commit:` line |
+| `recorded-utc` | the clock |
+
+Any of those unreadable is a refusal: a record with a hole in it is what
+an auditor cannot tell from a whole one.
+
+`soak-run.sh` then re-computes the digest of the binary it is about to
+exec and accepts a pin ONLY from a record describing that digest. So the
+evidence on every `ops.log` line carries three new readings:
+
+- `binary_sha256=` — what is running, as an identity. Always reported
+  where the file could be read, pin or no pin.
+- `running_pin=` — the commit, licensed by the digest match. `unknown`
+  otherwise, with `unproven=` naming which way it failed:
+  `running-binary` (the daemon could not be read), `build-record` (none
+  present), `build-record-unreadable` (present, its own fields do not
+  parse), `build-record-mismatch` (present, and about a DIFFERENT
+  binary).
+- `harness_pin=` — what `KERNEL-PIN.md` said the harness ships when the
+  record was written. A SEPARATE reading, in a separate field, which
+  never fills `running_pin`.
+
+**Why the two pins never share a field.** On 2026-08-31 a COO drift audit
+found three sources disagreeing: `meta.json` said `41cb2f47`, the binary
+and `ops.log` said `57360cc`, `KERNEL-PIN.md` said `3a8e5c03`. A third
+bump had happened and the audit's own artifact still named the pin from
+two bumps earlier. Nothing detected it because nothing could — every
+reading was internally consistent, and a stale record is
+indistinguishable from a current one when nothing binds it to the thing
+it describes. The distance between *what is running* and *what ships* is
+exactly what that audit measured; a field that can hold either cannot
+show it. The kernel side is `FINDINGS.md` #42: the daemon has no
+`--version` and embeds no commit, so this join is the strongest reading
+available, and it proves "this binary is the one some install recorded as
+built from commit C" rather than "this binary was built from commit C".
+
+**`meta.json` no longer records the pin.** It carried a hand-maintained
+`kernel-pin` and a `pin-bumps` list; those are the fields that went
+stale, so they are gone and the file points here instead. The duty record
+is `logs/pin-duty.log`, written by the wrapper:
+
+```
+<ts> segment-opened pin=<p> at=<ts> binary_sha256=<sha> harness_pin=<h> reason=<r>
+<ts> segment-closed pin=<p> from=<ts> to_bound=<ts> bound=last-log-line
+```
+
+One `segment-opened` per start; the next start closes the previous one.
+The close is a BOUND and says so: the wrapper `exec`s the daemon, so
+nobody is standing beside it when it stops, and the latest moment it is
+PROVEN alive is its last log line. The real end is at or after that.
 
 ## Supervisor (the LaunchAgent)
 
@@ -407,8 +471,9 @@ The procedure, for this bump and any future one:
    vendored surface + commit together).
 2. Stop the soak (above).
 3. Re-run Setup from the bumped repo (the daemon is down, so refreshing
-   `$SOAK/bin` is safe; `jinnd.commit` flips with the binary, and
-   `install-launchd.sh` refreshes the wrapper if it changed — the plist
+   `$SOAK/bin` is safe; `record-build.sh` installs the new binary and
+   rewrites `jinnd.build` as one step, so the digest and the pin cannot
+   flip apart, and `install-launchd.sh` refreshes the wrapper if it changed — the plist
    itself is pin-independent, so no `bootout`/`bootstrap` is needed): the composition suite rebuilds the
    cached daemon at the new pin (the `.commit` marker flips), the kit
    rebuild refreshes `$SOAK/bin` and regenerates `profile.json` +
@@ -551,4 +616,13 @@ old-gateway interaction (the daemon touches nothing outside `$SOAK`), and
 post-bump fire evidence: `AlarmWake` + `DispatchTrace` lines in the ledger
 after the bump timestamp, with the per-tick ledger row cost compared before
 (≈5 rows/tick of fiber churn) and after (1 `AlarmWake` per wake).
+**Duty is reported PER PIN**, off `logs/pin-duty.log` rather than
+re-derived from prose. The standing ruling (PLA-297, 2026-08-31): a
+supervised pin bump does NOT reset the week — real production takes
+upgrades, and a slice that cannot survive one is not doing a production
+job; a GAP in duty counts against the week, not the restart that ends it;
+and no single pin may carry the whole week and be reported as though the
+current one did. The audit states which pins carried how much, and says
+plainly that no single kernel carried seven days.
+
 The audit report goes on the tracking Todo for the M2 acceptance decision.
