@@ -486,3 +486,52 @@ fn describe_says_what_a_plugin_may_do_what_it_has_done_and_what_may_happen_next(
     );
     daemon.interrupt();
 }
+
+/// FINDINGS #37, driven rather than argued: `jinn:profile.patch-entry`
+/// writes ONE subtree, so the package-and-hash swap every other seam
+/// proves by editing the profile FILE is not expressible through the
+/// surface an operator or an agent actually has.
+#[test]
+fn the_operator_api_cannot_change_what_a_plugin_is_only_what_it_is_configured_with() {
+    let Some((daemon, port)) = booted("plugins-package-swap") else {
+        return;
+    };
+    let before = entry(&listing(port, MAIN), FIXED_ID);
+    assert_eq!(before["package"], FIXED_PACKAGE, "{before}");
+
+    // The swap every seam from 2.3 onward proves by file edit, attempted
+    // through the API: point this entry at the other package.
+    let attempt = patch(
+        port,
+        &format!("/v1/profile/entries/{FIXED_ID}"),
+        &serde_json::json!({ "package": LIVE_PACKAGE }),
+    );
+    println!(
+        "FINDINGS #37 transcript — PATCH /v1/profile/entries/{FIXED_ID} {{\"package\": \"{LIVE_PACKAGE}\"}}\n{}",
+        attempt.raw.trim()
+    );
+    // The precondition that makes the assertion below mean something: a
+    // CONFIG patch on this very entry, through this very route, IS
+    // applied. So what follows is the reach of the operation and not a
+    // broken route, a bad grant or a typo.
+    let config = patch(
+        port,
+        &format!("/v1/profile/entries/{FIXED_ID}"),
+        &serde_json::json!({ "config": { "data": { "ledger-limit": 64 } } }),
+    );
+    assert_eq!(config.status, 200, "{}", config.raw);
+    assert_eq!(config.body["entry"]["config"]["data"]["ledger-limit"], 64);
+
+    // And the package is untouched: the operator API can change what a
+    // plugin is CONFIGURED with, never what a plugin IS.
+    assert_eq!(
+        config.body["entry"]["package"], FIXED_PACKAGE,
+        "the package moved through an operation that may only write `config`: {}",
+        config.raw
+    );
+    daemon.eventually("the config patch to land", || {
+        entry(&listing(port, MAIN), FIXED_ID)["package"] == FIXED_PACKAGE
+    });
+    assert_eq!(entry(&listing(port, MAIN), FIXED_ID)["package"], FIXED_PACKAGE);
+    daemon.interrupt();
+}

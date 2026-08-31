@@ -73,11 +73,14 @@ authority.
   a truncated window means less.
 - **A guest's own activation failure carries no reason at this pin**
   (`FINDINGS.md` #38). Pre-activation faults and broker refusals do, and
-  the composition proof rests on one of those. For the rest the answer is
-  `failed` with `not-found-in-window`; this seam deliberately does NOT
-  correlate the failure with a neighbouring refusal, because the ledger
-  records no causal link and a plausible neighbour presented as a cause is
-  the fabrication this seam exists to kill.
+  the composition proof counts one of those and cites none of it. The
+  answer is always `failed` with `no-recorded-cause`, carrying the window
+  it read, a COUNT of the reason-bearing lines it declines to cite, and
+  the qualifier that says why. This seam does NOT correlate a failure
+  with a neighbouring refusal — round 1 did, and the type that made it
+  expressible is gone — because the ledger records no causal link and a
+  plausible neighbour presented as a cause is the fabrication this seam
+  exists to kill. The lines themselves are read with `history(id)`.
 - **`state: null` is four situations and this seam separates two**
   (`FINDINGS.md` #39). `disabled` is read positively from the document; a
   group, a disposed-but-named entry and a spawn-time failure are not
@@ -91,6 +94,20 @@ authority.
   for it** (`FINDINGS.md` #37). `patch-entry` writes only `config`, so the
   package-and-hash swap the other six seams prove by file edit is not
   reachable through the operator API.
+- **There are no typed events, and that is a recorded decision**
+  (`FINDINGS.md` #40). A catalog knows the composition at the instant it
+  asks and nothing between two asks: `jinn:introspect` is a pull surface
+  and the kernel publishes nothing on the event bus. The only event this
+  seam could emit would be produced by a poller diffing two snapshots —
+  announcing a transition it did not witness and cannot time, which is
+  this seam's own fabrication class one layer up.
+- **A fiber BETWEEN two rests is invisible** (`FINDINGS.md` #41). The
+  `mounted`, `activating` and `interrupted` readings are real and the
+  kernel passes through them; no reader at this pin can catch one. A real
+  restart, measured: 190 consecutive catalog reads, all `active`, while
+  the kernel's ledger recorded `Active → Unloading → Pending → Loading →
+  Active`. Anything built on watching a plugin's life through this seam
+  will silently miss every transition.
 - **The surface is READ-ONLY.** A plugin is reshaped by patching the
   profile through `/v1/profile`, which this seam consumes. There is no
   enable, disable, restart or remove here, deliberately: two ways to

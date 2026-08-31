@@ -41,6 +41,8 @@ pub mod mutants;
 pub mod transition;
 
 #[cfg(test)]
+mod fabrication;
+#[cfg(test)]
 mod tests;
 
 pub use catalog::{Catalog, Source};

@@ -407,9 +407,35 @@ per-seam "could NOT prove" sections.
 
 Its own README carries these in full; the load-bearing ones:
 
+- **A plugin's swap through the operator API can only ever be a CONFIG
+  swap** (#37). Every seam from 2.3 onward proves its malleability by
+  changing an entry's `package` and `hash` in the profile FILE; this one
+  operated the surface a person or an agent actually has and found that
+  `jinn:profile.patch-entry` writes one subtree — `config` — and nothing
+  else. The distribution's headline claim, *a product is a profile and
+  swapping a provider is a profile edit*, is true today only of an
+  operator with filesystem access to the document. This seam's own swap
+  works because it was DESIGNED so its binding is decided by config; a
+  seam that did not think of that in advance has no API-driven swap at
+  all. It has a transcript, and it goes to the M3 parity conversation
+  intact.
 - **A guest's own activation failure has no reason at this pin** (#38),
-  and this seam refuses to invent one from a neighbouring line.
+  and this seam refuses to invent one from a neighbouring line. Round 1
+  of this packet DID invent one — an unrelated refusal from an earlier
+  incarnation, reported as the cause — and the fix removed the variant
+  that could carry it, so the fabrication is unrepresentable rather than
+  unreached.
 - **`state: null` is four situations and this seam separates two** (#39).
+- **No plugin can WATCH the composition; it can only ask** (#40, #41).
+  There is no lifecycle event surface at all, so the three readings that
+  describe a fiber between two rests — `mounted`, `activating`,
+  `interrupted` — are unobservable in principle: a real restart, measured
+  through this seam, completed inside one HTTP read and 190 consecutive
+  reads all returned `active` while the kernel's own ledger recorded the
+  full path. A consumer that believes it can follow a plugin's life
+  through this seam will build something that silently misses every
+  transition. This is why the seam ships no typed event: the only one it
+  could emit would announce a transition it did not witness.
 - **An entry the document could not RESOLVE appears in no catalog at
   all** — a list here omits exactly the entries that are most broken.
 - **The surface is read-only,** and the join is three reads at three
