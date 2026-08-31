@@ -14,6 +14,7 @@ resolver = "2"
 members = [
     "plugins/api/jinn-api",
     "plugins/api/jinn-api-http-wire",
+    "plugins/plugins/jinn-plugins",
     "plugins/cron/jinn-cron",
     "plugins/engines/jinn-engine",
     "plugins/engines/jinn-engine-codex-wire",

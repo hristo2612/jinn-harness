@@ -1,0 +1,22 @@
+# The plugins seam's SERVICE DEFINITION (AGENTS.md standing order 4): the
+# `jinn:plugins.<catalog-id>` contract's vocabulary, the LIFECYCLE READING
+# law and its explicit legal-transition table, the grant reading and where
+# it came from, the ledger attribution rule, and the read window every
+# answer carries — pure types + logic, no host calls, unit-tested here and
+# compiled into the guests and the host tools alike. A provider adds only
+# where the CATALOG comes from.
+[package]
+name = "jinn-plugins"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+# The distribution's wire law has one home (`jinn_settings::wire`); this
+# seam's closed surfaces refuse an unknown content the same way every
+# other seam's do.
+jinn-settings = { path = "../../settings/jinn-settings" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
