@@ -13,7 +13,28 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
-Phase 2.7 — kernel pin `3a8e5c0` (M2-K9), UNCHANGED. The plugins seam
+Phase 1.12 — kernel pin `901d207` (M2-K13). The pin bump is a MIGRATION,
+not a version edit: the plugin world moved 0.6.0 → 0.8.0, and against
+that kernel every artifact built on the old world is refused with
+`artifact is not a loadable component of the plugin world`. Every guest
+here is rebuilt by its kit, and the whole distribution boots on the new
+world.
+
+**The kernel became a publisher, so the plugins seam stopped being
+blind.** `jinn:introspect@0.4.0` publishes every `FiberTransition` the
+kernel commits on the reserved topic `jinn:introspect/transitions`,
+behind a ledger-ordering barrier, with counted bounded back-pressure and
+no-replay ordinals. Both catalog providers now SUBSCRIBE to it under
+their own `jinn:introspect` grant, and
+`GET /v1/plugins/{catalog}/{id}/transitions` answers what the catalog
+WITNESSED — the kernel's own record, delivered, never a diff of two
+reads. That closes `FINDINGS.md` #40 and corrects #41: the three
+transient readings are unreachable from a SNAPSHOT, not from every
+consumer, and `jinn_plugins::UNREACHABLE_AT_PIN` and its canary are
+retired on the evidence of a daemon observed delivering all three
+(`docs/notes/2026-09-01-a-witness-is-not-a-poller.md`).
+
+### Phase 2.7 — kernel pin `3a8e5c0` (M2-K9), UNCHANGED. The plugins seam
 (`plugins/plugins/`) is the SEVENTH and LAST core-port seam, and the one
 that makes the malleability contract something an operator does rather
 than something a suite asserts.
@@ -426,21 +447,20 @@ Its own README carries these in full; the load-bearing ones:
   that could carry it, so the fabrication is unrepresentable rather than
   unreached.
 - **`state: null` is four situations and this seam separates two** (#39).
-- **Three of the eleven readings are UNREACHABLE at this pin** (#41).
-  `mounted`, `activating` and `interrupted` each name a fiber between two
-  rests. The kernel passes through all three; no consumer here can be
-  handed one, because `jinn:introspect@0.2.0` answers from a snapshot
-  taken at rest and a real restart — measured through this seam —
-  completed inside one HTTP read while 189 consecutive reads all returned
-  `active` and the kernel's own ledger recorded the whole path. The
-  vocabulary keeps the words because the kernel really does pass through
-  them; the limit is marked **in the definition itself**
-  (`jinn_plugins::UNREACHABLE_AT_PIN`) rather than only here, and a canary
-  check refuses any catalog answer that delivers one, so the day the
-  kernel gains a publish path the suite goes red instead of the claim
-  quietly outliving its measurement. A consumer that believes it can
-  follow a plugin's life through this seam today will build something that
-  silently misses every transition.
+- **Three of the eleven readings are unreachable from a SNAPSHOT** (#41,
+  corrected at pin `901d207`). `mounted`, `activating` and `interrupted`
+  each name a fiber between two rests, and a pull answered at rest cannot
+  carry one: a real restart, measured through this seam, completed inside
+  one HTTP read while 190 consecutive reads all returned `active` and the
+  kernel's own ledger recorded the whole path. That measurement stands.
+  What did not stand is the generalisation built on it — that no consumer
+  could ever be handed one — and `jinn_plugins::UNREACHABLE_AT_PIN` with
+  its `no-transient-reading-at-this-pin` canary are retired on evidence:
+  the subscription witnesses all three, and the canary's predicate,
+  fed the daemon's own delivered readings, refuses every one. The
+  narrower law survives as `NOT_FROM_A_SNAPSHOT` and
+  `no-transient-reading-from-a-snapshot` — an ENTRY's lifecycle is still
+  a join over a pull, so it still may not carry one.
 - **There is no lifecycle event surface at all, anywhere** (#40), and
   this seam ships no typed event as a recorded decision rather than an
   oversight. The kernel commits every `FiberTransition` to the ledger but

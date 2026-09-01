@@ -2287,8 +2287,61 @@ appliance case — and both collapse into the same answer.
 
 ## 40. A plugin cannot OBSERVE the composition, only poll it: there is no lifecycle event surface at all
 
-**Grade: source-cited, and measured — see #41 for the measurement.** Hit
-building the plugins seam (phase 2.7) on pin `3a8e5c0`.
+**Grade: ANSWERED at pin `901d207` (M2-K13). Source-cited and measured
+when raised — see #41 for the measurement.** Hit building the plugins
+seam (phase 2.7) on pin `3a8e5c0`.
+
+**ANSWERED — what changed, and the evidence.** The kernel became a
+publisher. `jinn:introspect@0.4.0` publishes every `FiberTransition` the
+kernel commits on the reserved topic `jinn:introspect/transitions`, to
+listeners holding this contract's grant, behind a ledger-ordering barrier
+(a delivery never precedes its own ledger row), with bounded
+back-pressure whose loss is counted twice — a `PublishDropped` ledger
+event and a gap in the listener's `ordinal` — and no replay, so a late
+joiner learns it missed something instead of assuming it did not. That is
+the capability shape this entry asked for, delivered additively: no
+existing operation changed. The plugin world moved 0.6.0 → 0.8.0 with it,
+which is why adopting it was a migration and not a version edit — every
+harness artifact had to be rebuilt before anything loaded at all.
+
+The harness now consumes it. `jinn_plugins::witness` is a bounded log of
+what a catalog was HANDED; both catalog providers subscribe at activation
+under their own `jinn:introspect` grant, before they provide, and
+`GET /v1/plugins/{catalog}/{id}/transitions` answers one entry's
+sightings. So the seam's standing rule — *what this seam does not
+witness, it does not report* — is now satisfiable rather than merely
+respected by silence. It still emits no synthesised event: a sighting is
+the kernel's own record, delivered, never a diff of two reads.
+
+Measured through the real pinned daemon
+(`tests/composition/tests/plugins_lifecycle.rs::no_poll_reaches_a_transient_and_the_subscription_witnesses_every_one`),
+one real restart driven through the operator API:
+
+```
+KERNEL RECORD across the restart (190 catalog reads):
+  {"FiberTransition":{"fiber":4,"from":"Active","to":"Unloading","cause":"ConfigChanged"}}
+  {"FiberTransition":{"fiber":4,"from":"Unloading","to":"Pending","cause":"ConfigChanged"}}
+  {"FiberTransition":{"fiber":4,"from":"Pending","to":"Loading","cause":"ConfigChanged"}}
+  {"FiberTransition":{"fiber":4,"from":"Loading","to":"Active","cause":"ConfigChanged"}}
+READINGS THE POLL OBSERVED: {"active"}
+WITNESSED BY "plugins/jinn-plugins-profile"
+  ({"capacity":256,"delivered":25,"evicted":0,"first-ordinal":1,
+    "last-ordinal":25,"malformed":0,"missed":0})
+READINGS THE SUBSCRIPTION WITNESSED: {"activating", "active", "interrupted", "mounted"}
+```
+
+Both halves at once, from the same window: the poll still sees only
+`active` (that was never a claim about the kernel — it is a claim about a
+pull answered at rest, and it still holds), and the subscription sees
+every transient. `missed` and `evicted` are zero here, and they are
+reported rather than assumed: the answer carries the count either way.
+
+One field is deliberately NOT delivered. The kernel withholds `cause`,
+because nothing in `jinn:introspect`'s pull answers WHY and delivering it
+would widen the grant. A witnessed reading therefore carries
+`Reason::CauseNotDelivered`, which names `jinn:ledger` as where the cause
+lives — a positive fact about the contract, never a correlated line and
+never an `unknown`.
 
 The plugins packet's acceptance asks the service definition for typed
 events. Building them showed there is nothing truthful to emit, and the
@@ -2329,8 +2382,45 @@ truthful rather than inferred.
 
 ## 41. Every reading between two rests is unobservable: a real restart is invisible to the fastest read the operator API allows
 
-**Grade: reproducible, measured, packet-card-ready.** Hit building the
-plugins seam (phase 2.7) on pin `3a8e5c0`.
+**Grade: CORRECTED at pin `901d207` — the measurement stands, the
+generalisation drawn from it did not. Reproducible, measured,
+packet-card-ready when raised.** Hit building the plugins seam (phase
+2.7) on pin `3a8e5c0`.
+
+**CORRECTED — what was right, what was too wide, and the evidence.** The
+measurement below is unchanged and was reproduced at the new pin: 190
+consecutive catalog reads across a real restart, every one `active`,
+while the kernel's ledger recorded the whole path. A pull answered from a
+snapshot taken at rest cannot reach a state between two rests, and no
+polling rate fixes that.
+
+What was too wide was the conclusion this entry and the marking built on
+it drew: that no CONSUMER could ever be handed one of the three. That was
+true of the pin, not of the readings — and #40's answer made it false. At
+pin `901d207` a subscriber witnesses all three
+(`{"activating", "active", "interrupted", "mounted"}`, transcript in #40).
+
+So `jinn_plugins::UNREACHABLE_AT_PIN`, its qualifier, and the
+`no-transient-reading-at-this-pin` canary are RETIRED — and retired on
+that evidence, not on the kernel merely having a publish path in
+principle. The canary was built to go red on exactly this day and it did:
+run against the readings this daemon actually delivered, its predicate
+refuses every one of the three, printed in the test's own output
+(`CANARY RED on the daemon's own witnessed \`mounted\``, and the same for
+`activating` and `interrupted`).
+
+What replaced it is the narrower law that survives the correction:
+`jinn_plugins::snapshot::NOT_FROM_A_SNAPSHOT` and the
+`no-transient-reading-from-a-snapshot` check. An ENTRY's lifecycle is
+still a join over a pull, so an entry carrying a transient reading is
+still reporting what it cannot have seen; the transients are delivered by
+`witness`, which is handed them. The guard was retargeted rather than
+deleted because deleting it would have left the `eternally activating`
+mutant uncaught — the mutation harness fails on a check no mutant reaches
+and on a mutant no check catches, and it still passes both ways.
+
+The three variants' doc comments changed with it: they no longer say
+"UNREACHABLE at this pin", they say which surface reaches them.
 
 The plugins seam's reading law names eleven readings. Three of them —
 `mounted` (a fiber resting in `pending`), `activating` (`loading`) and
@@ -2453,3 +2543,36 @@ self-describing. Then the reading is taken from the artifact, the
 harness's install record becomes a convenience rather than the only
 source of truth, and a daemon that cannot say what it is is a daemon that
 does not start.
+
+## 43. The plugin world's own title line names a version the file does not declare
+
+**Grade: reproducible, cosmetic-with-teeth — found by reading, not by a
+gate.** Hit adopting M2-K13 in harness pin-bump 5 (`901d207`).
+
+`wit/plugin.wit` is the product under R12: a file designed to outlive any
+kernel implementation, and the first line a reader sees is its title. At
+`901d207` that title and the package declaration disagree:
+
+```
+$ sed -n '1p;50p' kernel-pin/wit/plugin.wit
+/// jinn:plugin@0.7.0 — the Tier A plugin world (M1-P8; constitution 01, R7, R12).
+package jinn:plugin@0.8.0;
+```
+
+The M2-K10 bump to 0.7.0 updated both lines; the M2-K13 bump to 0.8.0
+updated only the package. Nothing breaks — `wit-bindgen` reads the
+package declaration and the harness's guests compile and load — so no
+gate can catch it, and none did. What it costs is a reader: the one line
+that states what this file IS names a version of the world that no longer
+exists, and a consumer pinning by eye against the title would pin one
+minor short.
+
+It matters more here than the size suggests, because this exact file is
+the one place the contract regime says outlives everything. A version
+that is right in the machine-read line and wrong in the human-read line
+is the shape where the two readers of a contract stop agreeing.
+
+**The capability shape that would retire it.** A gate in jinnd that
+parses both and refuses a mismatch — the versions are two strings in one
+file, so the check is cheap and mechanical, exactly the class that should
+never be left to review attention.
