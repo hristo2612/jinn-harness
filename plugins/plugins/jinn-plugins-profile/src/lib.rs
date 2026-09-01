@@ -79,15 +79,18 @@ impl Guest for Live {
         true
     }
 
-    fn undo(_token: u64) -> Result<(), GuestFault> {
+    fn undo(token: u64) -> Result<(), GuestFault> {
+        // The transitions subscription is being withdrawn: what it
+        // witnessed stops being fed, so it stops being answered.
+        if token == catalog::WITNESS_TOKEN {
+            catalog::withdraw_witness();
+        }
         Ok(())
     }
 
-    fn handle_event(token: u64, topic: String, payload: Vec<u8>) -> Result<Vec<u8>, GuestFault> {
-        Err(GuestFault::Failed(format!(
-            "unexpected event {topic:?} (token {token}, {} bytes)",
-            payload.len()
-        )))
+    fn handle_event(_token: u64, topic: String, payload: Vec<u8>) -> Result<Vec<u8>, GuestFault> {
+        catalog::witness(&topic, &payload).map_err(GuestFault::Failed)?;
+        Ok(Vec::new())
     }
 
     fn handle_call(

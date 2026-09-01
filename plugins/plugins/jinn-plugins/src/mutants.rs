@@ -85,8 +85,8 @@ pub const MUTANTS: [Mutant; 8] = [
     Mutant {
         name: "a loading fiber that already owes a change remains eternally activating",
         provenance: "round 2 verify — the named defect no mutant reached",
-        caught_by: "no-transient-reading-at-this-pin",
-        evidence: "which this pin cannot produce",
+        caught_by: "no-transient-reading-from-a-snapshot",
+        evidence: "which a snapshot cannot produce",
         on: defects::a_loading_incarnation_that_already_owes_a_change,
         read: defects::eternally_activating,
     },

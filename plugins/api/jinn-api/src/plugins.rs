@@ -10,16 +10,24 @@
 //! so an operator addresses the catalog they mean rather than the API
 //! guessing a default.
 //!
-//! # `history` is a RESERVED path segment
+//! # `history` and `transitions` are RESERVED path segments
 //!
-//! A plugin is addressed at `/v1/plugins/{catalog}/{id}` and its ledger
-//! lines at `/v1/plugins/{catalog}/{id}/history`. The rule is stated once,
-//! here: a THIRD segment of exactly `history` is always the history, and
-//! a plugin id may not contain a `/`, so the two shapes cannot collide.
+//! A plugin is addressed at `/v1/plugins/{catalog}/{id}`, its ledger
+//! lines at `/v1/plugins/{catalog}/{id}/history`, and the transitions the
+//! catalog WITNESSED for it at `/v1/plugins/{catalog}/{id}/transitions`.
+//! The rule is stated once, here: a THIRD segment of exactly `history` or
+//! `transitions` is always that, and a plugin id may not contain a `/`,
+//! so the shapes cannot collide.
+//!
+//! The two are different questions and are deliberately not one route.
+//! `history` is what the entry WROTE to the ledger; `transitions` is what
+//! the kernel DID to its fiber, published on `jinn:introspect`'s reserved
+//! topic and witnessed by the catalog's own subscription. Neither is
+//! derivable from the other at a grant this API holds.
 
 use jinn_plugins::{
     catalog_contract, ErrorCode as CatalogErrorCode, PluginsError, OP_DESCRIBE,
-    OP_DESCRIBE_CATALOG, OP_HISTORY, OP_LIST,
+    OP_DESCRIBE_CATALOG, OP_HISTORY, OP_LIST, OP_TRANSITIONS,
 };
 use serde::{Deserialize, Serialize};
 
@@ -30,6 +38,9 @@ pub const PLUGINS_PATH: &str = "/v1/plugins";
 
 /// The path segment reserved for a plugin's ledger lines.
 pub const HISTORY_SEGMENT: &str = "history";
+
+/// The path segment reserved for the transitions a catalog witnessed.
+pub const TRANSITIONS_SEGMENT: &str = "transitions";
 
 /// The methods the plugins surface answers. A path this table shapes
 /// under another method is a method refusal, not a route miss.
@@ -47,6 +58,8 @@ pub enum PluginRoute {
     Describe { catalog: String, plugin: String },
     /// `GET /v1/plugins/{catalog}/{id}/history`
     History { catalog: String, plugin: String },
+    /// `GET /v1/plugins/{catalog}/{id}/transitions`
+    Transitions { catalog: String, plugin: String },
 }
 
 impl PluginRoute {
@@ -57,7 +70,8 @@ impl PluginRoute {
             Self::Catalogs => None,
             Self::List { catalog }
             | Self::Describe { catalog, .. }
-            | Self::History { catalog, .. } => Some(catalog),
+            | Self::History { catalog, .. }
+            | Self::Transitions { catalog, .. } => Some(catalog),
         }
     }
 
@@ -69,6 +83,7 @@ impl PluginRoute {
             Self::List { .. } => Some(OP_LIST),
             Self::Describe { .. } => Some(OP_DESCRIBE),
             Self::History { .. } => Some(OP_HISTORY),
+            Self::Transitions { .. } => Some(OP_TRANSITIONS),
         }
     }
 
@@ -76,7 +91,9 @@ impl PluginRoute {
     #[must_use]
     pub fn plugin(&self) -> Option<&str> {
         match self {
-            Self::Describe { plugin, .. } | Self::History { plugin, .. } => Some(plugin),
+            Self::Describe { plugin, .. }
+            | Self::History { plugin, .. }
+            | Self::Transitions { plugin, .. } => Some(plugin),
             _ => None,
         }
     }
@@ -111,6 +128,10 @@ pub fn plugin_route(method: &str, path: &str) -> Option<PluginRoute> {
             plugin: (*plugin).to_owned(),
         }),
         [catalog, plugin, HISTORY_SEGMENT] => Some(PluginRoute::History {
+            catalog: (*catalog).to_owned(),
+            plugin: (*plugin).to_owned(),
+        }),
+        [catalog, plugin, TRANSITIONS_SEGMENT] => Some(PluginRoute::Transitions {
             catalog: (*catalog).to_owned(),
             plugin: (*plugin).to_owned(),
         }),
