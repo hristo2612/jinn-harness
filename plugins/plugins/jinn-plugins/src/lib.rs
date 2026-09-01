@@ -32,20 +32,25 @@
 //! provider's own config, and config is the one subtree
 //! `jinn:profile.patch-entry` may write. See `FINDINGS.md` #37.
 //!
-//! # There is NO event surface here, and that is a decision
+//! # The event surface is the kernel's, and this seam only WITNESSES it
 //!
-//! This is the place a person comes to add one. Do not. The operations
-//! below are the whole contract: four pulls and no `listen` topic, no
-//! `PluginLifecycleChanged`, no subscription. `jinn:introspect@0.2.0` is
-//! a pair of pull operations answered from a snapshot; the kernel commits
-//! every `FiberTransition` to the ledger but is not a publisher on the
-//! plugin event bus, and there is no listen topic for a lifecycle change
-//! (`FINDINGS.md` #40, and #41 for the measurement). So the only event
-//! this seam could emit is one a poller synthesised by diffing two
-//! snapshots — announcing a transition it did not witness and cannot
-//! time, which is the fabrication class this seam exists to kill, one
-//! layer up. The absence is the honest answer until the kernel gains the
-//! publish; the fix belongs there, not in a poller here.
+//! This seam still synthesises no event. It used to have no event
+//! surface at all, and said so as a decision: `jinn:introspect@0.2.0`
+//! was a pair of pulls answered from a snapshot, the kernel committed
+//! every `FiberTransition` to the ledger but published none, and the
+//! only event this seam could have emitted was one a poller invented by
+//! diffing two snapshots — a transition announced without being
+//! witnessed and without a time, which is the fabrication class this
+//! seam exists to kill one layer up. The absence was the honest answer
+//! *until the kernel gained the publish*, and the fix belonged there.
+//!
+//! Kernel pin `901d207` is that fix (`FINDINGS.md` #40). The kernel
+//! publishes every transition it commits on a reserved topic, and
+//! [`witness`] SUBSCRIBES to it under this catalog's own
+//! `jinn:introspect` grant. Every sighting is the kernel's own record,
+//! delivered — never a diff, never a synthesis, never a timestamp this
+//! seam made up. The rule that held before still holds: what this seam
+//! does not witness, it does not report.
 
 pub mod catalog;
 pub mod checks;
@@ -54,8 +59,9 @@ pub mod entry;
 pub mod history;
 pub mod lifecycle;
 pub mod mutants;
-pub mod pin;
+pub mod snapshot;
 pub mod transition;
+pub mod witness;
 
 #[cfg(test)]
 mod fabrication;
@@ -68,8 +74,12 @@ pub use entry::{Entry, Grant, GrantSource, Grants, Listing, ReadWindow, JOIN_QUA
 pub use history::{History, Line};
 pub use lifecycle::{Lifecycle, Reason, Snapshot, Unserved, Window};
 pub use mutants::{Mutant, MUTANTS};
-pub use pin::{deliverable_at_pin, UNREACHABLE_AT_PIN, UNREACHABLE_QUALIFIER};
+pub use snapshot::{deliverable_from_a_snapshot, NOT_FROM_A_SNAPSHOT, SNAPSHOT_QUALIFIER};
 pub use transition::{legal_next, may_follow};
+pub use witness::{
+    Sighting, Stream, Transition, Witness, Witnessed, TRANSITIONS_TOPIC, WITNESS_CAPACITY,
+    WITNESS_QUALIFIER,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -95,6 +105,9 @@ pub const OP_DESCRIBE: &str = "describe";
 pub const OP_HISTORY: &str = "history";
 /// Operation: the catalog's own word about itself.
 pub const OP_DESCRIBE_CATALOG: &str = "describe-catalog";
+/// Operation: the transitions this catalog WITNESSED for one plugin —
+/// the kernel's own published record, never a diff of two snapshots.
+pub const OP_TRANSITIONS: &str = "transitions";
 
 /// The `jinn:plugins.<id>` contract name for a catalog id.
 #[must_use]

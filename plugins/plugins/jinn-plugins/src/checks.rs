@@ -53,8 +53,8 @@ pub const CHECKS: [Check; 7] = [
         run: the_limit_travels_in_the_answer,
     },
     Check {
-        name: "no-transient-reading-at-this-pin",
-        run: no_transient_reading_at_this_pin,
+        name: "no-transient-reading-from-a-snapshot",
+        run: no_transient_reading_from_a_snapshot,
     },
 ];
 
@@ -179,20 +179,26 @@ fn the_limit_travels_in_the_answer(entry: &serde_json::Value) -> Result<(), Stri
     Ok(())
 }
 
-/// The pin canary. Three readings name a fiber between two rests and
-/// `jinn:introspect@0.2.0` answers only at rest, so at this pin a
-/// catalog that DELIVERS one is reporting something it cannot have seen
-/// (`crate::pin`, FINDINGS #41). The day the kernel gains a publish path
-/// this goes red, and the reading law gets re-read instead of quietly
-/// outliving its measurement.
-fn no_transient_reading_at_this_pin(entry: &serde_json::Value) -> Result<(), String> {
-    if crate::pin::deliverable_at_pin(state(entry)) {
+/// The snapshot guard. Three readings name a fiber between two rests
+/// and `jinn:introspect`'s `entries` answers only at rest, so an ENTRY —
+/// whose lifecycle is a join over that pull — carrying one is reporting
+/// something it cannot have seen (`crate::snapshot`, FINDINGS #41).
+///
+/// This was `no-transient-reading-at-this-pin`, a claim that NO consumer
+/// at kernel pin `3a8e5c0` could ever be handed one, guarded so it would
+/// go red the day the kernel gained a publish path. It did, at pin
+/// `901d207`, and it went red as designed; what survives is the narrower
+/// law that is still true. The transients are delivered by
+/// [`crate::witness`], which is handed them rather than inferring them,
+/// and this check does not run on that surface.
+fn no_transient_reading_from_a_snapshot(entry: &serde_json::Value) -> Result<(), String> {
+    if crate::snapshot::deliverable_from_a_snapshot(state(entry)) {
         return Ok(());
     }
     Err(format!(
-        "delivered `{}`, which this pin cannot produce: {}",
+        "delivered `{}`, which a snapshot cannot produce: {}",
         state(entry),
-        crate::pin::UNREACHABLE_QUALIFIER
+        crate::snapshot::SNAPSHOT_QUALIFIER
     ))
 }
 

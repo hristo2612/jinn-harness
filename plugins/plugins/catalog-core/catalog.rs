@@ -20,13 +20,19 @@ use std::sync::Mutex;
 
 use jinn_plugins::{
     catalog::{Catalog, Declared, Description},
+    witness::{Witness, Witnessed, TRANSITIONS_TOPIC, WITNESS_CAPACITY},
     Answer, ErrorCode, History, Line, PluginsError, Snapshot, Window, OP_DESCRIBE,
-    OP_DESCRIBE_CATALOG, OP_HISTORY, OP_LIST,
+    OP_DESCRIBE_CATALOG, OP_HISTORY, OP_LIST, OP_TRANSITIONS,
 };
 use serde::Deserialize;
 
-use crate::jinn::plugin::services;
+use crate::jinn::plugin::{events, services};
 use crate::source;
+
+/// The effect token the transitions subscription is registered under.
+/// Distinct from the provider's own duty effect, so `undo` can tell the
+/// two apart and withdraw exactly the one the kernel is withdrawing.
+pub const WITNESS_TOKEN: u64 = 2;
 
 /// The kernel contracts a catalog reads. Named here so a grant list and
 /// a call can never drift apart.
@@ -75,6 +81,12 @@ fn default_ledger_limit() -> u32 {
 }
 
 pub static CONFIG: Mutex<Option<CatalogConfig>> = Mutex::new(None);
+
+/// What this incarnation has WITNESSED the kernel do. It belongs to the
+/// incarnation that subscribed: a restart or a provider swap starts a
+/// fresh log, and the answer says so with its own `first-ordinal` rather
+/// than pretending to a history it was not present for.
+pub static WITNESS: Mutex<Witness> = Mutex::new(Witness::new(WITNESS_CAPACITY));
 
 /// The config this incarnation activated with.
 ///
@@ -281,12 +293,52 @@ fn describe_catalog() -> Result<serde_json::Value, PluginsError> {
     }))
 }
 
+/// One plugin's WITNESSED transitions: the kernel's own published
+/// record, in the order it committed them. Deliberately NOT gated on the
+/// catalog's entry set, exactly as `history` is not — what was witnessed
+/// was witnessed, and an entry that has since left the document does not
+/// unhappen.
+fn transitions(payload: &[u8]) -> Result<serde_json::Value, PluginsError> {
+    let id = requested(payload)?;
+    let witness = WITNESS.lock().unwrap();
+    Ok(
+        serde_json::to_value(Witnessed::of(&config().catalog, crate::PROVIDER, &id, &witness))
+            .expect("a witnessed history encodes"),
+    )
+}
+
+/// One delivery on the reserved transitions topic. A topic this guest
+/// never subscribed to is a fault — nothing should be routing it here.
+/// A payload it cannot read is COUNTED and the catalog keeps serving:
+/// failing the fiber over an unreadable delivery would take a working
+/// read surface down with it (R11).
+///
+/// # Errors
+///
+/// A topic this guest did not subscribe to.
+pub fn witness(topic: &str, payload: &[u8]) -> Result<(), String> {
+    if topic != TRANSITIONS_TOPIC {
+        return Err(format!(
+            "unexpected event {topic:?}: this catalog subscribes to {TRANSITIONS_TOPIC:?} alone"
+        ));
+    }
+    WITNESS.lock().unwrap().deliver(payload);
+    Ok(())
+}
+
+/// Withdrawal of the subscription. What it witnessed is not kept as a
+/// second source of truth once it is no longer being fed.
+pub fn withdraw_witness() {
+    WITNESS.lock().unwrap().clear();
+}
+
 /// One operation.
 pub fn dispatch(operation: &str, payload: &[u8]) -> Answer {
     let answered = match operation {
         OP_LIST => listing(),
         OP_DESCRIBE => description(payload),
         OP_HISTORY => history(payload),
+        OP_TRANSITIONS => transitions(payload),
         OP_DESCRIBE_CATALOG => describe_catalog(),
         other => Err(PluginsError::new(
             ErrorCode::NotFound,
@@ -316,5 +368,16 @@ pub fn activate(config_bytes: &[u8]) -> Result<CatalogConfig, String> {
         );
     }
     *CONFIG.lock().unwrap() = Some(config.clone());
+    // SUBSCRIBE BEFORE PROVIDING. The provision is the caller's last
+    // act, so by the time anything can resolve this catalog it is
+    // already witnessing — a catalog that answered reads before its
+    // subscription landed would report a gap it caused itself.
+    //
+    // The grant checked is `jinn:introspect`, not the topic's own name:
+    // this is a KERNEL-RESERVED topic, and the kernel bounds its payload
+    // by exactly what that contract's reads already admit (plugin world
+    // 0.8.0). This catalog already holds that grant for `entries`.
+    events::listen(TRANSITIONS_TOPIC, WITNESS_TOKEN)
+        .map_err(|error| format!("listen {TRANSITIONS_TOPIC}: {error:?}"))?;
     Ok(config)
 }

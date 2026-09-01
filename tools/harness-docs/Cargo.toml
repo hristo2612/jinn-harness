@@ -1,0 +1,6 @@
+[package]
+name = "harness-docs"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+description = "Documentation gates: the README limitations map against FINDINGS grades, and every docs/notes citation against the tree"

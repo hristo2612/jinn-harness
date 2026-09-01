@@ -9,23 +9,34 @@
 //! and it proves each with the precondition that the reader can also say
 //! `active`, so a ruling-out is never a reader that cannot speak.
 //!
-//! The two transient ones the packet names — `mounted` (a fiber resting
-//! in `pending`) and `interrupted` (one in `unloading`) — the kernel
-//! genuinely passes through, and NO reader can observe them at this pin.
-//! That is measured here rather than asserted: a real restart is driven
-//! through the operator API, the catalog is read as fast as it will
-//! answer for the whole window, and the kernel's OWN ledger is then read
-//! back to show the transitions it committed while nobody could see
-//! them. The reading law is then exercised on those recorded state
-//! strings — the kernel's words from this run, not invented ones — which
-//! is the strongest evidence this pin admits. `FINDINGS.md` #41 carries
-//! the gap; this file carries its proof.
+//! The three transient ones — `mounted` (a fiber resting in `pending`),
+//! `activating` (`loading`) and `interrupted` (`unloading`) — are now
+//! proven TWICE OVER, and the two proofs say opposite-looking things
+//! that are both true:
+//!
+//! - No POLL reaches one. A real restart is driven through the operator
+//!   API and the catalog is read as fast as it will answer for the whole
+//!   window; every read is a rest. That is `FINDINGS.md` #41's
+//!   measurement, and it still holds — it was never a claim about the
+//!   kernel, it was a claim about a pull answered from a snapshot.
+//! - The SUBSCRIPTION reaches all three. At kernel pin `901d207` the
+//!   kernel publishes every transition it commits, the catalog listens
+//!   on the reserved topic under its own `jinn:introspect` grant, and
+//!   `/v1/plugins/{catalog}/{id}/transitions` hands back what it
+//!   witnessed. That is `FINDINGS.md` #40's answer.
+//!
+//! Which is why the pin-wide marking is gone. `UNREACHABLE_AT_PIN` said
+//! no consumer at pin `3a8e5c0` could ever be handed one of the three,
+//! guarded by a canary built to go red the day that stopped being true.
+//! It stopped being true here, the canary's predicate refuses the very
+//! readings this daemon delivered (printed below), and what replaced it
+//! is the narrower law that survives: an ENTRY's lifecycle is
+//! snapshot-derived and still may not carry one.
 
 use composition::api::patch;
-use composition::plugins::{booted, entry, listing, state, MAIN};
+use composition::plugins::{booted, entry, listing, state, transitions, MAIN};
 use jinn_plugins::checks::{failures, listing_states_the_join};
 use jinn_plugins::lifecycle::{Lifecycle, Reason, Snapshot, Window};
-use jinn_plugins::UNREACHABLE_AT_PIN;
 
 const API_ID: &str = "jinn-api-http";
 const SHELVED_ID: &str = "jinn-plugins-shelf";
@@ -150,7 +161,7 @@ fn an_entry_mounted_and_never_activated_never_reads_active() {
 }
 
 #[test]
-fn the_kernel_passes_through_mounted_and_interrupted_and_no_read_can_see_it() {
+fn no_poll_reaches_a_transient_and_the_subscription_witnesses_every_one() {
     let Some((daemon, port)) = booted("plugins-transients") else {
         return;
     };
@@ -197,38 +208,109 @@ fn the_kernel_passes_through_mounted_and_interrupted_and_no_read_can_see_it() {
     for row in &committed {
         println!("  {row}");
     }
-    println!("READINGS OBSERVED: {seen:?}");
+    println!("READINGS THE POLL OBSERVED: {seen:?}");
 
-    // And not one of those states was ever visible. The catalog is not
-    // wrong here — it answers what `jinn:introspect` holds when it is
-    // asked, and the kernel is only ever asked at rest. FINDINGS #41.
-    // Read from the DEFINITION's own marking, not from a literal here,
-    // so the limit the consumer's vocabulary carries and the limit this
-    // proof measures cannot drift apart.
-    assert_eq!(UNREACHABLE_AT_PIN.len(), 3);
-    for invisible in UNREACHABLE_AT_PIN {
-        assert!(
-            !seen.contains(invisible),
-            "if a transient reading became observable at this pin, FINDINGS #41 is stale \
-             and this seam owes it a direct proof: {seen:?}"
-        );
-    }
-    // The canary is the standing answer to "would we notice the day this
-    // stops holding?": every reading the daemon actually delivered here
-    // passes it, and the day one of the three arrives it goes red.
+    // And not one of those states was ever visible TO THE POLL. That is
+    // not a defect in the catalog and never was: it answers what
+    // `jinn:introspect` holds when it is asked, and a pull is answered
+    // at rest. FINDINGS #41's measurement, unchanged.
     for observed in &seen {
         assert!(
-            jinn_plugins::deliverable_at_pin(observed),
-            "the daemon delivered `{observed}`: {}",
-            jinn_plugins::UNREACHABLE_QUALIFIER
+            jinn_plugins::deliverable_from_a_snapshot(observed),
+            "a snapshot-derived reading delivered `{observed}`: {}",
+            jinn_plugins::SNAPSHOT_QUALIFIER
         );
     }
 
-    // So the reading law is exercised on the kernel's OWN recorded state
-    // words from this very run — `pending` and `unloading` above — which
-    // is the strongest evidence this pin admits for the two readings no
-    // surface exposes. It is stated as what it is: the join runs here,
-    // in this process, because there is nowhere else to run it.
+    // THE SUBSCRIPTION. The same restart, as the catalog WITNESSED it:
+    // the kernel's own published transitions, not a diff of two reads.
+    let witnessed = transitions(port, MAIN, RESTARTED_ID);
+    println!(
+        "WITNESSED BY {} ({}): {}",
+        witnessed["served-by"], witnessed["stream"], witnessed["witnessed"]
+    );
+    let sightings = witnessed["witnessed"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a witnessed list: {witnessed}"));
+    assert!(
+        !sightings.is_empty(),
+        "the catalog subscribed and witnessed nothing across a real restart: {witnessed}"
+    );
+    assert!(
+        witnessed["qualifier"]
+            .as_str()
+            .is_some_and(|stated| stated.contains("witnessed history")),
+        "the bound has to travel in the answer: {witnessed}"
+    );
+
+    // Every sighting is the KERNEL'S record, and the ordering barrier is
+    // checkable rather than merely asserted: a delivery never precedes
+    // its own ledger row, so the row's sequence sits at or before the
+    // `committed-by` mark the kernel published with it.
+    let rows = daemon.ledger_rows();
+    let high_water = rows.iter().map(|row| row.seq).max().unwrap_or_default();
+    let mut witnessed_readings: std::collections::BTreeSet<String> =
+        std::collections::BTreeSet::new();
+    for sighting in sightings {
+        assert_eq!(sighting["entry"], RESTARTED_ID, "{sighting}");
+        let committed_by = sighting["committed-by"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("a committed-by mark: {sighting}"));
+        assert!(
+            committed_by <= high_water,
+            "a delivery claimed a ledger mark the ledger never reached: {sighting}"
+        );
+        witnessed_readings.insert(
+            sighting["lifecycle"]["state"]
+                .as_str()
+                .unwrap_or_else(|| panic!("a reading: {sighting}"))
+                .to_owned(),
+        );
+    }
+    println!("READINGS THE SUBSCRIPTION WITNESSED: {witnessed_readings:?}");
+
+    // The claim this whole packet exists to settle: the three readings
+    // no poll can reach ARE reached here.
+    for transient in jinn_plugins::NOT_FROM_A_SNAPSHOT {
+        assert!(
+            witnessed_readings.contains(transient),
+            "`{transient}` was not witnessed across a real restart: {witnessed_readings:?}"
+        );
+        assert!(
+            !seen.contains(transient),
+            "the poll saw `{transient}`, which would make FINDINGS #41 stale: {seen:?}"
+        );
+    }
+
+    // THE RETIRED CANARY, RUN ON WHAT THIS DAEMON ACTUALLY DELIVERED.
+    // `no-transient-reading-at-this-pin` claimed no consumer at pin
+    // `3a8e5c0` could be handed one of the three; its predicate is
+    // `deliverable_from_a_snapshot` under its old name. Fed the readings
+    // above it refuses every one — which is the red the marking was
+    // built to produce, and the evidence on which it was retired. What
+    // survives is the narrower law: an ENTRY may still not carry one.
+    for reading in &witnessed_readings {
+        let as_an_entry = serde_json::json!({
+            "lifecycle": { "state": reading, "reason": { "from": "cause-not-delivered" } },
+            "incarnation": 1,
+            "grants": { "source": "profile-document", "values": [], "qualifier": "q" },
+        });
+        let red = jinn_plugins::failures(&as_an_entry);
+        if jinn_plugins::deliverable_from_a_snapshot(reading) {
+            continue;
+        }
+        println!("CANARY RED on the daemon's own witnessed `{reading}`: {red:?}");
+        assert!(
+            red.iter()
+                .any(|name| name.starts_with("no-transient-reading-from-a-snapshot")),
+            "the surviving guard did not refuse a witnessed transient carried by an entry: \
+             {red:?}"
+        );
+    }
+
+    // And the reading law that answers the witness is the SAME law the
+    // snapshot answers use — exercised here on the kernel's own recorded
+    // state words from this very run, not on invented ones.
     assert_eq!(
         reading("pending"),
         Lifecycle::Mounted,

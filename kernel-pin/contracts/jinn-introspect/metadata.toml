@@ -1,8 +1,9 @@
-# Contract-bundle metadata for jinn:introspect@0.2.0 (M2-K9; 0.1.0 M2-K7)
+# Contract-bundle metadata for jinn:introspect@0.4.0 (M2-K13; 0.3.0
+# M2-K10; 0.2.0 M2-K9; 0.1.0 M2-K7)
 
 [contract]
 name    = "jinn:introspect"
-version = "0.2.0"
+version = "0.4.0"
 
 # No scope type: a grant is whole-composition read access (a scoped grant
 # refuses fail-closed, M2-K2 law). Attenuation is by grant or no grant.
@@ -15,6 +16,23 @@ sensitivity = "public"
 effect      = "read"
 sensitivity = "public"
 
+[operations.waits]
+effect      = "read"
+sensitivity = "public"
+
+# The kernel's PUSH side (0.4.0): not an operation a holder calls, but a
+# delivery it receives. Reached by `events.listen` on the reserved topic;
+# the grant checked is this contract's, because the payload is bounded by
+# what `entries` already admits. No guest may emit on the topic.
+[deliveries.transitions]
+topic       = "jinn:introspect/transitions"
+effect      = "read"
+sensitivity = "public"
+record      = "transition"
+replay      = "none"
+ordering    = "never before the transition's own ledger row"
+loss        = "counted: PublishDropped ledger event + a gap in `ordinal`"
+
 [equality]
 # Observational equivalence: the composition as reported — same entries,
 # same states and registrations by class. Incarnation ids are identity,
@@ -24,6 +42,10 @@ relation = "composition-report-modulo-incarnation"
 # `unserved` is state, not identity: two reports differing in it describe
 # DIFFERENT compositions — one owes a transition, the other does not — so
 # it is inside the relation (M2-K9).
+# `waits` is deliberately OUTSIDE the relation (M2-K10): a live wait is a
+# moment, not a composition, so two reads that differ only in which
+# crossings are in flight describe the same composition. Nothing may be
+# reverted, gated, or compared on it.
 
 [notes]
 # Every read is a ledger event (the broker's `ContractCall` line). The

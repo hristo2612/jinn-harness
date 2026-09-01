@@ -38,13 +38,15 @@
 //! unrepresentable rather than merely unreached, because a filter is
 //! something a later edit can loosen and a missing variant is not.
 //!
-//! # Three of these readings are UNREACHABLE at this pin
+//! # Three of these readings are unreachable FROM A SNAPSHOT
 //!
 //! `mounted`, `activating` and `interrupted` each name a fiber between
-//! two rests, and no consumer at this pin can be handed one — measured,
-//! not assumed. The marking and its evidence live in [`crate::pin`]; the
-//! variants below carry it, and `checks::CHECKS` carries the canary that
-//! goes red the day it stops holding.
+//! two rests, and a pull answered from a snapshot taken at rest can
+//! never carry one — measured, not assumed (`FINDINGS.md` #41). Since
+//! kernel pin `901d207` they ARE reachable, on the one surface that
+//! witnesses rather than infers: [`crate::witness`], fed by the kernel's
+//! published transitions. `checks::CHECKS` guards the narrower law that
+//! survives — a snapshot-derived reading still may not carry one.
 //!
 //! # There is no `unknown`
 //!
@@ -125,7 +127,35 @@ pub enum Reason {
         candidates: u32,
         qualifier: String,
     },
+    /// The reading came from a transition the kernel COMMITTED and
+    /// published, and that publication deliberately carries no cause:
+    /// nothing in `jinn:introspect` answers WHY a transition happened,
+    /// so the kernel withholds `cause` rather than widen the grant. This
+    /// is a positive statement about the contract — the cause exists,
+    /// this surface is not authorised to deliver it, and the answer says
+    /// where it lives — and never a sentinel for a reading that never
+    /// happened.
+    CauseNotDelivered { qualifier: String },
 }
+
+impl Reason {
+    /// The reason a reading derived from a witnessed transition carries.
+    #[must_use]
+    pub fn cause_not_delivered() -> Self {
+        Self::CauseNotDelivered {
+            qualifier: CAUSE_NOT_DELIVERED_QUALIFIER.to_owned(),
+        }
+    }
+}
+
+/// What a [`Reason::CauseNotDelivered`] means, travelling in the answer
+/// itself. Its one home.
+pub const CAUSE_NOT_DELIVERED_QUALIFIER: &str =
+    "the kernel committed this transition and does not publish why: `jinn:introspect@0.4.0` \
+     delivers `from` and `to` and withholds `cause`, because nothing in that contract's own \
+     reads answers WHY and delivering it would widen the grant. The cause is not unknown and \
+     is not correlated here; a consumer that needs it holds `jinn:ledger`, whose \
+     `FiberTransition` row carries it verbatim";
 
 /// What a [`Reason::NoRecordedCause`] means, travelling in the answer
 /// itself rather than only in a README. Its one home.
@@ -146,9 +176,10 @@ pub enum Lifecycle {
     /// This is the mounted-but-never-activated answer, and it is not
     /// `Active` for the structural reason the module doc gives.
     ///
-    /// UNREACHABLE at this pin ([`crate::pin::UNREACHABLE_AT_PIN`],
-    /// FINDINGS.md #41): a fiber resting in `pending` is never what
-    /// `jinn:introspect` is asked about.
+    /// Reachable only through [`crate::witness`]: a fiber resting in
+    /// `pending` is never what a snapshot pull is asked about, and the
+    /// kernel's published transition is where it is seen instead
+    /// (`FINDINGS.md` #41).
     Mounted,
     /// In the composition with NO live fiber at all. The kernel does not
     /// say why in the snapshot, so the reason comes from the document or
@@ -156,8 +187,10 @@ pub enum Lifecycle {
     NoIncarnation { reason: Reason },
     /// An incarnation is installing, and it owes nothing.
     ///
-    /// UNREACHABLE at this pin ([`crate::pin::UNREACHABLE_AT_PIN`],
-    /// FINDINGS.md #41): `loading` completes inside one read.
+    /// Reachable only through [`crate::witness`]: `loading` completes
+    /// well inside one read, so no pull reaches it and the kernel's
+    /// published transition is where it is seen instead
+    /// (`FINDINGS.md` #41).
     Activating,
     /// Serving. The only answer requiring three positive facts.
     Active,
@@ -169,10 +202,10 @@ pub enum Lifecycle {
     Failed { reason: Reason },
     /// Torn down, or owing a change nothing will schedule, mid-life.
     ///
-    /// UNREACHABLE at this pin ([`crate::pin::UNREACHABLE_AT_PIN`],
-    /// FINDINGS.md #41): `unloading` is never observed, and the `gone` /
-    /// `stalled` owed changes that also read here are not reported by
-    /// the pinned `jinn:introspect` either.
+    /// Reachable from a snapshot only through an owed `gone` or
+    /// `stalled`; the `unloading` half is reachable only through
+    /// [`crate::witness`], because no pull is answered mid-teardown
+    /// (`FINDINGS.md` #41).
     Interrupted { reason: Reason },
     /// Gone, terminally.
     Disposed { reason: Reason },

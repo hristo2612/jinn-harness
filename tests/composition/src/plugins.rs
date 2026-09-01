@@ -95,6 +95,19 @@ pub fn history(port: u16, catalog: &str, id: &str) -> serde_json::Value {
     read.body
 }
 
+/// One plugin's WITNESSED transitions, as the operator surface answers
+/// them.
+///
+/// # Panics
+///
+/// If the catalog does not answer.
+#[must_use]
+pub fn transitions(port: u16, catalog: &str, id: &str) -> serde_json::Value {
+    let read = get(port, &format!("/v1/plugins/{catalog}/{id}/transitions"));
+    assert_eq!(read.status, 200, "{}", read.raw);
+    read.body
+}
+
 /// The `state` an entry reads as.
 ///
 /// # Panics

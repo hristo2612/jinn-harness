@@ -13,7 +13,28 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
-Phase 2.7 — kernel pin `3a8e5c0` (M2-K9), UNCHANGED. The plugins seam
+Phase 1.12 — kernel pin `901d207` (M2-K13). The pin bump is a MIGRATION,
+not a version edit: the plugin world moved 0.6.0 → 0.8.0, and against
+that kernel every artifact built on the old world is refused with
+`artifact is not a loadable component of the plugin world`. Every guest
+here is rebuilt by its kit, and the whole distribution boots on the new
+world.
+
+**The kernel became a publisher, so the plugins seam stopped being
+blind.** `jinn:introspect@0.4.0` publishes every `FiberTransition` the
+kernel commits on the reserved topic `jinn:introspect/transitions`,
+behind a ledger-ordering barrier, with counted bounded back-pressure and
+no-replay ordinals. Both catalog providers now SUBSCRIBE to it under
+their own `jinn:introspect` grant, and
+`GET /v1/plugins/{catalog}/{id}/transitions` answers what the catalog
+WITNESSED — the kernel's own record, delivered, never a diff of two
+reads. That closes `FINDINGS.md` #40 and corrects #41: the three
+transient readings are unreachable from a SNAPSHOT, not from every
+consumer, and `jinn_plugins::UNREACHABLE_AT_PIN` and its canary are
+retired on the evidence of a daemon observed delivering all three
+(`docs/notes/2026-09-01-a-witness-is-not-a-poller.md`).
+
+### Phase 2.7 — kernel pin `3a8e5c0` (M2-K9), UNCHANGED. The plugins seam
 (`plugins/plugins/`) is the SEVENTH and LAST core-port seam, and the one
 that makes the malleability contract something an operator does rather
 than something a suite asserts.
@@ -264,6 +285,7 @@ iteration channel — kernel changes are never made here).
 | `KERNEL-PIN.md` | The kernel pin: jinnd commit + contract hashes + bump procedure |
 | `kernel-pin/` | Vendored copy of the pinned contract surface (`wit/`, `contracts/`) — integrity-gated against `KERNEL-PIN.md` by `harness-pin` |
 | `tools/harness-pin` | The pin gate: computes/verifies contract hashes (`cargo test -p harness-pin`) |
+| `tools/harness-docs` | The docs gate: the README limitations map against `FINDINGS.md` grades, and every `docs/notes/` citation against the tree (`cargo test -p harness-docs`) |
 | `tools/cron-kit` | Builds the cron seam's components + pinned profile; its library is the kit machinery every seam kit shares |
 | `tools/api-kit` | Builds the operator-API profile: the api trio beside the cron seam |
 | `tools/engine-kit` | Builds the engines profile: the engine providers and the probe beside the api trio |
@@ -426,31 +448,36 @@ Its own README carries these in full; the load-bearing ones:
   that could carry it, so the fabrication is unrepresentable rather than
   unreached.
 - **`state: null` is four situations and this seam separates two** (#39).
-- **Three of the eleven readings are UNREACHABLE at this pin** (#41).
-  `mounted`, `activating` and `interrupted` each name a fiber between two
-  rests. The kernel passes through all three; no consumer here can be
-  handed one, because `jinn:introspect@0.2.0` answers from a snapshot
-  taken at rest and a real restart — measured through this seam —
-  completed inside one HTTP read while 189 consecutive reads all returned
-  `active` and the kernel's own ledger recorded the whole path. The
-  vocabulary keeps the words because the kernel really does pass through
-  them; the limit is marked **in the definition itself**
-  (`jinn_plugins::UNREACHABLE_AT_PIN`) rather than only here, and a canary
-  check refuses any catalog answer that delivers one, so the day the
-  kernel gains a publish path the suite goes red instead of the claim
-  quietly outliving its measurement. A consumer that believes it can
-  follow a plugin's life through this seam today will build something that
-  silently misses every transition.
-- **There is no lifecycle event surface at all, anywhere** (#40), and
-  this seam ships no typed event as a recorded decision rather than an
-  oversight. The kernel commits every `FiberTransition` to the ledger but
-  is not a publisher on the plugin event bus, and there is no listen topic
-  for a lifecycle change, so the only event this seam could emit is one a
-  poller synthesised by diffing two snapshots — announcing a transition it
-  did not witness and cannot time. The refusal is written at the place a
-  person would go to add one (`jinn-plugins`'s module doc), because
-  without it the next reader closes the gap with exactly that poller. The
-  kernel-side fix is carded as **M2-K13**.
+- **Three of the eleven readings are unreachable from a SNAPSHOT** (#41,
+  corrected at pin `901d207`). `mounted`, `activating` and `interrupted`
+  each name a fiber between two rests, and a pull answered at rest cannot
+  carry one: a real restart, measured through this seam, completed inside
+  one HTTP read while 190 consecutive reads all returned `active` and the
+  kernel's own ledger recorded the whole path. That measurement stands.
+  What did not stand is the generalisation built on it — that no consumer
+  could ever be handed one — and `jinn_plugins::UNREACHABLE_AT_PIN` with
+  its `no-transient-reading-at-this-pin` canary are retired on evidence:
+  the subscription witnesses all three, and the canary's predicate,
+  fed the daemon's own delivered readings, refuses every one. The
+  narrower law survives as `NOT_FROM_A_SNAPSHOT` and
+  `no-transient-reading-from-a-snapshot` — an ENTRY's lifecycle is still
+  a join over a pull, so it still may not carry one.
+- **The lifecycle event surface now EXISTS, and what this seam answers
+  from it is a bounded history** (#40, answered at pin `901d207`). Until
+  that kernel the claim above was literal: nothing published, so the only
+  event this seam could have emitted was one a poller synthesised by
+  diffing two snapshots — a transition announced without being witnessed
+  and without a time. The refusal was written at the place a person would
+  come to add one, and it outlived its own premise by exactly one pin:
+  `jinn:introspect@0.4.0` publishes every committed `FiberTransition`,
+  both catalogs SUBSCRIBE under their own grant, and
+  `GET /v1/plugins/{catalog}/{id}/transitions` answers what was
+  WITNESSED. What is still limited is narrower and named: this seam emits
+  no event of its own, so a consumer of IT still pulls (#4/#32); the
+  witnessed log is bounded at 256 sightings and is per incarnation, so a
+  catalog restart starts a new one; and the kernel withholds `cause` on
+  this contract, so a sighting names `jinn:ledger` as where the reason
+  lives — which #20 says is readable only beside the daemon.
 - **An entry the document could not RESOLVE appears in no catalog at
   all** — a list here omits exactly the entries that are most broken.
 - **The surface is read-only,** and the join is three reads at three

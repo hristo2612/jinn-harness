@@ -2,7 +2,8 @@
 #
 # Native workspace members are the service-definition crates (pure types +
 # logic, unit-tested on the host), a provider's pure transport codec, tools/
-# (repo machinery: the pin gate, the seam kit builders), and tests/ (the
+# (repo machinery: the pin gate, the docs gate, the seam kit builders), and
+# tests/ (the
 # real-composition gates). Guest plugin
 # crates under plugins/ compile for wasm32-unknown-unknown ONLY and are
 # deliberately NOT workspace members (the kernel's own demo-plugin pattern):
@@ -27,6 +28,7 @@ members = [
     "tools/api-kit",
     "tools/cron-kit",
     "tools/engine-kit",
+    "tools/harness-docs",
     "tools/harness-pin",
     "tools/plugin-kit",
     "tools/session-kit",

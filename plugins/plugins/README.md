@@ -102,25 +102,24 @@ authority.
   reachable through the operator API.
 - **There are no typed events, and that is a recorded decision**
   (`FINDINGS.md` #40). A catalog knows the composition at the instant it
-  asks and nothing between two asks: `jinn:introspect` is a pull surface
-  and the kernel publishes nothing on the event bus. The only event this
-  seam could emit would be produced by a poller diffing two snapshots —
-  announcing a transition it did not witness and cannot time, which is
-  this seam's own fabrication class one layer up.
-- **A fiber BETWEEN two rests is invisible** (`FINDINGS.md` #41). The
-  `mounted`, `activating` and `interrupted` readings are real and the
-  kernel passes through them; no reader at this pin can catch one. A real
-  restart, measured: 189 consecutive catalog reads, all `active`, while
+  asks and nothing between two asks — WAS true, and is answered at pin
+  `901d207`. `jinn:introspect@0.4.0` publishes every committed transition
+  on a reserved topic; both providers subscribe under their own
+  `jinn:introspect` grant and `transitions(id)` answers what was
+  witnessed. The seam still emits no event of its own: a sighting is the
+  kernel's record, delivered, never a poller's diff of two snapshots.
+- **A fiber BETWEEN two rests is invisible TO A POLL** (`FINDINGS.md`
+  #41, corrected at pin `901d207`). The `mounted`, `activating` and
+  `interrupted` readings are real and no pull reaches one: 190
+  consecutive catalog reads across a real restart, all `active`, while
   the kernel's ledger recorded `Active → Unloading → Pending → Loading →
-  Active`. Anything built on watching a plugin's life through this seam
-  will silently miss every transition. The three words are therefore
-  marked UNREACHABLE in the definition itself
-  (`jinn_plugins::UNREACHABLE_AT_PIN`, carrying the qualifier and the
-  citation), the variants say so where a consumer reads the vocabulary,
-  and `no-transient-reading-at-this-pin` is the canary: at this pin a
-  catalog answer that DELIVERS one is a defect, so the day the kernel
-  gains a publish path the suite goes red and the reading law is re-read
-  rather than quietly outliving its measurement.
+  Active`. Anything built on POLLING a plugin's life through this seam
+  still silently misses every transition — subscribe instead. The
+  transitions surface is fed by the kernel's own publish and witnesses
+  all three; `jinn_plugins::snapshot::NOT_FROM_A_SNAPSHOT` and the
+  `no-transient-reading-from-a-snapshot` check keep the narrower law an
+  entry's lifecycle still owes, and the retired pin-wide marking's story
+  is in `FINDINGS.md` #41.
 - **The surface is READ-ONLY.** A plugin is reshaped by patching the
   profile through `/v1/profile`, which this seam consumes. There is no
   enable, disable, restart or remove here, deliberately: two ways to
