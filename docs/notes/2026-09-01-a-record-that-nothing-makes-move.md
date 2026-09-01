@@ -18,9 +18,9 @@ Two things failed, and both were sentences.
   the fix is merely carded as M2-K13 — in the same commit that shipped
   the subscription, and forty lines below a Status section describing it.
   The README contradicted itself.
-- A new evidence comment in `snapshot.rs` sent the reader to
-  `docs/notes/witnessed-transitions.md` for the transcript. No such file
-  was ever written; the note is
+- A new evidence comment in `snapshot.rs` sent the reader to a
+  `witnessed-transitions.md` for the transcript. No file of that name was
+  ever written; the note is
   `docs/notes/2026-09-01-a-witness-is-not-a-poller.md`.
 
 ## Both are one disease, and this is its second outbreak
@@ -55,10 +55,18 @@ their own verifier, and those are exactly the two that failed:
    names nothing. One walk of the tree settles it.
 
 The second rule caught a third instance immediately, in the gate's own
-source: a unit-test fixture built on a plausible-looking
-`docs/notes/x.md`. The fixture was rewritten to cite a note that exists
+source: a unit-test fixture built on a plausible-looking `x.md` under the
+notes directory. The fixture was rewritten to cite a note that exists
 rather than the check taught to ignore fixtures. A gate with an exemption
 for the file it lives in is not a gate.
+
+It caught a fourth in this note. A first draft spelled both dangling
+paths out in full, to say what had gone wrong — and the gate refused
+them, because it cannot tell a citation from a quotation of one and
+should not try to. Hence the broken names appear here without their
+directory. That is the cost of the rule, it is small, and it is the right
+side of the trade: a check that guessed at intent would pass the next
+real dangling path that happened to sit near the word "example".
 
 ## Why the #40 bullet was rewritten rather than deleted
 
