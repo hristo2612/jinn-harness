@@ -198,6 +198,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "harness-docs"
+version = "0.1.0"
+
+[[package]]
 name = "harness-pin"
 version = "0.1.0"
 dependencies = [

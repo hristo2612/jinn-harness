@@ -21,7 +21,8 @@
 //! go red the day that stopped holding. `jinn:introspect@0.4.0` is that
 //! day: the kernel publishes every committed transition, a subscriber
 //! witnesses the transients, and the canary went red exactly as designed
-//! (`docs/notes/witnessed-transitions.md` carries the transcript).
+//! (`docs/notes/2026-09-01-a-witness-is-not-a-poller.md` carries the
+//! transcript).
 //!
 //! What survives is narrower and still true: the three readings are
 //! unreachable FROM A SNAPSHOT. An entry's `lifecycle` is snapshot-

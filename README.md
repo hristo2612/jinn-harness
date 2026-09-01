@@ -285,6 +285,7 @@ iteration channel — kernel changes are never made here).
 | `KERNEL-PIN.md` | The kernel pin: jinnd commit + contract hashes + bump procedure |
 | `kernel-pin/` | Vendored copy of the pinned contract surface (`wit/`, `contracts/`) — integrity-gated against `KERNEL-PIN.md` by `harness-pin` |
 | `tools/harness-pin` | The pin gate: computes/verifies contract hashes (`cargo test -p harness-pin`) |
+| `tools/harness-docs` | The docs gate: the README limitations map against `FINDINGS.md` grades, and every `docs/notes/` citation against the tree (`cargo test -p harness-docs`) |
 | `tools/cron-kit` | Builds the cron seam's components + pinned profile; its library is the kit machinery every seam kit shares |
 | `tools/api-kit` | Builds the operator-API profile: the api trio beside the cron seam |
 | `tools/engine-kit` | Builds the engines profile: the engine providers and the probe beside the api trio |
@@ -461,16 +462,22 @@ Its own README carries these in full; the load-bearing ones:
   narrower law survives as `NOT_FROM_A_SNAPSHOT` and
   `no-transient-reading-from-a-snapshot` — an ENTRY's lifecycle is still
   a join over a pull, so it still may not carry one.
-- **There is no lifecycle event surface at all, anywhere** (#40), and
-  this seam ships no typed event as a recorded decision rather than an
-  oversight. The kernel commits every `FiberTransition` to the ledger but
-  is not a publisher on the plugin event bus, and there is no listen topic
-  for a lifecycle change, so the only event this seam could emit is one a
-  poller synthesised by diffing two snapshots — announcing a transition it
-  did not witness and cannot time. The refusal is written at the place a
-  person would go to add one (`jinn-plugins`'s module doc), because
-  without it the next reader closes the gap with exactly that poller. The
-  kernel-side fix is carded as **M2-K13**.
+- **The lifecycle event surface now EXISTS, and what this seam answers
+  from it is a bounded history** (#40, answered at pin `901d207`). Until
+  that kernel the claim above was literal: nothing published, so the only
+  event this seam could have emitted was one a poller synthesised by
+  diffing two snapshots — a transition announced without being witnessed
+  and without a time. The refusal was written at the place a person would
+  come to add one, and it outlived its own premise by exactly one pin:
+  `jinn:introspect@0.4.0` publishes every committed `FiberTransition`,
+  both catalogs SUBSCRIBE under their own grant, and
+  `GET /v1/plugins/{catalog}/{id}/transitions` answers what was
+  WITNESSED. What is still limited is narrower and named: this seam emits
+  no event of its own, so a consumer of IT still pulls (#4/#32); the
+  witnessed log is bounded at 256 sightings and is per incarnation, so a
+  catalog restart starts a new one; and the kernel withholds `cause` on
+  this contract, so a sighting names `jinn:ledger` as where the reason
+  lives — which #20 says is readable only beside the daemon.
 - **An entry the document could not RESOLVE appears in no catalog at
   all** — a list here omits exactly the entries that are most broken.
 - **The surface is read-only,** and the join is three reads at three
