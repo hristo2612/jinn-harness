@@ -29,10 +29,12 @@ publish and re-read — not a restart at this pin, #46); a bundle that
 does not verify fails the transport and nothing else. The client under `web/` is jinn `43e8647`'s
 shell, Settings and plugins page ported VERBATIM behind a byte-for-byte
 gate over a pinned map (`tools/ui-kit/tests/verbatim.rs`,
-`web/port-map.txt`): the nine enumerated adaptations (the eighth, `routes/client-providers.tsx`
+`web/port-map.txt`): the twelve enumerated adaptations (the eighth, `routes/client-providers.tsx`
 minus its two Talk mounts, and the ninth, onboarding unmounted and synthesised, added by COO ruling;
 `routes/settings/page.tsx` joined item 1 in round 2 so the page renders only what the settings seam
-declares) are the whole diff. Proven through the pinned daemon in
+declares; the tenth to twelfth — the plugins inventory read, the talk capability and the shell's
+client-plugin loader — resolve on the daemon or absent client-side and issue no old-gateway request,
+round 3) are the whole diff. Proven through the pinned daemon in
 `tests/composition/tests/ui.rs` — including ten consecutive fresh boots (proof 5b) — 
 (`docs/notes/2026-09-02-a-byte-is-not-a-dispatch.md`). What it is NOT:
 the live half, moments, chat, todos, workflows, the service worker, or

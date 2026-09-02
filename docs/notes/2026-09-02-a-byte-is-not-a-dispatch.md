@@ -137,6 +137,40 @@ Verify round 1 (four Blockers, §8 amendment 4) moved four things.
   a call on one answers the SPA document and never old-gateway data, and
   the test prints them as the carried inventory.
 
+## Round 3: the transcript is the proof, and the grep was not
+
+Verify round 2 passed everything but one line: after pairing and reloading
+`/settings`, the browser's network log showed `GET /api/plugins` and
+`GET /api/talk/config`, both answered with the SPA document. The repo test
+above had listed both files as carried inventory — a dead string in a
+verbatim file is harmless, the reasoning went, because nothing mounted calls
+it. The transcript said otherwise, and the ruling (§8 amendment 6) made the
+two files adaptations 10 and 11.
+
+One of the two attributions was wrong, and finding out how mattered more
+than the fix. `inventory.ts`'s `usePluginInventory` has no caller: the
+plugins page reads `/v1/plugins/main` through item 1's adapter since round
+1 and imports only the query key and the disk-follows hook. The live
+`GET /api/plugins` came from `plugins/disk-plugins.ts` — the old gateway's
+client-plugin loader, mounted on EVERY page by `DiskPluginsBridge` in the
+shell and re-run on each connection flip, which is why the transcript saw it
+repeated. Adapting inventory.ts as ruled would have left the Blocker open.
+It is adapted anyway (a read that would go live the day something called
+it is not inventory), and the loader is declared item 12 on the Todo with
+this evidence: it resolves EMPTY client-side and issues no request, and a
+pass still SETTLES, because the contributed-route splat item 5 keeps waits
+on that flag and would render nothing forever without it. Unmounting the
+bridge from item 8 instead would have been the smaller diff and the wrong
+one.
+
+What this taught the repo test: a grep over adapted files proves what the
+diff sends, not what the page sends. The test now pins the three mounted
+requesters as adapted rows, so a map edit cannot move a live requester back
+into the carried list; the carried list itself is 33 verbatim files, and
+the claim about them is the narrow one — a call on one answers the SPA
+document — with the browser transcript, the verifier's proof 7, as the
+proof that no mounted page makes such a call.
+
 ## What this packet does NOT do
 
 The live half (UI-3), moments (UI-2), the service worker (plan §8,
