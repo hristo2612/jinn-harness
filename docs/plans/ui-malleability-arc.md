@@ -441,8 +441,10 @@ silent replacement: a bundle swap is a restart), R11 (a bad bundle fails the
 transport's activation, nothing else), R12 (additive contract, 0.x minor),
 Laws 1, 2, 5 · **LOC ceiling (card-authoritative, binding):** production Rust net delta
 **≤ 800** across `plugins/ui/`, `plugins/api/jinn-api-http/src`,
-`tools/ui-kit`. The harness has no loc-meter, so the meter is declared here:
-`git diff --numstat main -- 'plugins/ui/**/*.rs' 'plugins/api/jinn-api-http/src/*.rs' 'tools/ui-kit/**/*.rs'`,
+`plugins/api/jinn-api-http-wire/src` (added by §8 amendment 3 so the
+framing rows the packet adds are billed, not excluded), `tools/ui-kit`. The
+harness has no loc-meter, so the meter is declared here:
+`git diff --numstat main -- 'plugins/ui/**/*.rs' 'plugins/api/jinn-api-http/src/*.rs' 'plugins/api/jinn-api-http-wire/src/*.rs' 'tools/ui-kit/**/*.rs'`,
 added minus deleted, summed over every file that is not under a `tests/`
 directory and not named `tests.rs`; a `#[cfg(test)]` module inside a
 production file is a declared category - the PR lists each such module with
@@ -536,6 +538,16 @@ The ENUMERATED adaptations, and only these, are the diff:
    (their consumers are not in scope); `@jinn/plugin-sdk` stays an alias.
 7. `index.html`: unchanged, including the `crypto.randomUUID` polyfill and
    the blocking theme script (inventory §2.13 item 1, §2.17).
+8. `routes/client-providers.tsx` (shell): the two Talk mounts
+   (`TalkOrbOverlay`, `TalkContextBridge`) and their imports are REMOVED and
+   nothing else changes - §7 forbids porting Talk and inventory §1.2 puts
+   `components/talk` out of scope, so a verbatim port of this file would
+   pull ~10.5k lines the card excludes. Ruled an adaptation on 2026-09-02
+   (§8 amendment 3); proof 6 asserts a NON-EMPTY diff for it. The two
+   zero-import leaves `@jinn/model-id` and `@jinn/fallback-map-wire` that
+   `settings/engines/*` imports are ported VERBATIM from
+   `packages/jinn/src/shared/` through the pinned map; they are not
+   adaptations and the gate asserts an EMPTY diff against their source paths.
 
 Everything else is `git diff 43e8647 -- packages/web/<path>` empty, file by
 file, and the acceptance below asserts it.
@@ -597,7 +609,7 @@ transport that does not serve:
 6. `the_view_layer_is_verbatim` - not a daemon proof: a repo test that runs
    `git diff --stat 43e8647 -- packages/web/<f>` for every ported file
    against `web/<f>` through a pinned mapping and asserts an EMPTY diff for
-   every file not on the seven-item adaptation list, and a non-empty one
+   every file not on the §4.2 adaptation list (items 1-8), and a non-empty one
    for every file on it (the gate has to be able to fail in both
    directions).
 7. Browser-level, driven by the INDEPENDENT VERIFIER with `agent-browser`
@@ -1015,6 +1027,19 @@ declared. Dispatch of UI-1 waits for the 2026-09-04 audit.
    **Ruled: carded NOW as jinnd M2-K23 `jinn:profile-admin` (PLA-348,
    backlog)**, sequenced after the 2026-09-04 audit on the kernel lane; UI-1
    does not wait for it.
+
+### Amendments after dispatch
+
+- **Amendment 3 (COO, 2026-09-02, UI-1 build round 1).** Raised by the build
+  before any edit: `routes/client-providers.tsx` is on the shell's port
+  closure but mounts Talk, which §7 excludes. Ruled: the file is the EIGHTH
+  adaptation (§4.2 item 8) - the two Talk mounts removed, nothing else -
+  and proof 6 asserts a non-empty diff for it. The `@jinn/model-id` and
+  `@jinn/fallback-map-wire` leaves port verbatim through the map (empty
+  diff). The meter's path list gains `plugins/api/jinn-api-http-wire/src`
+  so the packet's framing rows are billed against the same ≤ 800 ceiling
+  rather than declared beside it; the ceiling does not move. The build's
+  ~650 (+~40 wire) is an ESTIMATE, not a ceiling.
 
 
 
