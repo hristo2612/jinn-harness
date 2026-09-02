@@ -129,17 +129,26 @@ written without a check cannot dispatch on this daemon's behalf.
 ## The mutation, recorded
 
 Acceptance (4) asks that removing or reordering the `verify` call FAILS
-the suite. Both were driven, in the worktree, after the suite was green
-at the packet's head; the exact commands and the verbatim failing tails
-are on PLA-343. What each showed, in one line each:
+the suite. Both were driven in the worktree after the suite was green at
+the packet's head, with `cargo test -p composition --test auth` against
+the pinned daemon; the exact edits and the verbatim failing lines are on
+PLA-343. What each showed:
 
-- **Removed** (`admit` answers `Ok(())` without calling the kernel): the
-  no-credential and wrong-credential requests answer 200, and the suite
-  fails first on the status, then — had the status matched — on the
-  missing `AuthDecided` rows.
-- **Reordered** (`dispatch` before `admit`): the refused requests carry a
-  consumer crossing in their segment, and the suite fails on "exactly one
-  crossing: … and it is the verify".
+- **Removed** (`admit` in `plugins/api/jinn-api-http/src/door.rs` returns
+  `Ok(())` before calling the kernel): all three proofs fail. The
+  no-credential, wrong-credential and rotated-away requests answer
+  `200 OK` where `401` is asserted, and the granted proof finds zero
+  `AuthDecided` rows where it expects three.
+- **Reordered** (`serve` in `src/lib.rs` issues `dispatch` before
+  `door::admit`): two proofs fail and one passes, and the one that passes
+  is the point. The granted proof fails on the ORDER — `verify (103) <
+  decided (104) < dispatch (95)` is false on the record — and the refused
+  proof fails on "nothing but the connection and the door", because the
+  refused connection's segment now carries a consumer crossing. The
+  rotation proof still passes: a reordered door still answers 401 to a
+  wrong credential, so a proof that read only statuses would have called
+  this transport correct. The ledger is what catches a door that refuses
+  after the damage is done.
 
 Neither mutation is a permanent test. A guest is rebuilt by its kit at the
 start of every composition run, so a mutation test would have to compile
