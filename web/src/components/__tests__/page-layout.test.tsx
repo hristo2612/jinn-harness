@@ -116,37 +116,8 @@ describe("PageLayout deferred shell widgets", () => {
       vi.useRealTimers()
     }
   })
-
-  it("imports onboarding only when the gateway says onboarding is needed", async () => {
-    getOnboarding.mockResolvedValue({ onboarded: false, needed: true })
-
-    renderLayout()
-
-    await waitFor(() => expect(getOnboarding).toHaveBeenCalledTimes(1))
-    const wizard = await screen.findByTestId("onboarding-wizard")
-    expect(wizard.getAttribute("data-initial-visible")).toBe("true")
-  })
-
-  it("honors a fresh-workspace onboarding launch even if this origin has stale local state", async () => {
-    localStorage.setItem("jinn-onboarded", "true")
-    window.history.replaceState(null, "", "/?onboarding=1")
-    getOnboarding.mockResolvedValue({ onboarded: false, needed: true })
-
-    renderLayout()
-
-    await waitFor(() => expect(getOnboarding).toHaveBeenCalledTimes(1))
-    expect(await screen.findByTestId("onboarding-wizard")).toBeTruthy()
-  })
-
-  it("does not import onboarding when the gateway is already onboarded", async () => {
-    getOnboarding.mockResolvedValue({ onboarded: true, needed: false })
-
-    renderLayout()
-
-    await waitFor(() => expect(getOnboarding).toHaveBeenCalledTimes(1))
-    expect(screen.queryByTestId("onboarding-wizard")).toBeNull()
-    await waitFor(() => expect(localStorage.getItem("jinn-onboarded")).toBe("true"))
-  })
+  // UI-1 §4.2 item 9: the onboarding mount is gone from the shell, and the
+  // three tests of that mount went with it; the six above are verbatim.
 })
 
 describe("PageLayout edge-back arming", () => {

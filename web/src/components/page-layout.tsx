@@ -5,17 +5,14 @@ import { StatusBar } from "./status-bar"
 import { EdgeBackLayer } from "./edge-back/edge-back-layer"
 import { useCoarsePointer } from "./edge-back/use-edge-back-gesture"
 import { cn } from "@/lib/utils"
-import { useOnboarding } from "@/hooks/use-onboarding"
 import { runAfterLoad, useLoadDeferredMount } from "@/hooks/use-idle-mount"
 import { SearchOverlayProvider, useSearchOverlay } from "./search-overlay-context"
 
 const loadGlobalSearch = () => import("./global-search")
 const loadLiveStreamWidget = () => import("./live-stream-widget")
-const loadOnboardingWizard = () => import("./onboarding-wizard")
 
 const GlobalSearch = lazy(() => loadGlobalSearch().then(m => ({ default: m.GlobalSearch })))
 const LiveStreamWidget = lazy(() => loadLiveStreamWidget().then(m => ({ default: m.LiveStreamWidget })))
-const OnboardingWizard = lazy(() => loadOnboardingWizard().then(m => ({ default: m.OnboardingWizard })))
 
 function isCommandPaletteShortcut(e: KeyboardEvent): boolean {
   return (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k"
@@ -69,36 +66,6 @@ function DeferredLiveStreamWidget() {
   return (
     <Suspense fallback={null}>
       <LiveStreamWidget />
-    </Suspense>
-  )
-}
-
-function DeferredOnboardingWizard() {
-  // Consumes the SAME shared onboarding query as SettingsProvider, so a clean
-  // load only fetches /api/onboarding once. The localStorage short-circuit keeps
-  // the query disabled for already-onboarded users (no request at all).
-  const forceFreshWorkspaceOnboarding = typeof window !== "undefined"
-    && new URLSearchParams(window.location.search).get("onboarding") === "1"
-  const onboardedLocally = typeof window !== "undefined"
-    && !!localStorage.getItem("jinn-onboarded")
-    && !forceFreshWorkspaceOnboarding
-  const { data, isError } = useOnboarding({ enabled: !onboardedLocally })
-
-  useEffect(() => {
-    if (data?.onboarded && typeof window !== "undefined") {
-      localStorage.setItem("jinn-onboarded", "true")
-    }
-  }, [data?.onboarded])
-
-  if (onboardedLocally) return null
-  // Fall back to "needed" on error so a failed fetch still surfaces onboarding
-  // (matches the previous best-effort behavior).
-  const needed = data ? data.needed : isError
-  if (!needed) return null
-
-  return (
-    <Suspense fallback={null}>
-      <OnboardingWizard initialVisible />
     </Suspense>
   )
 }
@@ -174,7 +141,8 @@ export function PageLayout({ children, chromeless, hideMobileTabBar }: { childre
           {!chromeless && !hideMobileTabBar && <MobileTabBar />}
         </main>
         <DeferredLiveStreamWidget />
-        <DeferredOnboardingWizard />
+        {/* The onboarding wizard is not mounted: UI-1 §4.2 item 9 removes the mount
+            and synthesises the onboarding state complete client-side. */}
       </div>
     </SearchOverlayProvider>
   )

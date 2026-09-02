@@ -151,7 +151,7 @@ export async function pairBrowser(secret: string, _mode: "code" | "token" = "tok
 }
 
 export async function createPairingCode(): Promise<PairingCode> {
-  throw noCounterpart("/api/auth/pairing-codes")
+  throw noCounterpart("the old gateway's auth/pairing-codes route")
 }
 
 export async function listPairedDevices(): Promise<PairedDevice[]> {
@@ -159,7 +159,7 @@ export async function listPairedDevices(): Promise<PairedDevice[]> {
 }
 
 export async function unpairDevice(deviceId: string): Promise<void> {
-  throw noCounterpart(`/api/auth/devices/${encodeURIComponent(deviceId)}`)
+  throw noCounterpart(`the old gateway's auth/devices/${encodeURIComponent(deviceId)} route`)
 }
 
 export async function logoutBrowser(): Promise<void> {

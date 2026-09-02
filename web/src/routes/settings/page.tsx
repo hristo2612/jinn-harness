@@ -6,7 +6,6 @@ import { LargeTitleHeader } from "@/components/shell/large-title-header"
 import { PageScaffold } from "@/components/shell/page-scaffold"
 import { useSettings } from "@/routes/settings-provider"
 import { api } from "@/lib/api"
-import { authFetch } from "@/lib/auth"
 import { useModelRegistry } from "@/hooks/use-model-registry"
 import { useOnboarding } from "@/hooks/use-onboarding"
 import { cn } from "@/lib/utils"
@@ -21,9 +20,11 @@ import { ACCENT_PRESETS, ThemePicker, TextSizePicker } from "./appearance-picker
 import { OperatorEmojiRow, PortalEmojiRow } from "./emoji-rows"
 import { ConfigConflictNotice } from "./config-conflict-notice"
 import { ConfigSaveStatus } from "./config-save-status"
+import { DeclaredSettings } from "./declared-settings"
 import { PluginsEntry } from "./plugins/entry"
 import { EnginesSection } from "./engines/entry"
 import type { Config } from "./config-shape"
+import type { DeclaredNamespace } from "@/lib/api-config"
 import { configSaveBlocker } from "./engines/model-map-model"
 import { SttSettingsSection } from "./stt-section"
 import { VoiceSection } from "./voice-section"
@@ -39,6 +40,19 @@ import {
   SettingsSelect,
   ToggleSwitch,
 } from "./shared"
+
+/** UI-1 §4.2 item 1, §8 amendment 4: the config.yaml-shaped sections below and
+ *  the seam key each one needs declared to stay on the page. */
+const PORTED_SECTIONS: ReadonlyArray<readonly [title: string, namespace: string, key: string]> = [
+  ["Gateway Configuration", "gateway", "port"],
+  ["Engine Configuration", "engines", "claude"],
+  ["Engine Fallbacks", "engines", "default"],
+  ["Sessions", "sessions", "interruptOnNewMessage"],
+  ["Connectors", "connectors", "slack"],
+  ["Cron", "cron", "defaultDelivery"],
+  ["Logging", "logging", "level"],
+  ["Voice", "realtime", "provider"],
+]
 
 
 
@@ -90,6 +104,9 @@ export default function SettingsPage() {
 
   // Gateway config state
   const [config, setConfig] = useState<Config>({})
+  /** The namespace schemas the settings seam declared; absent when the adapter
+   *  did not say, and then the page renders as ported (UI-1 §4.2 item 1). */
+  const [declared, setDeclared] = useState<Record<string, DeclaredNamespace> | undefined>(undefined)
   /** The document the next write is built from. Held beside the state because two
    *  edits in one tick both have to reach the writer, not just the last render. */
   const configRef = useRef<Config>({})
@@ -140,10 +157,11 @@ export default function SettingsPage() {
     setConfigLoading(true)
     api
       .getConfig()
-      .then(({ config: loaded, revision }) => {
+      .then(({ config: loaded, revision, declared: schemas }) => {
         configRef.current = loaded as Config
         setConfig(loaded as Config)
         adoptRevision(revision)
+        setDeclared(schemas)
         // Reloading is the way out of a conflict, so it is also what clears it.
         setConflict(null)
         setCompanyPrefixValue((loaded as Config).portal?.companyPrefix ?? "")
@@ -164,14 +182,12 @@ export default function SettingsPage() {
 
     async function checkQr() {
       try {
-        const statusRes = await authFetch("/api/status")
-        const status = await statusRes.json()
+        const status = (await api.getStatus()) as { connectors?: { whatsapp?: { status?: string } } }
         const connStatus = status?.connectors?.whatsapp?.status
         if (!cancelled) setWaStatus(connStatus ?? "unknown")
 
         if (connStatus === "qr_pending") {
-          const qrRes = await authFetch("/api/connectors/whatsapp/qr")
-          const data = await qrRes.json()
+          const data = await api.getWhatsAppQr()
           if (!cancelled) setWaQr(data.qr)
         } else {
           if (!cancelled) setWaQr(null)
@@ -211,6 +227,13 @@ export default function SettingsPage() {
       return next
     })
   }
+
+  /** Whether a config.yaml-shaped section stays: only when the seam declares
+   *  the namespace key it edits (UI-1 §4.2 item 1, §8 amendment 4). */
+  function shows(namespace: string, key: string): boolean {
+    return !declared || (declared[namespace]?.additional ?? false) || key in (declared[namespace]?.properties ?? {})
+  }
+  const hiddenSections = PORTED_SECTIONS.filter(([, namespace, key]) => !shows(namespace, key)).map(([title]) => title)
 
   const claudeRegistryModels = modelRegistry?.engines?.claude?.models ?? []
   const hiddenClaudeIds = config.models?.claude?.hidden ?? []
@@ -522,7 +545,16 @@ export default function SettingsPage() {
             </div>
           ) : (
             <>
+              {declared && (
+                <DeclaredSettings config={config} declared={declared} onChange={updateConfig} />
+              )}
+              {declared && hiddenSections.length > 0 && (
+                <p className="mb-7 px-[var(--space-3)] text-[length:var(--text-footnote)] text-[var(--text-tertiary)]">
+                  Hidden: {hiddenSections.join(", ")} are not declared by this profile's settings seam (UI-1 §4.2 item 1, §8 amendment 4).
+                </p>
+              )}
               {/* -- Section 3: Gateway Configuration -- */}
+              {shows("gateway", "port") && (
               <Section title="Gateway Configuration">
                 <FieldRow label="Port">
                   <SettingsInput
@@ -549,8 +581,10 @@ export default function SettingsPage() {
                   />
                 </FieldRow>
               </Section>
+              )}
 
               {/* -- Section 4: Engine Configuration -- */}
+              {shows("engines", "claude") && (
               <Section title="Engine Configuration">
                 <div
                   className="text-[length:var(--text-caption1)] font-[var(--weight-semibold)] text-[var(--text-tertiary)] mb-[var(--space-2)]"
@@ -776,15 +810,19 @@ export default function SettingsPage() {
                   />
                 </FieldRow>
               </Section>
+              )}
 
               {/* -- Section 4b: Engine Fallbacks — health and fallback chains -- */}
+              {shows("engines", "default") && (
               <EnginesSection
                 engines={config.engines}
                 sessions={config.sessions}
                 onChange={updateConfig}
               />
+              )}
 
               {/* -- Section 5: Sessions -- */}
+              {shows("sessions", "interruptOnNewMessage") && (
               <Section title="Sessions">
                 <FieldRow label="Suggest Fresh Chats">
                   <ToggleSwitch
@@ -845,8 +883,10 @@ export default function SettingsPage() {
                 </div>
 
               </Section>
+              )}
 
               {/* -- Section 6: Connectors -- */}
+              {shows("connectors", "slack") && (
               <Section title="Connectors">
                 <div
                   className="text-[length:var(--text-caption1)] font-[var(--weight-semibold)] text-[var(--text-tertiary)] mb-[var(--space-2)]"
@@ -1285,8 +1325,10 @@ export default function SettingsPage() {
                   Web conversations use queued one-shot resume flow for both engines.
                 </div>
               </Section>
+              )}
 
               {/* -- Section 6: Cron -- */}
+              {shows("cron", "defaultDelivery") && (
               <Section title="Cron">
                 <div
                   className="text-[length:var(--text-caption1)] font-[var(--weight-semibold)] text-[var(--text-tertiary)] mb-[var(--space-2)]"
@@ -1323,8 +1365,10 @@ export default function SettingsPage() {
                   </FieldRow>
                 )}
               </Section>
+              )}
 
               {/* -- Section 7: Logging -- */}
+              {shows("logging", "level") && (
               <Section title="Logging">
                 <FieldRow label="Level">
                   <SettingsSelect
@@ -1351,8 +1395,10 @@ export default function SettingsPage() {
                   />
                 </FieldRow>
               </Section>
+              )}
 
               {/* -- Section 8: Voice (realtime, speech-to-speech) -- */}
+              {shows("realtime", "provider") && (
               <VoiceSection
                 provider={config.realtime?.provider ?? ""}
                 apiKey={config.realtime?.apiKey ?? ""}
@@ -1364,6 +1410,7 @@ export default function SettingsPage() {
                 onChange={updateConfig}
                 talkOrbOn={settings.talkOrb}
               />
+              )}
 
               {/* -- Section 9: Voice Input (STT) -- */}
               <SttSettingsSection />

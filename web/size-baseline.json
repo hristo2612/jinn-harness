@@ -44,15 +44,6 @@
         "max-lines-per-function"
       ]
     },
-    "src/components/onboarding-wizard.tsx": {
-      "lines": 780,
-      "exempt": [
-        "@typescript-eslint/no-floating-promises",
-        "complexity",
-        "max-depth",
-        "max-lines-per-function"
-      ]
-    },
     "src/components/pill-nav.tsx": {
       "exempt": [
         "max-lines-per-function"
@@ -99,7 +90,7 @@
       ]
     },
     "src/lib/api.ts": {
-      "lines": 1071,
+      "lines": 1072,
       "exempt": [
         "complexity"
       ]
@@ -128,7 +119,7 @@
       ]
     },
     "src/routes/settings/page.tsx": {
-      "lines": 1427,
+      "lines": 1474,
       "exempt": [
         "complexity",
         "max-lines-per-function"

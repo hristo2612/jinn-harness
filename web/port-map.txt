@@ -48,8 +48,7 @@ verbatim	packages/web/src/components/global-search/use-todo-workbench.ts	src/com
 verbatim	packages/web/src/components/global-search/verbs.ts	src/components/global-search/verbs.ts
 verbatim	packages/web/src/components/global-search/workbench.tsx	src/components/global-search/workbench.tsx
 verbatim	packages/web/src/components/live-stream-widget.tsx	src/components/live-stream-widget.tsx
-verbatim	packages/web/src/components/onboarding-wizard.tsx	src/components/onboarding-wizard.tsx
-verbatim	packages/web/src/components/page-layout.tsx	src/components/page-layout.tsx
+adapted	packages/web/src/components/page-layout.tsx	src/components/page-layout.tsx	9
 verbatim	packages/web/src/components/pill-nav.tsx	src/components/pill-nav.tsx
 verbatim	packages/web/src/components/route-loading.tsx	src/components/route-loading.tsx
 verbatim	packages/web/src/components/search-overlay-context.tsx	src/components/search-overlay-context.tsx
@@ -200,6 +199,7 @@ verbatim	packages/web/src/routes/settings/appearance-pickers.tsx	src/routes/sett
 verbatim	packages/web/src/routes/settings/config-conflict-notice.tsx	src/routes/settings/config-conflict-notice.tsx
 verbatim	packages/web/src/routes/settings/config-save-status.tsx	src/routes/settings/config-save-status.tsx
 verbatim	packages/web/src/routes/settings/config-shape.ts	src/routes/settings/config-shape.ts
+new	-	src/routes/settings/declared-settings.tsx	1
 verbatim	packages/web/src/routes/settings/emoji-rows.tsx	src/routes/settings/emoji-rows.tsx
 verbatim	packages/web/src/routes/settings/engines/chain-editor.tsx	src/routes/settings/engines/chain-editor.tsx
 verbatim	packages/web/src/routes/settings/engines/chain-model.ts	src/routes/settings/engines/chain-model.ts
@@ -209,7 +209,7 @@ verbatim	packages/web/src/routes/settings/engines/legacy-row.tsx	src/routes/sett
 verbatim	packages/web/src/routes/settings/engines/model-map-editor.tsx	src/routes/settings/engines/model-map-editor.tsx
 verbatim	packages/web/src/routes/settings/engines/model-map-model.ts	src/routes/settings/engines/model-map-model.ts
 verbatim	packages/web/src/routes/settings/engines/use-chain-drag.ts	src/routes/settings/engines/use-chain-drag.ts
-verbatim	packages/web/src/routes/settings/page.tsx	src/routes/settings/page.tsx
+adapted	packages/web/src/routes/settings/page.tsx	src/routes/settings/page.tsx	1
 verbatim	packages/web/src/routes/settings/pairing-section.tsx	src/routes/settings/pairing-section.tsx
 verbatim	packages/web/src/routes/settings/plugins/entry.tsx	src/routes/settings/plugins/entry.tsx
 verbatim	packages/web/src/routes/settings/plugins/inventory.ts	src/routes/settings/plugins/inventory.ts
@@ -260,8 +260,7 @@ verbatim	packages/web/src/test/virtual-layout.ts	src/test/virtual-layout.ts
 # --- the tests whose subject is on the map and whose import closure resolves
 # --- inside web/ (the harnesses and fixtures they share included), verbatim
 verbatim	packages/web/src/components/__tests__/nav-ribbon.test.tsx	src/components/__tests__/nav-ribbon.test.tsx
-verbatim	packages/web/src/components/__tests__/onboarding-wizard.test.tsx	src/components/__tests__/onboarding-wizard.test.tsx
-verbatim	packages/web/src/components/__tests__/page-layout.test.tsx	src/components/__tests__/page-layout.test.tsx
+adapted	packages/web/src/components/__tests__/page-layout.test.tsx	src/components/__tests__/page-layout.test.tsx	9
 verbatim	packages/web/src/components/__tests__/pill-nav.test.ts	src/components/__tests__/pill-nav.test.ts
 verbatim	packages/web/src/components/__tests__/route-loading.test.tsx	src/components/__tests__/route-loading.test.tsx
 verbatim	packages/web/src/components/__tests__/status-bar.test.tsx	src/components/__tests__/status-bar.test.tsx
@@ -348,6 +347,7 @@ verbatim	packages/web/src/plugins/sdk/__tests__/runtime.test.ts	src/plugins/sdk/
 verbatim	packages/web/src/routes/__tests__/contributed-route.test.tsx	src/routes/__tests__/contributed-route.test.tsx
 verbatim	packages/web/src/routes/__tests__/settings-provider-operator-emoji.test.tsx	src/routes/__tests__/settings-provider-operator-emoji.test.tsx
 verbatim	packages/web/src/routes/settings/__tests__/config-conflict.test.tsx	src/routes/settings/__tests__/config-conflict.test.tsx
+new	-	src/routes/settings/__tests__/declared-settings.test.tsx	1
 verbatim	packages/web/src/routes/settings/__tests__/instant-apply.test.tsx	src/routes/settings/__tests__/instant-apply.test.tsx
 verbatim	packages/web/src/routes/settings/__tests__/operator-emoji-row.test.tsx	src/routes/settings/__tests__/operator-emoji-row.test.tsx
 verbatim	packages/web/src/routes/settings/__tests__/orb-variant-persistence.test.tsx	src/routes/settings/__tests__/orb-variant-persistence.test.tsx

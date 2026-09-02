@@ -68,7 +68,7 @@ export interface PluginHistoryWire {
   qualifier?: string
 }
 
-/* ── the `@jinn/workflow-wire` stand-ins ─────────────────────────────────── */
+/* The `@jinn/workflow-wire` stand-ins. */
 type WorkflowWireObject = Record<string, unknown>
 export type WorkflowBindingWire = WorkflowWireObject
 export type WorkflowPredicateWire = WorkflowWireObject

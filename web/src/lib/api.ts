@@ -342,10 +342,10 @@ export interface PinsResponse {
   pins: ChatPin[]
 }
 
-// --- Model + capability registry (GET /api/engines) ---
+// Model and capability registry (GET /api/engines).
 export type { EngineHealth, EngineRegistryEntry, EnginesResponse, ModelInfo } from "./engine-registry";
 
-// --- Engine quota/limit snapshots (GET /api/engine-limits) ---
+// Engine quota and limit snapshots (GET /api/engine-limits).
 export interface EngineLimitWindow {
   name: string;
   usedPercent?: number;
@@ -409,9 +409,8 @@ export interface EngineLimitsResponse {
   engines: Record<string, EngineLimitEngineSnapshot>;
 }
 
-/* ── Workflow wire types ──────────────────────────────────────────────────
- * Re-exported so the workflow surfaces keep importing their types from one
- * place; the /v1 wire shapes the UI-1 adapters read ride along. */
+/* Workflow wire types, re-exported so the workflow surfaces keep importing
+ * their types from one place; the /v1 wire shapes the UI-1 adapters read ride along. */
 export type * from "@/lib/api-v1-wire"
 
 /** A workflow API error carrying structured validation issues. Not only a 422:
@@ -690,6 +689,7 @@ export const api = {
   getFeatures: () => get<{ notesEnabled: boolean; staleChat: StaleChatPolicy }>("/api/features"),
   /** `GET /v1/status`: the daemon's status report (UI-1 item 1). */
   getStatus: () => get<Record<string, unknown>>("/v1/status"),
+  getWhatsAppQr: () => get<{ qr: string | null }>("/api/connectors/whatsapp/qr"), // no /v1 counterpart: get() throws no-counterpart (UI-1 item 1)
   /** `GET /v1/health`: 200 is the daemon's own word that it is serving. */
   getHealth: () => get<Record<string, unknown>>("/v1/health"),
   /** `GET /v1/plugins/{catalog}`: the catalog's listing, lifecycle readings inline. */
@@ -832,10 +832,11 @@ export const api = {
     post<{ started: string[]; stopped: string[]; errors: string[] }>("/api/connectors/reload", {}),
   getLogs: (n?: number) =>
     get<{ lines: string[] }>(`/api/logs${n ? `?n=${n}` : ""}`),
-  getOnboarding: () =>
-    get<{ needed: boolean; onboarded: boolean; sessionsCount: number; hasEmployees: boolean; companyName: string | null; companyPrefix: string | null; todoPrefix: string | null; todoPrefixFrozen: boolean; portalName: string | null; operatorName: string | null; operatorEmoji: string | null }>("/api/onboarding"),
-  completeOnboarding: (data: { companyName?: string; companyPrefix?: string | null; portalName?: string; operatorName?: string; operatorEmoji?: string; language?: string; engine?: string; model?: string; effortLevel?: string }) =>
-    post<{ status: string; portal: { companyName?: string; companyPrefix?: string; portalName?: string; operatorName?: string; operatorEmoji?: string; language?: string } }>("/api/onboarding", data),
+  // UI-1 §4.2 item 9: onboarding state is synthesised complete client-side; the old /api/onboarding route does not exist on the daemon.
+  getOnboarding: (): Promise<{ needed: boolean; onboarded: boolean; sessionsCount: number; hasEmployees: boolean; companyName: string | null; companyPrefix: string | null; todoPrefix: string | null; todoPrefixFrozen: boolean; portalName: string | null; operatorName: string | null; operatorEmoji: string | null }> =>
+    Promise.resolve({ needed: false, onboarded: true, sessionsCount: 0, hasEmployees: false, companyName: null, companyPrefix: null, todoPrefix: null, todoPrefixFrozen: false, portalName: null, operatorName: null, operatorEmoji: null }),
+  completeOnboarding: (data: { companyName?: string; companyPrefix?: string | null; portalName?: string; operatorName?: string; operatorEmoji?: string; language?: string; engine?: string; model?: string; effortLevel?: string }): Promise<{ status: string; portal: { companyName?: string; companyPrefix?: string; portalName?: string; operatorName?: string; operatorEmoji?: string; language?: string } }> =>
+    Promise.resolve({ status: "synthesised", portal: { ...data, companyPrefix: data.companyPrefix ?? undefined } }),
   ...createSttApi({ get, post, put, authFetch }),
   ...createTodoCaptureApi({ get, post }),
   getSessionQueue: (id: string) => get<QueueItem[]>(`/api/sessions/${id}/queue`),
@@ -848,7 +849,7 @@ export const api = {
   getSessionTranscript: (id: string) =>
     get<TranscriptEntry[]>(`/api/sessions/${id}/transcript`),
 
-  // ── Work items (Todos) ──────────────────────────────────────────────────
+  // Work items (Todos).
   /** GRS-021c: compact Todo list, optionally filtered by status. The gateway
    *  caps `limit` at 20, so the board fetches one call per display status.
    *  `source`, `since`/`until`, `q`, and `offset` follow design-todos §7.1–2;
