@@ -21,11 +21,13 @@ plist="$HOME/Library/LaunchAgents/$label.plist"
 
 mkdir -p "$SOAK/bin" "$SOAK/logs" "$SOAK/run" "$HOME/Library/LaunchAgents"
 install -m 0755 "$here/soak-run.sh" "$SOAK/bin/soak-run.sh"
+install -m 0755 "$here/provision-token.sh" "$SOAK/bin/provision-token.sh"
 sed "s#__SOAK__#$SOAK#g" "$here/$label.plist.template" >"$plist.tmp"
 plutil -lint "$plist.tmp" >/dev/null
 mv "$plist.tmp" "$plist"
 
 echo "installed: $SOAK/bin/soak-run.sh"
+echo "installed: $SOAK/bin/provision-token.sh"
 echo "installed: $plist"
 echo
 echo "NOT loaded. To adopt the soak under it, follow SOAK.md §Supervisor:"

@@ -59,7 +59,10 @@ same adoption, is the same class in the contract index. That bump is
 also the first at which `jinn:introspect` PARSES as WIT (0.5.0), so the
 harness's hand-mirrored copies of its shapes are now checked against the
 parsed file rather than by eye
-(`docs/notes/2026-09-02-a-mirror-is-checked-by-a-parser.md`).
+(`docs/notes/2026-09-02-a-mirror-is-checked-by-a-parser.md`). Packet
+2.8 (the door, `jinn:auth` consumed at the HTTP provider) opened NO
+entry: the contract was sufficient at the door as written, and what held
+is recorded in the section at the bottom.
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -1153,6 +1156,20 @@ contracts); the refusal is pinned by the settings composition suite
 - **Guest provisions and every broker crossing recorded:** the fire-run
   ledger is a complete causal story, emits included since the
   `DispatchTrace` tap landed (finding 2).
+- **`jinn:auth` 0.1.0 was sufficient at the door, as written (packet
+  2.8):** one `verify` reached over `services.resolve` + `services.call`
+  like any contract, its tag+UTF-8 wire decoded in a dozen lines, a bare
+  grant admitting it (the bundle declares no scope) and a missing grant
+  refused at admission; the credential re-read on every call so rotation
+  and revocation bit on the very next request under a running daemon
+  with no fiber transition on the record; one `AuthDecided` row per
+  decision under the CALLING entry, carrying the digest and never the
+  bytes, including for the empty presentation; and the refusal reason
+  naming which precondition failed, so a mismatch and an absent file are
+  told apart on the wire without either carrying a credential
+  (composition: `tests/composition/tests/auth.rs`, all three proofs).
+  Nothing the transport needed was missing, and nothing had to be
+  worked around.
 
 ## 29. A contract has one provider slot and no notion of an instance — N engines coexisting means N contract names
 

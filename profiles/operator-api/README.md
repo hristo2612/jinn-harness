@@ -11,7 +11,10 @@ missing-dependency and the entry layer is the whole truth),
 it may patch: every namespace owner and the store) and
 `jinn-settings-store` (granted only what it provides; its
 `config.data.overlays` is the hot layer's home), plus `jinn-api-http` (granted `jinn:net`
-scoped to exactly its port, `jinn:clock`, and both api contracts),
+scoped to exactly its port, both api contracts, the settings contract,
+and `jinn:auth` — the door: every request is put to the kernel's
+`verify` before it dispatches, packet 2.8; the bundle declares no scope,
+so the grant is bare),
 `jinn-status` (granted `jinn:api-status`, `jinn:cron` for its probe, the
 read-only kernel contracts, and `jinn:profile` over every entry
 attenuated to `ops: ["entry", "document"]` — a viewer that cannot patch)
@@ -42,9 +45,12 @@ answers). With
 `--data <root>` the cron seam's files land at `<root>/cron/` and
 `<root>/health/`, the kernel's inverse-retention store at
 `<root>.inverses/` (a sibling of the root, the kernel's `<data>.inverses`
-rule), and the daemon watches `<root>` for the profile and
-`<root>/artifacts` for swaps — nothing else under the root is classified
-by the watcher.
+rule), the `jinn:auth` credential of record at `<root>.operator-token`
+(the same sibling rule; the launcher writes it, mode 0600, and the daemon
+only reads it — the composition rig provisions it in `Daemon::spawn`, the
+soak's wrapper in `tools/soak/provision-token.sh`), and the daemon watches
+`<root>` for the profile and `<root>/artifacts` for swaps — nothing else
+under the root is classified by the watcher.
 
 Authority over the document is exactly as wide as its use: a grant carries
 an operation class since pin `3fd7b05`, so the status consumer's
@@ -55,5 +61,10 @@ editor's write is no longer a fiber effect (#21 closed): disposing
 the editor leaves the document exactly as patched.
 
 The API serves the harness's own composition only — loopback, one port,
-no production routing (AGENTS.md cutover rule). The real-composition
-proofs for this tree live in `tests/composition/tests/api.rs`.
+no production routing (AGENTS.md cutover rule) — and, since packet 2.8,
+only the operator: a request presents the credential as
+`Authorization: Bearer <value>` or is answered a typed 401
+(`docs/notes/2026-09-02-the-door-presents-what-it-was-given.md`). The
+real-composition proofs for this tree live in
+`tests/composition/tests/api.rs`; the door's in
+`tests/composition/tests/auth.rs`.

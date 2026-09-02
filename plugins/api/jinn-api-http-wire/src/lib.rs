@@ -1,7 +1,8 @@
 //! Minimal HTTP/1.1 for the operator API's loopback provider: parse one
 //! request out of a growing byte buffer (headers + `Content-Length` body,
-//! bounded), frame one JSON response, map the seam's typed error codes to
-//! status codes. No chunked encoding, no keep-alive (every response
+//! bounded), read the credential it presents (`Authorization: Bearer`),
+//! frame one JSON response, map the seam's typed error codes to status
+//! codes. No chunked encoding, no keep-alive (every response
 //! closes), no percent-decoding beyond what an operator path needs —
 //! R10-sized on purpose: this is the whole transport.
 
@@ -23,6 +24,15 @@ pub struct Request {
     pub body: Vec<u8>,
     /// Bytes of the buffer this request consumed.
     pub consumed: usize,
+    /// The credential the connection PRESENTED: the token of an
+    /// `Authorization: Bearer <token>` header (RFC 6750; scheme
+    /// case-insensitive, value trimmed), or `None` when the request
+    /// carries none. Nothing else on a request is a credential — not a
+    /// query parameter (URLs land in logs and shell history), not a
+    /// cookie (a session is not an identity here), not another scheme
+    /// (a username would imply accounts). The door presents exactly
+    /// this to `jinn:auth`, and presents NOTHING when it is `None`.
+    pub bearer: Option<String>,
 }
 
 impl Request {
@@ -102,10 +112,14 @@ pub fn parse(buffer: &[u8]) -> Parse {
         return invalid(400, "unsupported HTTP version");
     }
     let mut content_length = 0usize;
+    let mut bearer = None;
     for line in lines {
         let Some((name, value)) = line.split_once(':') else {
             return invalid(400, "malformed header line");
         };
+        if name.trim().eq_ignore_ascii_case("authorization") {
+            bearer = bearer_token(value);
+        }
         if name.trim().eq_ignore_ascii_case("content-length") {
             match value.trim().parse::<usize>() {
                 Ok(length) if length <= BODY_CAP => content_length = length,
@@ -136,7 +150,21 @@ pub fn parse(buffer: &[u8]) -> Parse {
         query,
         body: buffer[body_start..body_start + content_length].to_vec(),
         consumed: body_start + content_length,
+        bearer,
     })
+}
+
+/// The token of an `Authorization` header VALUE when its scheme is
+/// `Bearer` (case-insensitive) and a non-empty token follows; any other
+/// value presents nothing.
+fn bearer_token(value: &str) -> Option<String> {
+    let value = value.trim();
+    let (scheme, token) = value.split_once(char::is_whitespace)?;
+    if !scheme.eq_ignore_ascii_case("bearer") {
+        return None;
+    }
+    let token = token.trim();
+    (!token.is_empty()).then(|| token.to_owned())
 }
 
 fn invalid(status: u16, detail: &str) -> Parse {
@@ -158,6 +186,7 @@ pub fn reason(status: u16) -> &'static str {
     match status {
         200 => "OK",
         400 => "Bad Request",
+        401 => "Unauthorized",
         404 => "Not Found",
         405 => "Method Not Allowed",
         413 => "Payload Too Large",
@@ -169,11 +198,18 @@ pub fn reason(status: u16) -> &'static str {
     }
 }
 
-/// Frames one JSON response; the connection closes after it.
+/// Frames one JSON response; the connection closes after it. A 401
+/// carries the `WWW-Authenticate: Bearer` challenge RFC 7235 requires of
+/// it — the framer's business, because a 401 without one is not HTTP.
 #[must_use]
 pub fn response(status: u16, body: &[u8]) -> Vec<u8> {
+    let challenge = if status == 401 {
+        "WWW-Authenticate: Bearer\r\n"
+    } else {
+        ""
+    };
     let mut wire = format!(
-        "HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{challenge}Connection: close\r\n\r\n",
         reason(status),
         body.len()
     )
@@ -208,6 +244,7 @@ pub fn status_for(code: ErrorCode) -> u16 {
         ErrorCode::Invalid => 422,
         ErrorCode::Unavailable => 503,
         ErrorCode::Refused => 502,
+        ErrorCode::Unauthenticated => 401,
     }
 }
 
@@ -340,6 +377,95 @@ mod tests {
             unavailable, failed,
             "the environment gate is not flattened into a generic failure"
         );
+    }
+}
+
+#[cfg(test)]
+mod door_tests {
+    use super::*;
+
+    /// The presented credential is the `Authorization: Bearer` token —
+    /// scheme case-insensitive, value trimmed — and NOTHING else on the
+    /// request is one: another scheme, a query parameter, a cookie all
+    /// present nothing (and `verify` is then asked about nothing).
+    #[test]
+    fn the_bearer_token_is_the_presented_credential_and_nothing_else_is() {
+        let with = |head: &str| {
+            let wire = format!("GET /v1/status HTTP/1.1\r\nHost: h\r\n{head}\r\n\r\n");
+            let Parse::Request(request) = parse(wire.as_bytes()) else {
+                panic!("a complete request")
+            };
+            request.bearer
+        };
+        assert_eq!(
+            with("Authorization: Bearer abc.def-123").as_deref(),
+            Some("abc.def-123")
+        );
+        assert_eq!(
+            with("authorization:   bearer   spaced   ").as_deref(),
+            Some("spaced"),
+            "the scheme is case-insensitive and the value is trimmed"
+        );
+        assert_eq!(with("Authorization: Basic dXNlcjpwdw=="), None);
+        assert_eq!(
+            with("Authorization: Bearer"),
+            None,
+            "an empty token is nothing"
+        );
+        assert_eq!(with("X-Token: abc"), None);
+        assert_eq!(with("Cookie: token=abc"), None);
+        let Parse::Request(query) = parse(b"GET /v1/status?token=abc HTTP/1.1\r\nHost: h\r\n\r\n")
+        else {
+            panic!("complete")
+        };
+        assert_eq!(query.bearer, None, "a query parameter is not a credential");
+    }
+
+    /// The refusal is its own status, and a 401 carries the challenge
+    /// RFC 7235 requires — parsed from the head, not searched for.
+    #[test]
+    fn a_refusal_is_401_with_a_bearer_challenge_and_its_own_code() {
+        assert_eq!(status_for(ErrorCode::Unauthenticated), 401);
+        assert_eq!(reason(401), "Unauthorized");
+        let wire = String::from_utf8(error_response(&ApiError::unauthenticated(
+            "presented credential does not match",
+        )))
+        .expect("ascii");
+        let (head, body) = wire.split_once("\r\n\r\n").expect("framed");
+        let mut lines = head.split("\r\n");
+        assert_eq!(lines.next(), Some("HTTP/1.1 401 Unauthorized"));
+        let headers: Vec<(String, String)> = lines
+            .map(|line| {
+                let (name, value) = line.split_once(':').expect("a header line");
+                (name.trim().to_ascii_lowercase(), value.trim().to_owned())
+            })
+            .collect();
+        assert!(
+            headers.contains(&("www-authenticate".into(), "Bearer".into())),
+            "{headers:?}"
+        );
+        assert!(
+            headers.contains(&("connection".into(), "close".into())),
+            "{headers:?}"
+        );
+        let body: serde_json::Value = serde_json::from_str(body).expect("json body");
+        assert_eq!(
+            body,
+            serde_json::json!({ "api-version": jinn_api::API_VERSION,
+                                "error": { "code": "unauthenticated",
+                                           "detail": "presented credential does not match" } })
+        );
+        // Every other status carries no challenge: the header means
+        // exactly one thing.
+        let ok = String::from_utf8(response(200, b"{}")).expect("ascii");
+        assert!(!ok.to_ascii_lowercase().contains("www-authenticate"));
+        let refused = String::from_utf8(error_response(&ApiError::new(
+            ErrorCode::Refused,
+            "off the allowlist",
+        )))
+        .expect("ascii");
+        assert!(refused.starts_with("HTTP/1.1 502 "));
+        assert!(!refused.to_ascii_lowercase().contains("www-authenticate"));
     }
 }
 

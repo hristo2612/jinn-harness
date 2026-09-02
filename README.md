@@ -13,6 +13,29 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
+Phase 2.8 — kernel pin `85d36b4` (M2-K18), UNCHANGED. **The door.** The
+operator API now consumes `jinn:auth` 0.1.0 (M2-K21): `jinn-api-http`
+puts every request's `Authorization: Bearer` token — or nothing, when
+there is none — to the kernel's one `verify` BEFORE it dispatches
+anything on the connection's behalf, one call per request, no grant
+cached, and answers the kernel's refusal as its own typed class
+(`unauthenticated`, 401 with the challenge), distinct from the allowlist's
+`refused` and the transport's `unavailable`. Provisioning is part of it:
+the composition rig and the soak's launcher each write
+`<data>.operator-token` (random, 0600) at boot if absent, and SOAK.md
+§Credential says where the operator reads it. The real-composition suite
+proves no credential and a wrong one refused typed with ZERO effects and
+exactly one `AuthDecided { granted: false }` row each, the right one
+granted with one `verify` ordered before its dispatch on the record, and
+rotation and revocation biting on the next request with no restart
+(`tests/composition/tests/auth.rs`); the contract's names are asserted
+against the vendored file by parsing (`plugins/api/jinn-api/tests/auth_mirror.rs`).
+Together with M2-K21 this closes the second M3 blocker SOURCE-OF-TRUTH §7
+names (`docs/notes/2026-09-02-the-door-presents-what-it-was-given.md`).
+What it is NOT: accounts, roles, per-route authority, sessions as
+identity, or a defence against a process running as the daemon's own uid
+— the contract's own threat-model limit.
+
 Phase 1.13 — kernel pin `85d36b4` (M2-K18). A MIGRATION again, by the
 same shape as 1.12: the plugin world moved 0.8.0 → 0.10.0 (M2-K14/K15:
 outbound `jinn:net` is PROVIDED, `https://` over verified TLS with no off
@@ -365,14 +388,15 @@ per-seam "could NOT prove" sections.
 
 ### 2.1 — Operator API
 
-- **There is no authentication or authorization IN THIS REPO. (named
-  here)** Loopback plus the port the `jinn:net` grant scopes is still the
-  ENTIRE boundary of the operator API: no token, no bearer, no per-route
-  authority, and anything on the machine that can reach the port is an
-  operator. Since pin `85d36b4` the kernel SUPPLIES the authority —
-  `jinn:auth` 0.1.0, one `verify`, deny by default — and it is vendored
-  here and consumed by nothing; the limit is now the distribution's to
-  close, not the kernel's.
+- **Authentication exists since packet 2.8; authorization does not.**
+  The operator API refuses every request that does not present the one
+  operator credential (`jinn:auth`, proven at the door —
+  `tests/composition/tests/auth.rs`). What remains, named: ONE principal
+  and no per-route authority — the operator may do everything the API
+  does; no accounts, roles or sessions-as-identity, by ruling; and no
+  defence against a process running as the daemon's own uid, by the
+  kernel contract's stated threat model. Before 2.8, loopback plus the
+  port was the entire boundary.
 - **No plugin here makes an outbound request.** Since pin `85d36b4`
   `jinn:net` 0.3.0 PROVIDES `request`/`send-request` behind the grant's
   `outbound` allowlist, `https://` over verified TLS; before it, no
@@ -384,7 +408,9 @@ per-seam "could NOT prove" sections.
   artifact,** because no second transport shape can exist.
 - **`patch-entry`'s `idempotency-key` is accepted and unused.**
 - **The API seam recorded no "could not prove" section of its own.
-  (named here)** No concurrency proof, no load proof, no auth proof.
+  (named here)** No concurrency proof, no load proof. The auth proof
+  exists since 2.8; it proves the door for the HTTP provider and says
+  nothing about a transport that does not exist yet.
 
 ### 2.2 — Settings
 

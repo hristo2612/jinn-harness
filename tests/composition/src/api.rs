@@ -15,12 +15,27 @@ use std::time::{Duration, Instant};
 /// provider still fails this bound; it just fails it later.
 pub const REQUEST_TIMEOUT: Duration = Duration::from_secs(45);
 
-/// One response: status code and the JSON body (`Null` if not JSON).
+/// One response: status code, the JSON body (`Null` if not JSON), the
+/// headers as parsed from the head (names lower-cased, values trimmed),
+/// and the raw text.
 #[derive(Clone, Debug)]
 pub struct Response {
     pub status: u16,
     pub body: serde_json::Value,
+    pub headers: Vec<(String, String)>,
     pub raw: String,
+}
+
+impl Response {
+    /// The first header named `name` (case-insensitive), if any.
+    #[must_use]
+    pub fn header(&self, name: &str) -> Option<&str> {
+        let name = name.to_ascii_lowercase();
+        self.headers
+            .iter()
+            .find(|(found, _)| *found == name)
+            .map(|(_, value)| value.as_str())
+    }
 }
 
 /// Connects to the loopback port, retrying until the listener is up or
@@ -50,17 +65,41 @@ pub fn listening(port: u16) -> bool {
     TcpStream::connect_timeout(&([127, 0, 0, 1], port).into(), Duration::from_millis(300)).is_ok()
 }
 
-/// Performs one request; panics on transport failure (the listener is
-/// expected up — use [`listening`] to assert the opposite).
+/// Performs one request AS THE OPERATOR — presenting the credential every
+/// daemon this suite boots is provisioned with
+/// ([`crate::kit::suite_credential`]) as a bearer token; panics on
+/// transport failure (the listener is expected up — use [`listening`] to
+/// assert the opposite).
 pub fn request(port: u16, method: &str, target: &str, body: Option<&str>) -> Response {
+    request_as(
+        port,
+        method,
+        target,
+        body,
+        Some(crate::kit::suite_credential()),
+    )
+}
+
+/// Performs one request presenting `credential` as a bearer token, or
+/// presenting NOTHING when `None` — the door's proofs drive both.
+pub fn request_as(
+    port: u16,
+    method: &str,
+    target: &str,
+    body: Option<&str>,
+    credential: Option<&str>,
+) -> Response {
     let mut stream = connect(port, REQUEST_TIMEOUT)
         .unwrap_or_else(|error| panic!("connect 127.0.0.1:{port}: {error}"));
     stream
         .set_read_timeout(Some(REQUEST_TIMEOUT))
         .expect("read timeout");
     let body = body.unwrap_or_default();
+    let authorization = credential.map_or(String::new(), |credential| {
+        format!("Authorization: Bearer {credential}\r\n")
+    });
     let wire = format!(
-        "{method} {target} HTTP/1.1\r\nHost: 127.0.0.1\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "{method} {target} HTTP/1.1\r\nHost: 127.0.0.1\r\n{authorization}Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     );
     stream.write_all(wire.as_bytes()).expect("request written");
@@ -72,11 +111,20 @@ pub fn request(port: u16, method: &str, target: &str, body: Option<&str>) -> Res
         .and_then(|rest| rest.get(..3))
         .and_then(|code| code.parse().ok())
         .unwrap_or_else(|| panic!("no status line in:\n{raw}"));
-    let body = raw
-        .split_once("\r\n\r\n")
-        .and_then(|(_, body)| serde_json::from_str(body).ok())
-        .unwrap_or(serde_json::Value::Null);
-    Response { status, body, raw }
+    let (head, body) = raw.split_once("\r\n\r\n").unwrap_or((&raw, ""));
+    let headers = head
+        .split("\r\n")
+        .skip(1)
+        .filter_map(|line| line.split_once(':'))
+        .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_owned()))
+        .collect();
+    let body = serde_json::from_str(body).unwrap_or(serde_json::Value::Null);
+    Response {
+        status,
+        body,
+        headers,
+        raw,
+    }
 }
 
 /// `GET target`.

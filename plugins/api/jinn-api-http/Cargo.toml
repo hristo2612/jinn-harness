@@ -3,7 +3,8 @@
 # periodic alarm, and turns every HTTP request into ONE granted contract
 # call on the seam's consumers (`jinn:api-status`, `jinn:api-profile`) or
 # on the settings seam (`jinn:settings`, whose answers share the envelope)
-# or on the engine its path names (`jinn:engine.<id>`).
+# or on the engine its path names (`jinn:engine.<id>`) — after the door:
+# one `jinn:auth` `verify` per request, before any of those (src/door.rs).
 # Transport only — the definition owns the schema. Compiles for
 # wasm32-unknown-unknown ONLY and is deliberately NOT a workspace member
 # (see the workspace manifest's note); `api-kit` builds and encodes it.

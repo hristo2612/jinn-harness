@@ -36,3 +36,7 @@ jinn-settings = { path = "../../plugins/settings/jinn-settings" }
 # append-only SQLite directly. Bundled so CI needs no system sqlite.
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde_json = "1.0"
+# The door's proofs assert the ledger's `presented` digest IS the SHA-256
+# of what the wire carried (never the bytes): the digest is recomputed
+# here from the same input.
+sha2 = "0.10"

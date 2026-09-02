@@ -533,6 +533,112 @@ impl ExtraDaemonLoad {
     }
 }
 
+/// The `jinn:auth` credential of record for a data root: the kernel's own
+/// rule, `<data>.operator-token` — a SIBLING of the data root, never
+/// inside a guest's `jinn:fs` reach (the vendored bundle's metadata
+/// §credential; `DaemonPaths::credential` in the pinned kernel spells it
+/// as `data.with_extension("operator-token")`, and so does this).
+#[must_use]
+pub fn credential_path(data_root: &Path) -> PathBuf {
+    data_root.with_extension("operator-token")
+}
+
+/// The credential every daemon THIS PROCESS boots is provisioned with:
+/// 32 random bytes, hex-encoded, drawn once per test process. Random
+/// rather than a constant so no value in this repo ever looks like a
+/// secret; per process rather than per root so the suite's client can
+/// present it without every call site threading a token through. Each
+/// root is fresh and deleted with its run, and a test that needs another
+/// value (wrong, rotated, revoked) writes its own.
+#[must_use]
+pub fn suite_credential() -> &'static str {
+    static CREDENTIAL: OnceLock<String> = OnceLock::new();
+    CREDENTIAL.get_or_init(|| {
+        let mut bytes = [0u8; 32];
+        std::fs::File::open("/dev/urandom")
+            .and_then(|mut source| {
+                use std::io::Read as _;
+                source.read_exact(&mut bytes)
+            })
+            .expect("32 random bytes from /dev/urandom");
+        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+    })
+}
+
+/// The launcher's half of the door, for the daemons this suite boots:
+/// writes the credential of record beside `data_root` IF ABSENT — the
+/// suite's per-process value, mode 0600 — and leaves an existing file
+/// alone (a restart over the same root keeps its credential, as the
+/// soak's does). Returns the path. Mirrors what `tools/soak/
+/// provision-token.sh` does for the soak launcher; the rig writes its own
+/// because its roots are scratch (the packet's carve-out).
+///
+/// # Panics
+///
+/// If the file cannot be created with the required mode.
+pub fn provision_credential(data_root: &Path) -> PathBuf {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let path = credential_path(data_root);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).expect("credential parent");
+    }
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            file.write_all(suite_credential().as_bytes())
+                .expect("credential written");
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => panic!("{}: {error}", path.display()),
+    }
+    path
+}
+
+/// Overwrites the credential of record beside `data_root` with `value`
+/// (mode 0600, atomically: stage + rename) — the operator's ROTATION.
+/// The kernel reads the file on every call, so the next request sees it.
+///
+/// # Panics
+///
+/// If the write fails.
+pub fn rotate_credential(data_root: &Path, value: &str) {
+    use std::io::Write as _;
+    use std::os::unix::fs::OpenOptionsExt as _;
+    let path = credential_path(data_root);
+    let staging = path.with_extension("operator-token.rotate-tmp");
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&staging)
+        .expect("credential staged");
+    file.write_all(value.as_bytes())
+        .expect("credential written");
+    drop(file);
+    std::fs::rename(&staging, &path).expect("credential replaced");
+}
+
+/// Deletes the credential of record beside `data_root` — the operator's
+/// REVOCATION. Everything refuses from the next call on, no restart.
+///
+/// # Panics
+///
+/// If the file exists and cannot be removed.
+pub fn revoke_credential(data_root: &Path) {
+    let path = credential_path(data_root);
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => panic!("{}: {error}", path.display()),
+    }
+}
+
 /// The daemon's machine-readable readiness line (FINDINGS.md #12 minimum,
 /// pin `9e61e47`): emitted on stderr once the watcher is armed AND the boot
 /// reconcile is done — the operator lane keys on this, never on boot
@@ -549,6 +655,7 @@ impl Daemon {
             binary,
             root,
             root,
+            &root.join("data"),
             [
                 OsStr::new("--profile"),
                 profile.as_os_str(),
@@ -566,6 +673,7 @@ impl Daemon {
             binary,
             root,
             root,
+            &root.join("data"),
             ["--profile", "profile.json", "--ledger", "ledger.sqlite"].map(OsStr::new),
         )
     }
@@ -579,8 +687,9 @@ impl Daemon {
         let profile = root.join("profile.json");
         let ledger = root.join("ledger.sqlite");
         let artifacts = root.join("artifacts");
-        let mut daemon = Self::spawn(
+        Self::spawn(
             binary,
+            root,
             root,
             root,
             [
@@ -593,23 +702,26 @@ impl Daemon {
                 OsStr::new("--data"),
                 root.as_os_str(),
             ],
-        );
-        daemon.data_root = root.to_path_buf();
-        daemon
+        )
     }
 
     /// Spawns the daemon with `args` from `cwd`; its stderr lands under
-    /// `root`.
+    /// `root`. `data_root` is the daemon's data root as the args name it
+    /// (or as the daemon will default it): the launcher's half of the door
+    /// — the credential of record beside it — is provisioned HERE, before
+    /// the process exists, if absent ([`provision_credential`]).
     #[must_use]
     pub fn spawn<'a>(
         binary: &Path,
         root: &Path,
         cwd: &Path,
+        data_root: &Path,
         args: impl IntoIterator<Item = &'a OsStr>,
     ) -> Self {
         // Taken BEFORE the process exists, so the bound counts daemons
         // that are booting as well as daemons that are serving.
         let permit = DaemonPermit::acquire();
+        provision_credential(data_root);
         let stderr = root.join("daemon.stderr");
         let sink = std::fs::File::create(&stderr).expect("stderr sink");
         let child = Command::new(binary)
@@ -625,9 +737,16 @@ impl Daemon {
             _permit: permit,
             child,
             root: root.to_path_buf(),
-            data_root: root.join("data"),
+            data_root: data_root.to_path_buf(),
             stderr,
         }
+    }
+
+    /// Where this daemon's credential of record lives
+    /// ([`credential_path`] of its data root).
+    #[must_use]
+    pub fn credential(&self) -> PathBuf {
+        credential_path(&self.data_root)
     }
 
     /// Whether the readiness line has been emitted.

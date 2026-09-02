@@ -13,9 +13,17 @@
 //! — and the consumer's typed answer becomes the response. Bytes are
 //! data plane.
 //!
+//! THE DOOR (packet 2.8): before any of that, every parsed request is put
+//! to the kernel's `jinn:auth` `verify` with the credential the connection
+//! presented (`door.rs`) — one granted crossing per request, no grant
+//! cached — and only a `principal` reaches `dispatch`. A refusal is the
+//! seam's own `unauthenticated` class on the wire.
+//!
 //! World `jinn:plugin@0.4.0`: the listener and its connections are kernel
 //! registrations — released on suspend, re-listened by the next
 //! `activate`.
+
+mod door;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -663,12 +671,20 @@ fn serve(conns: &mut Vec<Conn>, handle: u64) -> Result<(), GuestFault> {
         }
     }
     let outcome = match parse(&conns[index].buffer) {
-        Parse::Request(request) => Some(dispatch(
-            &request.method,
-            &request.path,
-            request.query_json(),
-            &request.body,
-        )),
+        // The door first, the dispatch only through it: `admit` answers
+        // `Err(wire)` — the complete refusal to write — for anything the
+        // kernel did not grant a principal, and NO dispatch happens on
+        // that connection's behalf (the contract's "WHAT A TRANSPORT
+        // OWES"; proven in tests/composition/tests/auth.rs).
+        Parse::Request(request) => Some(match door::admit(&request) {
+            Ok(()) => dispatch(
+                &request.method,
+                &request.path,
+                request.query_json(),
+                &request.body,
+            ),
+            Err(refusal) => refusal,
+        }),
         Parse::Invalid { status, detail } => Some(response(
             status,
             &serde_json::to_vec(

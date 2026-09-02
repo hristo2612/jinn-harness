@@ -961,6 +961,7 @@ fn a_refused_watcher_writes_no_evidence() {
         binary,
         &root,
         &root,
+        &data,
         [
             OsStr::new("--profile"),
             profile.as_os_str(),
