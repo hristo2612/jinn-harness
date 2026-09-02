@@ -113,6 +113,45 @@ impl ContractWit {
             .ok_or_else(|| format!("no enum `{name}` in the contract"))
     }
 
+    /// The case names of the variant `name`, in declaration order (a
+    /// `variant` carries payloads where an `enum` carries none; a mirror
+    /// that spells a variant's cases as an error class needs the names
+    /// alone).
+    ///
+    /// # Errors
+    ///
+    /// No variant of that name is declared.
+    pub fn variant_cases(&self, name: &str) -> Result<Vec<String>, String> {
+        self.resolve
+            .types
+            .iter()
+            .find_map(|(_, ty)| match (&ty.kind, ty.name.as_deref()) {
+                (TypeDefKind::Variant(shape), Some(found)) if found == name => {
+                    Some(shape.cases.iter().map(|c| c.name.clone()).collect())
+                }
+                _ => None,
+            })
+            .ok_or_else(|| format!("no variant `{name}` in the contract"))
+    }
+
+    /// The package the bundle declares, as `namespace:name` without its
+    /// version (`package jinn:auth@0.1.0;` answers `jinn:auth`) — the
+    /// contract name a guest resolves, read from the file rather than
+    /// spelled beside it.
+    ///
+    /// # Errors
+    ///
+    /// The parse holds no package (cannot happen for a file the parser
+    /// accepted, kept as a typed refusal rather than a panic).
+    pub fn package_name(&self) -> Result<String, String> {
+        self.resolve
+            .packages
+            .iter()
+            .next()
+            .map(|(_, package)| format!("{}:{}", package.name.namespace, package.name.name))
+            .ok_or_else(|| "the parse holds no package".to_owned())
+    }
+
     /// The NAMED type the operation `function` answers, or `None` when it
     /// answers nothing or an anonymous type (a `list<entry>` answers
     /// `None`; a bare `readiness-report` answers `Some("readiness-report")`).
@@ -143,6 +182,7 @@ package sample:bundle@0.1.0;
 interface shapes {
   record pair { left: u32, %from: string }
   enum mood { calm, stalled }
+  variant fault { refused(string), stalled }
   answer: func() -> pair;
   many: func() -> list<pair>;
   nothing: func();
@@ -166,6 +206,26 @@ interface shapes {
         let wit = ContractWit::parse_str("sample.wit", SAMPLE).expect("parses");
         assert_eq!(wit.enum_cases("mood").expect("mood"), ["calm", "stalled"]);
         assert!(wit.enum_cases("pair").is_err(), "a record is not an enum");
+    }
+
+    #[test]
+    fn a_variant_answers_its_cases_in_declaration_order_and_an_enum_is_not_one() {
+        let wit = ContractWit::parse_str("sample.wit", SAMPLE).expect("parses");
+        assert_eq!(
+            wit.variant_cases("fault").expect("fault"),
+            ["refused", "stalled"]
+        );
+        assert!(
+            wit.variant_cases("mood").is_err(),
+            "an enum is not a variant"
+        );
+        assert!(wit.enum_cases("fault").is_err(), "a variant is not an enum");
+    }
+
+    #[test]
+    fn the_package_name_is_read_from_the_file_without_its_version() {
+        let wit = ContractWit::parse_str("sample.wit", SAMPLE).expect("parses");
+        assert_eq!(wit.package_name().expect("a package"), "sample:bundle");
     }
 
     #[test]

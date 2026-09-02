@@ -11,6 +11,7 @@
 
 use serde::{Deserialize, Serialize};
 
+pub mod auth;
 pub mod engines;
 pub mod kernel;
 pub mod plugins;
@@ -18,6 +19,10 @@ pub mod sessions;
 pub mod todos;
 pub mod workflows;
 
+pub use auth::{
+    auth_api_error, decode_auth_answer, AuthAnswerError, Principal, AUTH_CONTRACT, OP_VERIFY,
+    UNAUTHENTICATED,
+};
 pub use engines::{
     decode_engine_answer, engine_api_error, engine_list, engine_routable, engine_route,
     is_engines_path, no_such_engine, run_id_payload, run_payload, EngineEntry, EngineList,
@@ -58,13 +63,15 @@ pub use kernel::{
 };
 
 /// The schema version every answer carries (`api-version`). Within 0.x
-/// every change is strictly additive (kernel R12 discipline). 0.3.0: the
+/// every change is strictly additive (kernel R12 discipline). 0.4.0: the
+/// door — `unauthenticated` joins the error classes ([`auth`]); every
+/// route now owes a `verify` before it dispatches. 0.3.0: the
 /// engines surface — four routes onto `jinn:engine.<id>` ([`engines`])
 /// and `engines` on the status report. 0.2.0 (pin `57360cc`):
 /// introspection fields on every entry, `readiness`, `last-ledger-seq`
 /// and `document` on the status report, real ledger pages, the patch
 /// applied by the kernel's own `jinn:profile`.
-pub const API_VERSION: &str = "0.3.0";
+pub const API_VERSION: &str = "0.4.0";
 
 /// The status/health/ledger contract, provided by `jinn-status`.
 pub const STATUS_CONTRACT: &str = "jinn:api-status";
@@ -233,6 +240,14 @@ pub enum ErrorCode {
     Unavailable,
     /// A grant or provider refused the underlying contract call.
     Refused,
+    /// The door did not open: the connection presented no credential, or
+    /// one that did not prove the operator (`jinn:auth`'s own case, 0.4.0).
+    /// Its own class because its next move is its own — present the
+    /// operator's credential, or stop — neither `refused` (the caller's
+    /// profile to widen) nor `unavailable` (the transport, worth
+    /// retrying). `detail` is the kernel's reason and never carries
+    /// credential bytes.
+    Unauthenticated,
 }
 
 /// One typed error.
@@ -256,6 +271,12 @@ impl ApiError {
             finding: None,
             extra: Extensions::new(),
         }
+    }
+
+    /// The kernel's `unauthenticated(reason)` as this seam's typed error.
+    #[must_use]
+    pub fn unauthenticated(reason: impl Into<String>) -> Self {
+        Self::new(ErrorCode::Unauthenticated, reason)
     }
 
     #[must_use]
