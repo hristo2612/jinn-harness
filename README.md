@@ -28,9 +28,8 @@ entry's `package` and `hash`; a bundle that does not verify fails the
 transport and nothing else. The client under `web/` is jinn `43e8647`'s
 shell, Settings and plugins page ported VERBATIM behind a byte-for-byte
 gate over a pinned map (`tools/ui-kit/tests/verbatim.rs`,
-`web/port-map.txt`): the seven enumerated adaptations and one the card
-did not foresee (`routes/client-providers.tsx` minus its two Talk
-mounts) are the whole diff. Proven through the pinned daemon in
+`web/port-map.txt`): the eight enumerated adaptations (the eighth, `routes/client-providers.tsx`
+minus its two Talk mounts, added by COO ruling) are the whole diff. Proven through the pinned daemon in
 `tests/composition/tests/ui.rs`
 (`docs/notes/2026-09-02-a-byte-is-not-a-dispatch.md`). What it is NOT:
 the live half, moments, chat, todos, workflows, the service worker, or

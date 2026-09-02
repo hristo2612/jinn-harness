@@ -8,9 +8,9 @@
 #             exist under packages/web at the sha either — a new file can never
 #             hide an unlisted adaptation.
 # Every tracked file under web/ except this map must appear exactly once; the
-# gate fails in both directions. Item 5b is the one adaptation the card did not
-# enumerate: routes/client-providers.tsx minus its two Talk mounts (§7 forbids
-# porting Talk; declared on the Todo before the first edit).
+# gate fails in both directions. Item 8 is routes/client-providers.tsx minus its
+# two Talk mounts (§7 forbids porting Talk) — declared on the Todo before the
+# first edit and added to the card by COO ruling (§4.2 item 8, §8 amendment 3).
 #
 # --- the shell, Settings, the plugins page, components/ui (the import closure
 # --- of the trimmed route table, computed at the sha)
@@ -189,7 +189,7 @@ verbatim	packages/web/src/plugins/sdk/route-params.tsx	src/plugins/sdk/route-par
 verbatim	packages/web/src/plugins/sdk/runtime.ts	src/plugins/sdk/runtime.ts
 verbatim	packages/web/src/plugins/sdk/version.ts	src/plugins/sdk/version.ts
 adapted	packages/web/src/routes/auth-provider.tsx	src/routes/auth-provider.tsx	2
-adapted	packages/web/src/routes/client-providers.tsx	src/routes/client-providers.tsx	5b
+adapted	packages/web/src/routes/client-providers.tsx	src/routes/client-providers.tsx	8
 verbatim	packages/web/src/routes/contributed-route.tsx	src/routes/contributed-route.tsx
 verbatim	packages/web/src/routes/globals.css	src/routes/globals.css
 verbatim	packages/web/src/routes/experiments/types.ts	src/routes/experiments/types.ts
