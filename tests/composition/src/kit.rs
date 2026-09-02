@@ -214,6 +214,76 @@ pub fn shared_plugins_kit() -> &'static Path {
     })
 }
 
+/// Builds the UI kit (the web client archived into the embedded bundle
+/// provider, mounted beside the api trio, the settings pair, the plugins
+/// catalogs and the cron seam) once per process, plus the two variants
+/// the swap and fail-closed proofs mount: a MARKED document and a
+/// CORRUPTED blob. Runs the web build, so `pnpm` must be on `PATH`.
+///
+/// # Panics
+///
+/// If the kit builder fails.
+pub fn shared_ui_kit() -> &'static Path {
+    static KIT: OnceLock<PathBuf> = OnceLock::new();
+    KIT.get_or_init(|| {
+        let root = workspace_root().join("target/composition/ui-kit");
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).expect("kit cache dir");
+        let status = Command::new("cargo")
+            .args(["run", "-p", "ui-kit", "--", "kit"])
+            .arg(&root)
+            .args(["--port", &KIT_PORT.to_string()])
+            .args(["--every-ms", &JOB_PERIOD_MS.to_string()])
+            .args(["--tick-ms", &TICK_MS.to_string()])
+            .current_dir(workspace_root())
+            .status()
+            .expect("cargo run -p ui-kit");
+        assert!(status.success(), "the ui kit builds");
+        for extra in [
+            vec!["--name", UI_MARKED, "--marker", UI_MARKER],
+            vec!["--name", UI_CORRUPT, "--corrupt"],
+        ] {
+            let status = Command::new("cargo")
+                .args(["run", "-p", "ui-kit", "--", "variant"])
+                .arg(&root)
+                .args(&extra)
+                .current_dir(workspace_root())
+                .status()
+                .expect("cargo run -p ui-kit -- variant");
+            assert!(status.success(), "the ui kit variant {extra:?} builds");
+        }
+        root
+    })
+}
+
+/// The marked variant's artifact name (proof 4) and its marker text.
+pub const UI_MARKED: &str = "jinn-ui-bundle-marked";
+/// See [`UI_MARKED`].
+pub const UI_MARKER: &str = "second-bundle-of-the-swap-proof";
+/// The corrupted variant's artifact name (proof 5).
+pub const UI_CORRUPT: &str = "jinn-ui-bundle-corrupt";
+
+/// A fresh copy of the UI kit on a free port.
+///
+/// # Panics
+///
+/// If the copy or the profile rewrite fails.
+#[must_use]
+pub fn fresh_ui_root(name: &str) -> (PathBuf, u16) {
+    let root = copy_kit(shared_ui_kit(), name);
+    let port = free_port();
+    let path = root.join("profile.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("profile")).expect("profile parses");
+    set_provider_port(&mut document, "jinn-api-http", port);
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&document).expect("encodes"),
+    )
+    .expect("profile");
+    (root, port)
+}
+
 /// A fresh copy of the plugins kit on a free port.
 ///
 /// # Panics
@@ -401,6 +471,20 @@ fn copy_kit(kit: &Path, name: &str) -> PathBuf {
         std::fs::copy(entry.path(), artifacts.join(entry.file_name())).expect("artifact copy");
     }
     std::fs::copy(kit.join("profile.json"), root.join("profile.json")).expect("profile copy");
+    // The UI kit's archive and manifest ride along: the bundle proofs
+    // read the manifest's hashes and the blob's size from them.
+    for entry in std::fs::read_dir(kit).expect("kit root") {
+        let entry = entry.expect("kit entry");
+        let name = entry.file_name();
+        if name.to_string_lossy().starts_with("ui-bundle") && entry.path().is_dir() {
+            let target = root.join(&name);
+            std::fs::create_dir_all(&target).expect("bundle dir");
+            for file in std::fs::read_dir(entry.path()).expect("bundle dir") {
+                let file = file.expect("bundle file");
+                std::fs::copy(file.path(), target.join(file.file_name())).expect("bundle copy");
+            }
+        }
+    }
     root
 }
 

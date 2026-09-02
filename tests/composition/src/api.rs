@@ -127,6 +127,49 @@ pub fn request_as(
     }
 }
 
+/// One raw response: status, headers (names lower-cased) and the body
+/// BYTES — for the static bundle's assets, whose bytes are hashed and
+/// must not pass through a lossy string. Presents `credential` as a
+/// bearer when given, nothing otherwise.
+pub fn fetch_bytes(
+    port: u16,
+    target: &str,
+    credential: Option<&str>,
+) -> (u16, Vec<(String, String)>, Vec<u8>) {
+    let mut stream = connect(port, REQUEST_TIMEOUT)
+        .unwrap_or_else(|error| panic!("connect 127.0.0.1:{port}: {error}"));
+    stream
+        .set_read_timeout(Some(REQUEST_TIMEOUT))
+        .expect("read timeout");
+    let authorization = credential.map_or(String::new(), |credential| {
+        format!("Authorization: Bearer {credential}\r\n")
+    });
+    let wire = format!(
+        "GET {target} HTTP/1.1\r\nHost: 127.0.0.1\r\n{authorization}Connection: close\r\n\r\n"
+    );
+    stream.write_all(wire.as_bytes()).expect("request written");
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).expect("response read to EOF");
+    let split = raw
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .expect("a head");
+    let head = String::from_utf8_lossy(&raw[..split]).into_owned();
+    let body = raw[split + 4..].to_vec();
+    let status = head
+        .strip_prefix("HTTP/1.1 ")
+        .and_then(|rest| rest.get(..3))
+        .and_then(|code| code.parse().ok())
+        .unwrap_or_else(|| panic!("no status line in:\n{head}"));
+    let headers = head
+        .split("\r\n")
+        .skip(1)
+        .filter_map(|line| line.split_once(':'))
+        .map(|(name, value)| (name.trim().to_ascii_lowercase(), value.trim().to_owned()))
+        .collect();
+    (status, headers, body)
+}
+
 /// `GET target`.
 pub fn get(port: u16, target: &str) -> Response {
     request(port, "GET", target, None)

@@ -73,10 +73,12 @@ dependencies = [
  "jinn-session",
  "jinn-settings",
  "jinn-todo",
+ "jinn-ui",
  "jinn-workflow",
  "rusqlite",
  "serde_json",
  "sha2",
+ "ui-kit",
 ]
 
 [[package]]
