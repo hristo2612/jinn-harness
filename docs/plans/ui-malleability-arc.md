@@ -548,6 +548,14 @@ The ENUMERATED adaptations, and only these, are the diff:
    `settings/engines/*` imports are ported VERBATIM from
    `packages/jinn/src/shared/` through the pinned map; they are not
    adaptations and the gate asserts an EMPTY diff against their source paths.
+9. `routes/onboarding*`, `components/onboarding-wizard.tsx` and their mount
+   in the shell: the onboarding flow is NOT on the port list (it is neither
+   shell, Settings, Plugins nor `components/ui`) and its `/api/onboarding`
+   calls are an old-gateway route the new daemon answers with the SPA
+   document. Ruled on 2026-09-02 (§8 amendment 4): the mount is removed and
+   the onboarding state is synthesised complete client-side; the files
+   themselves are not ported. A repo test asserts that no string `/api/`
+   remains in `web/src` outside the adapter files item 1 names.
 
 Everything else is `git diff 43e8647 -- packages/web/<path>` empty, file by
 file, and the acceptance below asserts it.
@@ -598,24 +606,51 @@ transport that does not serve:
    into the proof's output and copied to the card's report.
 4. `swapping_the_ui_is_a_profile_edit_of_one_entry` - edit the bundle
    entry's `package` and `hash` to a second kit-built bundle whose document
-   carries a marker; the transport's `incarnation` INCREMENTS by exactly one;
-   `GET /` answers the marker; the settings consumer's incarnation is
-   unchanged; the blip is measured (first refused connect to first 200) and
-   recorded.
-5. `a_bundle_whose_bytes_do_not_match_its_manifest_fails_the_transport_and_nothing_else` -
-   a deliberately corrupted archive: the transport's fiber reads `failed`,
-   the settings and plugins consumers stay `active`, the operator-api
-   profile without a bundle entry still answers `/v1/health` 200.
+   carries a marker. AT THE PINNED KERNEL (`85d36b4`, §8 amendment 4): the
+   swap is a witnessed transition and a re-read, not a restart - the
+   transport's `incarnation` is ASSERTED UNCHANGED (never merely omitted),
+   exactly one more `jinn:ui-bundle` crossing lands on the ledger, `GET /`
+   answers the marker, refused connects while it lands are 0, and the
+   settings and plugins consumers' incarnations are unchanged; the blip is
+   measured. When jinnd M2-K24 (PLA-350) lands and pin-bump 7 adopts it,
+   this proof FLIPS to `incarnation` +1 exactly and the transitions
+   subscription is removed (harness FINDINGS #46).
+5. `a_bundle_that_does_not_match_its_manifest_never_serves_a_byte` - boot
+   the `ui` profile with a deliberately corrupted archive. AT THE PINNED
+   KERNEL the transport meets its provider in one of two orders (#45) and
+   the proof covers BOTH, each deterministically: (i) provider present at
+   boot - the transport's fiber reads `failed` if verification ran at
+   activation, or stays `active` answering every page a typed 503 with the
+   delivery failure on the record if it ran on the witnessed transition; the
+   proof asserts which order occurred and that no byte was served; (ii) the
+   provider landed by a profile edit AFTER the transport is `active` - the
+   delivery order, forced; the transport stays `active`, serves the typed
+   503, and the failure is on the record. In both orders the settings and
+   plugins consumers stay `active` and the operator-api profile without a
+   bundle entry still answers `/v1/health` 200. After M2-K24 this collapses
+   to one order: the transport's fiber reads `failed` at activation.
+5b. `a_fresh_boot_is_deterministic` (added by §8 amendment 4) - ten
+   consecutive boots of the `ui` profile, each on a FRESH root, through the
+   pinned daemon from git archive: every boot reaches the transport `active`
+   AND listening, `GET /` answering the document, within the suite's ready
+   budget. The verifier reproduced the coin toss by hand (transport
+   `failed`, bundle `active`, port never opened, second boot fine); a UI the
+   operator is to test cannot boot on a coin toss. If the pinned kernel
+   cannot be made deterministic from the harness side within Law, the
+   packet lands as NOT-YET on this item with M2-K24 named as the unblock.
 6. `the_view_layer_is_verbatim` - not a daemon proof: a repo test that runs
    `git diff --stat 43e8647 -- packages/web/<f>` for every ported file
    against `web/<f>` through a pinned mapping and asserts an EMPTY diff for
-   every file not on the §4.2 adaptation list (items 1-8), and a non-empty one
+   every file not on the §4.2 adaptation list (items 1-9), and a non-empty one
    for every file on it (the gate has to be able to fail in both
    directions).
 7. Browser-level, driven by the INDEPENDENT VERIFIER with `agent-browser`
    against a throwaway root (§8 amendment): open `/`, be shown the pairing
-   screen, paste the credential, see Settings and Plugins, patch a namespace
-   and read it back. The verifier posts the transcript on the Todo; no
+   screen, paste the credential, see Settings and Plugins, patch a DECLARED
+   setting of a namespace and read it back (§8 amendment 4: the Settings
+   page renders only the settings the namespace's schema declares, mapped
+   one adapter per endpoint; an undeclared field is hidden with the
+   inventory row that names it, never sent). The verifier posts the transcript on the Todo; no
    person is in the acceptance loop.
 
 Plus: node lane green; `cargo test -p harness-docs` green; the privacy
@@ -1040,6 +1075,25 @@ declared. Dispatch of UI-1 waits for the 2026-09-04 audit.
   so the packet's framing rows are billed against the same ≤ 800 ceiling
   rather than declared beside it; the ceiling does not move. The build's
   ~650 (+~40 wire) is an ESTIMATE, not a ceiling.
+- **Amendment 4 (COO, 2026-09-02, UI-1 verify round 1: ESCALATE, 4
+  Blockers).** (1) Acceptance 4 assumed the kernel's epoch gating restarts a
+  wasm consumer on a provider swap; at pin `85d36b4` it does not (FINDINGS
+  #46). Ruled: acceptance 4 is restated to the pinned kernel's behaviour and
+  the incarnation is ASSERTED unchanged, never omitted; it flips to +1 when
+  M2-K24 (PLA-350, carded and approved on the kernel lane) lands through
+  pin-bump 7. (2) Acceptance 5 assumed one activation order; the pinned
+  kernel has two (#45). Ruled: both orders proven, the late-provider order
+  forced by a profile edit; and a new 5b requires ten deterministic fresh
+  boots - the verifier reproduced the coin toss by hand and an operator
+  cannot test a UI that boots half the time. (3) The Settings page sent an
+  undeclared field (`defaultDelivery` on `cron`) and the daemon refused it
+  422: a build defect under adaptation 1 - the page renders only declared
+  settings; proof 7 patches a declared one. (4) The onboarding wizard still
+  calls `/api/onboarding`, an old-gateway route: a build defect; ruled the
+  ninth adaptation (mount removed, state synthesised, a repo test that no
+  `/api/` string survives outside the adapters). The behaviour-free Major
+  (divider ASCII) is fixed before land. Round 2 of 2 under the STOP RULE;
+  a third round only by ruling.
 
 
 
