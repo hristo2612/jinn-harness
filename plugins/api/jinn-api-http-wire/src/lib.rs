@@ -203,13 +203,28 @@ pub fn reason(status: u16) -> &'static str {
 /// it — the framer's business, because a 401 without one is not HTTP.
 #[must_use]
 pub fn response(status: u16, body: &[u8]) -> Vec<u8> {
+    framed(status, "application/json", None, body)
+}
+
+/// Frames one response of any `Content-Type`, with an optional
+/// `Cache-Control` — the static-bundle rows (UI-1): the document and its
+/// assets carry their own MIME and their cache class (`jinn_ui`'s serving
+/// law), a JSON answer carries neither. Every response still closes.
+#[must_use]
+pub fn framed(
+    status: u16,
+    content_type: &str,
+    cache_control: Option<&str>,
+    body: &[u8],
+) -> Vec<u8> {
     let challenge = if status == 401 {
         "WWW-Authenticate: Bearer\r\n"
     } else {
         ""
     };
+    let cache = cache_control.map_or(String::new(), |value| format!("Cache-Control: {value}\r\n"));
     let mut wire = format!(
-        "HTTP/1.1 {status} {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{challenge}Connection: close\r\n\r\n",
+        "HTTP/1.1 {status} {}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n{cache}{challenge}Connection: close\r\n\r\n",
         reason(status),
         body.len()
     )
@@ -312,6 +327,36 @@ mod tests {
             parse(b"GET / HTTP/1.1\r\nContent-Length: x\r\n\r\n"),
             Parse::Invalid { status: 400, .. }
         ));
+    }
+
+    /// A static row carries its own MIME and cache class and nothing of
+    /// the JSON envelope; a JSON answer carries no cache header at all.
+    #[test]
+    fn a_static_response_carries_its_mime_and_cache_class_and_closes() {
+        let wire = String::from_utf8(framed(
+            200,
+            "text/html; charset=utf-8",
+            Some("no-cache"),
+            b"<html>",
+        ))
+        .expect("ascii");
+        assert!(wire.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(wire.contains("Content-Type: text/html; charset=utf-8\r\n"));
+        assert!(wire.contains("Cache-Control: no-cache\r\n"));
+        assert!(wire.contains("Content-Length: 6\r\n"));
+        assert!(wire.contains("Connection: close\r\n"));
+        assert!(wire.ends_with("\r\n\r\n<html>"));
+        let json = String::from_utf8(response(200, b"{}")).expect("ascii");
+        assert!(!json.contains("Cache-Control"));
+        let missing = String::from_utf8(framed(
+            404,
+            "text/plain; charset=utf-8",
+            None,
+            b"no such asset",
+        ))
+        .expect("ascii");
+        assert!(missing.starts_with("HTTP/1.1 404 Not Found\r\n"));
+        assert!(!missing.contains("Cache-Control"));
     }
 
     #[test]
