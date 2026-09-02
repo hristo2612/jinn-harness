@@ -2255,6 +2255,20 @@ half of the finding: the plugins page UI-1 ports exists to show why a
 plugin failed, and for the one failure this packet manufactures it can
 show `failed` and nothing else.
 
+**The harness-side answer (UI-1 round 2, 2026-09-02).** A guest CAN put
+its own reason on the record before it fails: `jinn-api-http` now wraps
+its activation and, on any refusal, registers one effect whose label is
+the fault (`jinn-api-http activation failed: GuestFault::Failed("listen
+127.0.0.1:…")`, capped at 400 chars) before returning it. The registration
+is withdrawn with the fiber, but the `EffectRegistered` row outlives it —
+proven on the ledger of every `ui` boot by the kit's deliberately
+misbound transport copy, whose bind refusal now reads in full beside its
+`Failed` transition. What this cannot cover is the one class the kernel
+owns: an activation killed at the 5 s guest deadline or by a trap
+registers nothing, so a `Failed` transition with NO such label beside it
+now means exactly that. The capability shape above still stands; this is
+the workaround every guest in the distribution can copy until it lands.
+
 ## 39. `state: null` from `jinn:introspect` is four different situations, and nothing distinguishes them
 
 **Grade: source-cited, with two of the four situations reproduced under a
@@ -2749,6 +2763,37 @@ when that provider is replaced (the epoch gating the UI-1 card assumed,
 see #46), and is re-armed rather than left `Failed` when a provider it
 needed lands after it. Until then every activation-time injection in
 the distribution needs the transitions subscription this packet added.
+
+**Round 2 (2026-09-02): the verifier's coin toss, diagnosed.** Verify
+round 1 reproduced a boot with the transport `Failed`, the bundle entry
+`Active` and the port never opened, over a fresh root, on the same kit
+this suite boots; the second boot over the same root came up. The reason
+was not on the record (#38) and the checkout is gone, so the diagnosis is
+by enumeration from the pinned broker (`jinnd-wasm/src/broker/calls.rs`,
+`instance.rs`, `lane.rs` at `85d36b4`). The transport's activation has
+exactly three ways to fail: (1) a refusal from its one read that is not
+"not yet" — the broker answers `grant-refused` (its own grant),
+`invalid` (a cycle, a duplicate), `provider-failed` (the provider's
+instance trapped, hung or gone, `PluginFailed`), or `inactive-context`
+(the provider's seat sealed or closing for a swap); (2) `net.listen`
+refused — the port held by another process, or outside the grant; (3)
+the 5 s guest deadline (`lane::DEADLINE`) or a trap killing the
+activation outright. Measured on ten fresh boots (proof 5b, this round):
+the activation is ~50 ms from `ContractResolved` to `NetListening`
+(boot 1: seq 26 at t+0 to seq 72 at t+55 ms, with the 1.46 MB read and
+its verify inside), two orders observed across the ten (provider live at
+the first probe in some, landing after both probes and read on the
+witnessed transition in others), 10/10 active, listening and serving.
+Class (2) and class (1) now name themselves on the ledger (#38's
+workaround); class (3) is the one that leaves no label. Within Law this
+round ALSO reclassifies `provider-failed` and `inactive-context` as
+"not yet": both are the PROVIDER's contained state (R11) which the
+kernel will fail or restart, and a transport that dies of a sibling's
+fault instead of resting active without a bundle and reading on its next
+Active transition is the coin toss with a different face. What remains
+kernel-shaped is unchanged: only a dependency declaration on the string
+lane (M2-K24) makes "activate once the provider is Active" a kernel
+guarantee instead of a subscription and a classification.
 
 ## 46. A provider swap does not restart a wasm consumer that injected it: epoch gating stops at the string lane, so "a bundle swap is a restart" is not available at this pin
 

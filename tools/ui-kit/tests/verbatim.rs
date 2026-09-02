@@ -294,3 +294,46 @@ fn the_view_layer_is_verbatim() {
         failures.join("\n  ")
     );
 }
+
+/// §4.2 item 9 (§8 amendment 4): no old-gateway route reaches the daemon
+/// from the client's own diff. Every file the map marks `adapted` or
+/// `new` carries no `/api/` string, except the two adapters item 1 names
+/// (`lib/api.ts`, whose unported routes throw `no-counterpart` on the
+/// string; `lib/api-config.ts`). A VERBATIM file is proof 6's — it cannot
+/// change here, so the ones still carrying the string are listed as the
+/// carried inventory (a call on one answers the SPA document, never
+/// old-gateway data), not failed.
+#[test]
+fn no_old_gateway_route_survives_in_the_adapted_client() {
+    const ADAPTERS: [&str; 2] = ["src/lib/api.ts", "src/lib/api-config.ts"];
+    let web = repo_root().join("web");
+    let mut offending = Vec::new();
+    let mut carried = Vec::new();
+    for row in map() {
+        if !row.dest.starts_with("src/") {
+            continue;
+        }
+        let Ok(text) = std::fs::read_to_string(web.join(&row.dest)) else {
+            continue;
+        };
+        let hits = text.matches("/api/").count();
+        if hits == 0 {
+            continue;
+        }
+        match row.status.as_str() {
+            "verbatim" => carried.push(format!("{} ({hits})", row.dest)),
+            _ if ADAPTERS.contains(&row.dest.as_str()) => {}
+            _ => offending.push(format!("{} ({hits}, {})", row.dest, row.status)),
+        }
+    }
+    eprintln!(
+        "old-gateway routes carried by {} VERBATIM files (proof 6 owns them): {}",
+        carried.len(),
+        carried.join(", ")
+    );
+    assert!(
+        offending.is_empty(),
+        "`/api/` survives outside the item-1 adapters:\n  {}",
+        offending.join("\n  ")
+    );
+}

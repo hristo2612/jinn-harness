@@ -29,9 +29,11 @@ publish and re-read — not a restart at this pin, #46); a bundle that
 does not verify fails the transport and nothing else. The client under `web/` is jinn `43e8647`'s
 shell, Settings and plugins page ported VERBATIM behind a byte-for-byte
 gate over a pinned map (`tools/ui-kit/tests/verbatim.rs`,
-`web/port-map.txt`): the eight enumerated adaptations (the eighth, `routes/client-providers.tsx`
-minus its two Talk mounts, added by COO ruling) are the whole diff. Proven through the pinned daemon in
-`tests/composition/tests/ui.rs`
+`web/port-map.txt`): the nine enumerated adaptations (the eighth, `routes/client-providers.tsx`
+minus its two Talk mounts, and the ninth, onboarding unmounted and synthesised, added by COO ruling;
+`routes/settings/page.tsx` joined item 1 in round 2 so the page renders only what the settings seam
+declares) are the whole diff. Proven through the pinned daemon in
+`tests/composition/tests/ui.rs` — including ten consecutive fresh boots (proof 5b) — 
 (`docs/notes/2026-09-02-a-byte-is-not-a-dispatch.md`). What it is NOT:
 the live half, moments, chat, todos, workflows, the service worker, or
 a plugins page that can enable anything (#37, KG-1 / PLA-348).
@@ -577,7 +579,13 @@ Its own README carries these in full; the load-bearing ones:
   re-arm** (#45), and **a provider swap does not restart its wasm
   consumer** (#46): the transport completes and refreshes its one read
   on `jinn:introspect/transitions`, a read-only kernel grant it has no
-  other use for.
+  other use for; a provider's contained failure is "not yet" to it, and
+  its own activation fault is named on the ledger before it fails (#38's
+  workaround). Proof 4 asserts the incarnation unchanged until M2-K24.
+- **The Settings page shows only what a profile's settings seam
+  declares** — in the `ui` profile that is `cron` (`jobs`, `tick-ms`,
+  `entry-id`; the secret reference is read-only); the config.yaml-shaped
+  sections are hidden and named in one caption, never sent.
 - **The bundle is one 1.46 MB crossing per transport activation. (named
   here)** Measured in proof 3 and recorded in the note; a page load is N
   connections because responses close.

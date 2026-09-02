@@ -86,10 +86,51 @@ reached by a route the door does not sit on.
   gating) is not available on the string lane; the swap is a witnessed
   transition and a re-read, on the record.
 - **#38, a transcript added** — the transport's verify fault names the
-  mismatched file and the record keeps only `Failed` (KG-5).
+  mismatched file and the record keeps only `Failed` (KG-5). Round 2
+  added the workaround: the transport registers its fault as an effect
+  label before failing, so the reason outlives the fiber on the ledger.
 - Not a finding: the activation crossing is 1.46 MB and shows nowhere in
   the boot time; KG-1 (#37 / PLA-348) is the reason every write on the
   plugins page is disabled.
+
+## Round 2: the acceptance restated to the pinned kernel
+
+Verify round 1 (four Blockers, §8 amendment 4) moved four things.
+
+- Proof 4 ASSERTS the transport's incarnation unchanged across the swap
+  (#46) instead of printing it; it flips to +1 when M2-K24 lands.
+- Proof 5 proves BOTH orders of #45, the late one FORCED: the `ui`
+  profile boots with the bundle entry absent (the transport keeps its
+  `ui-bundle-entry` config and grants and rests active without a bundle,
+  every page a typed 503), then the corrupt entry is added by a profile
+  edit; the transport witnesses its Active transition, verify refuses
+  inside the delivery, the kernel contains it (`failures: 1`), and the
+  transport's incarnation is unchanged with no byte served.
+- Proof 5b boots ten fresh roots in a row; every one reaches the
+  transport active, listening and serving the document (~27 s from
+  spawn to served, of which the transport's own activation is ~50 ms on
+  the ledger). The verifier's failed boot is diagnosed by enumeration in
+  FINDINGS #45 (round-2 addendum): the activation names its fault on the
+  record now, and the two contained provider classes (`provider-failed`,
+  `inactive-context`) are "not yet" rather than death.
+- The Settings page renders ONLY what the namespace's schema declares:
+  the settings seam's `Resolved` now carries `schema` (additive, R12),
+  `api-config.ts` reads it, filters every patch to declared keys and
+  never sends a `secret-ref`, and the page hides the config.yaml-shaped
+  sections a profile does not declare, naming them in one caption. In
+  the `ui` profile the one namespace is `cron` and the declared setting
+  proof 7 patches is `tick-ms` (cold: the scheduler restarts and the
+  value reads back from `GET /v1/settings/cron`). `routes/settings/page.tsx`
+  therefore joins item 1's adaptations — a verbatim page cannot render
+  only declared settings.
+- Onboarding is item 9: the wizard's mount is gone from `page-layout.tsx`,
+  the wizard and its test are not ported, `api.ts` synthesises the
+  onboarding state complete with no request, and a repo test in
+  `tools/ui-kit/tests/verbatim.rs` asserts no `/api/` string survives in
+  any adapted or new file outside the two item-1 adapters. Twenty-seven
+  VERBATIM files still carry the string (proof 6 forbids touching them);
+  a call on one answers the SPA document and never old-gateway data, and
+  the test prints them as the carried inventory.
 
 ## What this packet does NOT do
 
