@@ -1,0 +1,26 @@
+# The UI bundle seam's embedded provider guest: provides `jinn:ui-bundle`
+# from bytes compiled in at kit time — `include_bytes!` of the archive and
+# the manifest the kit wrote under `$JINN_UI_BUNDLE_DIR`. Its config is
+# empty; its identity is its content hash: swapping the UI is swapping
+# this entry's `package` and `hash` in the profile, and nothing else.
+# Compiles for wasm32-unknown-unknown ONLY and is deliberately NOT a
+# workspace member (see the workspace manifest's note); `ui-kit` builds
+# and encodes it.
+[package]
+name = "jinn-ui-bundle-embedded"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+build = "build.rs"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-ui = { path = "../jinn-ui" }
+serde_json = "1.0"
+# Guest-side bindings of the pinned plugin world (kernel-pin/wit).
+wit-bindgen = "0.43.0"
+
+[workspace]

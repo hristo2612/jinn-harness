@@ -2242,6 +2242,33 @@ the gap for every consumer at once. A typed `ActivationFailed { error }`
 kind would be better still, because it distinguishes the activation's own
 death from a host provider's error that merely happened nearby.
 
+**UI-1 transcript (harness packet UI-1, PLA-349, pin `85d36b4`).** The
+transport `jinn-api-http` now fails its own activation, typed, when the
+UI bundle it injects does not verify against its manifest
+(`plugins/api/jinn-api-http/src/ui.rs`, `verify`: the fault names the
+file whose sha256 mismatched). Mounted on purpose with a corrupted
+bundle, proof 5 of `tests/composition/tests/ui.rs` reads the fiber
+`Pending → Loading → Unloading → Failed` and finds the reason on neither
+the ledger nor the daemon log: the proof prints `its reason on the
+record: false` rather than asserting around it. This is the page-facing
+half of the finding: the plugins page UI-1 ports exists to show why a
+plugin failed, and for the one failure this packet manufactures it can
+show `failed` and nothing else.
+
+**The harness-side answer (UI-1 round 2, 2026-09-02).** A guest CAN put
+its own reason on the record before it fails: `jinn-api-http` now wraps
+its activation and, on any refusal, registers one effect whose label is
+the fault (`jinn-api-http activation failed: GuestFault::Failed("listen
+127.0.0.1:…")`, capped at 400 chars) before returning it. The registration
+is withdrawn with the fiber, but the `EffectRegistered` row outlives it —
+proven on the ledger of every `ui` boot by the kit's deliberately
+misbound transport copy, whose bind refusal now reads in full beside its
+`Failed` transition. What this cannot cover is the one class the kernel
+owns: an activation killed at the 5 s guest deadline or by a trap
+registers nothing, so a `Failed` transition with NO such label beside it
+now means exactly that. The capability shape above still stands; this is
+the workaround every guest in the distribution can copy until it lands.
+
 ## 39. `state: null` from `jinn:introspect` is four different situations, and nothing distinguishes them
 
 **Grade: source-cited, with two of the four situations reproduced under a
@@ -2665,4 +2692,176 @@ world's current package version or none. Three string comparisons; a
 reader should never be the gate. The harness does not check the index
 (it vendors it verbatim, hashed), and this entry is why it should not
 have to.
+
+## 45. A wasm entry that injects a sibling's contract at activation is a coin toss, and the kernel never re-arms it when the sibling lands
+
+**Grade: reproducible WITH A TRANSCRIPT, shaped, packet-card-ready — the
+production consumer #7 predicted, and #7's neighbour: the failed fiber
+is not retried when the provider it needed becomes Active.** Hit in
+harness packet UI-1 (PLA-349) at pin `85d36b4`, four boots out of five.
+
+The UI-1 card asks the transport to read the UI bundle ONCE, at
+`activate`, as an injected dependency — the only shape under which a
+byte served to a browser is never a crossing on an unauthenticated
+connection's behalf. `services.resolve` answers a handle from the GRANT
+alone, so the resolve succeeds before any provider exists; the first
+CALL is what meets the provider, and whether one is live is the sibling
+activation order #7 names as unspecified. One boot of the `ui` profile
+(`tests/composition/tests/ui.rs`, proof 3, root `ui-once`):
+
+```
+seq entry           kind
+ 20 jinn-api-http   ContractResolved { contract: "jinn:ui-bundle" }
+ 27 jinn-api-http   ContractCall { contract: "jinn:ui-bundle", operation: "manifest" }   → missing-dependency
+ 44 jinn-ui-bundle  ServiceProvided { service: "jinn:ui-bundle" }
+ 69 jinn-api-http   FiberTransition { from: "Pending",   to: "Loading",   cause: "InitialLoad" }
+ 70 jinn-api-http   FiberTransition { from: "Loading",   to: "Unloading", cause: "InitialLoad" }
+ 71 jinn-api-http   FiberTransition { from: "Unloading", to: "Failed",    cause: "InitialLoad" }
+ 75 jinn-ui-bundle  FiberTransition { from: "Pending",   to: "Loading",   cause: "InitialLoad" }
+ 76 jinn-ui-bundle  FiberTransition { from: "Loading",   to: "Active",    cause: "InitialLoad" }
+```
+
+The transport failed at 71 for want of a provider that reached Active at
+76, and rested `Failed` for the daemon's life: the environment moved
+(SOURCE-OF-TRUTH §3 "Services": "a fiber activates only when every
+injected service's provider is Active", and the re-arm rule "retry only
+against a CHANGED environment") and nothing re-armed it, because the
+typed lane's epoch gating does not see a resolve made on the string
+lane. The same boot, ordered the other way, is a working transport —
+which is exactly why #7 is a defect and not a style note.
+
+**The shape a provider's own announcement cannot take.** The first
+repair tried was the obvious one: the provider emits a topic once it has
+provided, and a transport whose activation found no provider completes
+its read on that event. The ledger refused it in the kernel's own words:
+
+```
+ 41 jinn-api-http   EffectRegistered { label: "listen jinn:ui-bundle/provided" }
+ 44 jinn-ui-bundle  ServiceProvided { service: "jinn:ui-bundle" }
+ 47 jinn-api-http   CycleRefused { on: "jinn:ui-bundle.manifest", target: 11, target_entry: "jinn-ui-bundle", through: [3] }
+ 51 jinn-ui-bundle  DispatchTrace { topic: "jinn:ui-bundle/provided", mode: Emit, listeners: 1, failures: 1, emitter: 11 }
+```
+
+A listener that calls back into the entry whose emit is awaiting it is
+the #4/#32 wait cycle, refused whole by M2-K10 — and the emit lands
+while the provider is still `Loading`, before the provision is
+callable at all. So the only kernel-free completion is the kernel's own
+signal: the transport subscribes to `jinn:introspect/transitions`
+(under a `jinn:introspect` grant the profile now gives it), probes once
+more after subscribing so an Active transition cannot fall between the
+probe and the subscription, and reads when it WITNESSES its bundle
+entry reach Active. That works at this pin and costs the transport a
+read-only kernel contract it has no other use for, one extra
+`manifest` probe per boot, and a delivery per fiber transition anywhere
+in the composition for the daemon's life.
+
+**Packet-card shape.** #7's, made concrete by a consumer that cannot
+poll: a per-entry dependency declaration for wasm entries — the typed
+lane's `injects` on the string lane — so an entry naming
+`jinn:ui-bundle` activates only once its provider is Active, restarts
+when that provider is replaced (the epoch gating the UI-1 card assumed,
+see #46), and is re-armed rather than left `Failed` when a provider it
+needed lands after it. Until then every activation-time injection in
+the distribution needs the transitions subscription this packet added.
+
+**Round 2 (2026-09-02): the verifier's coin toss, reproduced and
+diagnosed — a THIRD face.** Verify round 1 reproduced a boot with the
+transport `Failed`, the bundle entry `Active` and the port never opened;
+the reason was not on the record (#38). This round first made the
+activation name its fault (#38's workaround) and enumerated, from the
+pinned broker (`jinnd-wasm/src/broker/calls.rs`, `instance.rs`,
+`lane.rs` at `85d36b4`), every way the activation can fail: (1) a refusal
+from its one read outside the not-yet set — `grant-refused`, `invalid`,
+`provider-failed` (the provider's instance trapped, hung or gone),
+`inactive-context` (the provider's seat sealed for a swap); (2)
+`net.listen` refused (port held, or outside the grant); (3) the 5 s guest
+deadline (`lane::DEADLINE`) or a trap. Measured over ten fresh boots
+(proof 5b): the activation is ~50 ms from `ContractResolved` to
+`NetListening`, the 1.46 MB read and its verify inside.
+
+Then proof 5b's second run caught the toss itself, at boot 5 of 10, with
+the transport ACTIVE and answering `/` a 503 for the daemon's life —
+neither of #45's two orders, and not a failure at all:
+
+```
+seq entry           kind
+ 27 jinn-api-http   ContractCall { contract: "jinn:ui-bundle", operation: "manifest" }   → missing-dependency
+ 30 jinn-api-http   ContractCall { contract: "jinn:ui-bundle", operation: "manifest" }   → missing-dependency
+ 32 jinn-api-http   ContractCall { contract: "jinn:net", operation: "listen" }
+ 44 jinn-api-http   NetListening { handle: 1, port: … }
+ 47 jinn-ui-bundle  ServiceProvided { service: "jinn:ui-bundle" }
+ 51 jinn-api-http   EffectRegistered { label: "listen jinn:introspect/transitions" }
+ 77 jinn-ui-bundle  FiberTransition { from: "Loading", to: "Active", cause: "InitialLoad" }
+ 79 jinn-api-http   FiberTransition { from: "Loading", to: "Active", cause: "InitialLoad" }
+     (no DispatchTrace for jinn:introspect/transitions; no third manifest call, ever)
+```
+
+The bundle entry provided (47) after the transport's second probe (30)
+and reached Active (77) before the transport's own activation committed
+(79). The transitions listen was registered at 51, inside `activate` —
+and a registration made inside an activation lands in the seat's journal
+when the activation COMMITS (`ActivationOutcome`, `commit_late`), so at
+77 the kernel's publish found no listener on this fiber. Nothing was
+lost by the kernel and nothing was refused: the subscription was simply
+not live yet, and the second probe "closing the window before the
+listen" closes nothing after it. The verifier's face (transport `Failed`)
+and this one (transport `Active`, no bundle) are the same window seen
+from two sides; which side depends on whether the read that missed was
+answered `missing-dependency` or something outside the not-yet set.
+
+**Fixed harness-side, within Law, three ways.** (a) The activation names
+its fault on the record before failing (#38). (b) `provider-failed` and
+`inactive-context` are "not yet": the PROVIDER's contained state (R11),
+which the kernel fails or restarts; the transport rests active without a
+bundle and reads on the witnessed transition instead of dying of a
+sibling's fault. (c) ONE post-commit probe: when both activation probes
+miss, the transport arms `jinn:clock.alarm-at` at an instant already
+past under a bare clock grant the kit now gives it; the wake is
+delivered only after the activation commits, so that one read sees any
+provider that landed before the commit, and a provider landing after it
+is the subscription's, now live. One extra crossing at most per boot,
+never a poll (`docs/notes/2026-09-01-a-witness-is-not-a-poller.md`).
+Proof 3's manifest bound is 1..=4 for it. What remains kernel-shaped is
+unchanged: only a dependency declaration on the string lane (M2-K24)
+makes "activate once the provider is Active" a kernel guarantee instead
+of a subscription, a classification and an alarm.
+
+## 46. A provider swap does not restart a wasm consumer that injected it: epoch gating stops at the string lane, so "a bundle swap is a restart" is not available at this pin
+
+**Grade: reproducible WITH A TRANSCRIPT, measured, packet-card-ready —
+the other half of #45.** Hit in harness packet UI-1 (PLA-349) at pin
+`85d36b4`, proof 4 of `tests/composition/tests/ui.rs`, every run.
+
+The UI-1 card (`docs/plans/ui-malleability-arc.md` §4.1, binding R9)
+states the swap as a restart: edit the bundle entry's `package` and
+`hash`, and "the kernel's epoch gating restarts the transport, which
+re-reads and serves the new hash". SOURCE-OF-TRUTH §3 promises exactly
+that for the typed lane — "a fiber's epoch encodes the identity of every
+provider it depends on; any provider change forces consumers through a
+full clean unload → reload". Measured on the string lane, with the
+transport holding a `jinn:ui-bundle` handle it resolved at activation:
+
+```
+proof 4: swap served 1.240117s after the edit; refused connects while it
+landed: 0; transport incarnation 4 -> 4; bundle crossings 1 -> 2
+```
+
+The bundle entry restarted (its artifact changed); the transport did
+not — no transition, no incarnation, no listener blip. Its resolved
+handle is not a lease the kernel gates on, so the kernel had nothing to
+say to it. What served the new document 1.24 s later is the harness's
+own completion path from #45: the transport witnessed the bundle entry's
+`Active` on `jinn:introspect/transitions` and re-read, one `bundle`
+crossing on the record. That is not silent (the transition and the
+crossing are both ledger rows) and it is not a restart. The card's "blip
+of the API port on a UI swap" (~30 ms, from #27's reconcile) is
+therefore 0 refused connects here, and the proof asserts that number
+rather than the one the card predicted, with this entry as the reason.
+
+**Packet-card shape.** The same card as #45 and #7: a wasm entry's
+dependency declaration, with the epoch semantics the typed lane already
+has — a provider's replacement forces its declared consumers through
+unload → reload (SOURCE-OF-TRUTH §3, R9). When that lands, proof 4
+flips: incarnation +1, one bundle crossing per incarnation, and the
+transitions subscription this packet added becomes dead code to remove.
 

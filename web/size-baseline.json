@@ -1,0 +1,170 @@
+{
+  "_instructions": "Every entry is a file that predates the 300-line limit, carries an ESLint grandfather exemption, or both. `lines` is a budget that may only shrink: growing past it fails CI, and so does a new file over the limit or a new entry in eslint-baseline.json. To leave the list, split the file by responsibility — move one concern into its own module and import it back — then run `pnpm ratchet` and commit the shrunken file. Add nothing here by hand; the ratchet never widens a budget.",
+  "limit": 300,
+  "files": {
+    "scripts/ratchet.mjs": {
+      "exempt": [
+        "complexity"
+      ]
+    },
+    "src/components/activity/log-browser.tsx": {
+      "exempt": [
+        "complexity",
+        "max-lines-per-function"
+      ]
+    },
+    "src/components/auth/pairing-screen.tsx": {
+      "exempt": [
+        "complexity",
+        "max-lines-per-function"
+      ]
+    },
+    "src/components/auth/remote-access-panel.tsx": {
+      "exempt": [
+        "complexity",
+        "max-lines-per-function"
+      ]
+    },
+    "src/components/chat/mobile-tab-bar.tsx": {
+      "exempt": [
+        "max-lines-per-function"
+      ]
+    },
+    "src/components/global-search.tsx": {
+      "exempt": [
+        "@typescript-eslint/no-floating-promises",
+        "complexity",
+        "max-lines-per-function"
+      ]
+    },
+    "src/components/live-stream-widget.tsx": {
+      "lines": 309,
+      "exempt": [
+        "complexity",
+        "max-lines-per-function"
+      ]
+    },
+    "src/components/pill-nav.tsx": {
+      "exempt": [
+        "max-lines-per-function"
+      ]
+    },
+    "src/components/ui/emoji-picker.tsx": {
+      "exempt": [
+        "@typescript-eslint/no-floating-promises",
+        "max-lines-per-function"
+      ]
+    },
+    "src/components/workspaces/create-workspace-dialog.tsx": {
+      "exempt": [
+        "max-lines-per-function"
+      ]
+    },
+    "src/components/workspaces/workspace-menu.tsx": {
+      "exempt": [
+        "complexity",
+        "max-lines-per-function"
+      ]
+    },
+    "src/hooks/use-gateway.tsx": {
+      "exempt": [
+        "max-lines-per-function"
+      ]
+    },
+    "src/hooks/use-keyboard-shortcuts.ts": {
+      "exempt": [
+        "complexity"
+      ]
+    },
+    "src/hooks/use-query-invalidation.ts": {
+      "exempt": [
+        "@typescript-eslint/no-floating-promises",
+        "complexity",
+        "max-lines-per-function"
+      ]
+    },
+    "src/hooks/use-sessions.ts": {
+      "exempt": [
+        "@typescript-eslint/no-floating-promises",
+        "complexity"
+      ]
+    },
+    "src/lib/api.ts": {
+      "lines": 1072,
+      "exempt": [
+        "complexity"
+      ]
+    },
+    "src/lib/todos.ts": {
+      "lines": 367,
+      "exempt": [
+        "complexity"
+      ]
+    },
+    "src/lib/ws.ts": {
+      "exempt": [
+        "max-lines-per-function"
+      ]
+    },
+    "src/routes/auth-provider.tsx": {
+      "exempt": [
+        "complexity",
+        "max-depth",
+        "max-lines-per-function"
+      ]
+    },
+    "src/routes/settings-provider.tsx": {
+      "exempt": [
+        "max-lines-per-function"
+      ]
+    },
+    "src/routes/settings/page.tsx": {
+      "lines": 1474,
+      "exempt": [
+        "complexity",
+        "max-lines-per-function"
+      ]
+    },
+    "src/routes/todos/new-todo-dialog.tsx": {
+      "lines": 414,
+      "exempt": [
+        "complexity",
+        "max-lines-per-function"
+      ]
+    },
+    "src/routes/todos/pickers/picker-contents.tsx": {
+      "lines": 365,
+      "exempt": [
+        "max-lines-per-function"
+      ]
+    },
+    "src/routes/todos/pickers/picker-shell.tsx": {
+      "exempt": [
+        "complexity",
+        "max-lines-per-function"
+      ]
+    },
+    "src/routes/todos/task-page/props-rail.tsx": {
+      "exempt": [
+        "complexity",
+        "max-lines-per-function"
+      ]
+    },
+    "src/routes/todos/todo-dialog.tsx": {
+      "exempt": [
+        "max-lines-per-function"
+      ]
+    },
+    "src/routes/todos/todo-edit-request.ts": {
+      "exempt": [
+        "complexity",
+        "max-lines-per-function"
+      ]
+    },
+    "src/routes/todos/todo-status-mutation.ts": {
+      "exempt": [
+        "complexity"
+      ]
+    }
+  }
+}

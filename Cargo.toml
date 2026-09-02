@@ -23,6 +23,7 @@ members = [
     "plugins/sessions/jinn-session",
     "plugins/settings/jinn-settings",
     "plugins/todos/jinn-todo",
+    "plugins/ui/jinn-ui",
     "plugins/workflows/jinn-workflow",
     "tests/composition",
     "tools/api-kit",
@@ -33,6 +34,7 @@ members = [
     "tools/plugin-kit",
     "tools/session-kit",
     "tools/todo-kit",
+    "tools/ui-kit",
     "tools/workflow-kit",
 ]
 

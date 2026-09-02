@@ -1,0 +1,7 @@
+{
+  "chunks": {},
+  "initialCriticalPath": {
+    "baselineGzipBytes": 189999,
+    "budgetGzipBytes": 195000
+  }
+}

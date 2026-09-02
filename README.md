@@ -13,6 +13,33 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
+Phase UI-1 — kernel pin `85d36b4` (M2-K18), UNCHANGED. **The web UI is
+a profile.** The first packet of the UI malleability arc
+(`docs/plans/ui-malleability-arc.md` §4): the built client is ONE plugin
+artifact, content-addressed by the kernel's own `package` + `hash`
+(`plugins/ui/`, contract `jinn:ui-bundle`); `jinn-api-http` injects it
+at activation, reads the whole archive ONCE as a single crossing,
+verifies every file's sha256 against the manifest fail-closed, and
+serves the document and its assets from memory to any loopback peer
+with NO door and NO crossing — a byte is never a dispatch, a bearer on
+a static path is ignored — while every `/v1/*` request keeps the door
+exactly as 2.8 left it. Swapping the UI is a profile edit of one
+entry's `package` and `hash` (witnessed on the kernel's transitions
+publish and re-read — not a restart at this pin, #46); a bundle that
+does not verify fails the transport and nothing else. The client under `web/` is jinn `43e8647`'s
+shell, Settings and plugins page ported VERBATIM behind a byte-for-byte
+gate over a pinned map (`tools/ui-kit/tests/verbatim.rs`,
+`web/port-map.txt`): the twelve enumerated adaptations (the eighth, `routes/client-providers.tsx`
+minus its two Talk mounts, and the ninth, onboarding unmounted and synthesised, added by COO ruling;
+`routes/settings/page.tsx` joined item 1 in round 2 so the page renders only what the settings seam
+declares; the tenth to twelfth — the plugins inventory read, the talk capability and the shell's
+client-plugin loader — resolve on the daemon or absent client-side and issue no old-gateway request,
+round 3) are the whole diff. Proven through the pinned daemon in
+`tests/composition/tests/ui.rs` — including ten consecutive fresh boots (proof 5b) — 
+(`docs/notes/2026-09-02-a-byte-is-not-a-dispatch.md`). What it is NOT:
+the live half, moments, chat, todos, workflows, the service worker, or
+a plugins page that can enable anything (#37, KG-1 / PLA-348).
+
 Phase 2.8 — kernel pin `85d36b4` (M2-K18), UNCHANGED. **The door.** The
 operator API now consumes `jinn:auth` 0.1.0 (M2-K21): `jinn-api-http`
 puts every request's `Authorization: Bearer` token — or nothing, when
@@ -339,6 +366,8 @@ iteration channel — kernel changes are never made here).
 | `tools/todo-kit` | Builds the todos profile: the two Todo stores above the two session stores |
 | `tools/workflow-kit` | Builds the workflows profile: the two run stores above the two Todo stores |
 | `tools/plugin-kit` | Builds the plugins profile: the two catalogs beside the api trio, plus the disabled and misbound entries the honesty proofs need |
+| `tools/ui-kit` | Builds the `ui` profile: the web client built by its pinned toolchain, archived into the embedded bundle provider beside the plugins profile; `tests/verbatim.rs` is the byte-for-byte gate over `web/port-map.txt` |
+| `web/` | The TypeScript client (not a Cargo member): jinn `43e8647`'s shell, Settings and plugins page, ported verbatim; Node and pnpm pinned by `web/.npmrc` and `packageManager`; the node lane in CI |
 | `plugins/` | First-party plugin crates (wasm components) — land per phase, one seam triple at a time |
 | `profiles/` | Named plugin trees — a product is a profile |
 | `tests/composition` | Real-composition gates: boot generated profiles through the REAL pinned jinnd daemon |
@@ -538,6 +567,39 @@ Its own README carries these in full; the load-bearing ones:
   all** — a list here omits exactly the entries that are most broken.
 - **The surface is read-only,** and the join is three reads at three
   instants rather than one atomic view.
+
+### UI-1 — The bundle
+
+- **The plugins page cannot enable, disable, rescan or reveal a plugin**
+  (#37): the operator API writes `config` only, and the capability
+  constitution 04 names is a kernel card (jinnd M2-K23, PLA-348). Every
+  such control is rendered disabled and says so.
+- **A failed plugin shows `failed` and no reason** (#38), on the page
+  that exists to show reasons — the transcript of the page trying is
+  this packet's addition to that finding.
+- **Activation-time injection is a coin toss the kernel does not
+  re-arm** (#45), and **a provider swap does not restart its wasm
+  consumer** (#46): the transport completes and refreshes its one read
+  on `jinn:introspect/transitions`, a read-only kernel grant it has no
+  other use for, plus ONE post-commit probe on a one-shot clock alarm
+  (a listen made inside `activate` is not live until the activation
+  commits — the coin toss's third face, transcript in #45); a provider's
+  contained failure is "not yet" to it, and its own activation fault is
+  named on the ledger before it fails (#38's workaround). Proof 4
+  asserts the incarnation unchanged until M2-K24.
+- **The Settings page shows only what a profile's settings seam
+  declares** — in the `ui` profile that is `cron` (`jobs`, `tick-ms`,
+  `entry-id`; the secret reference is read-only); the config.yaml-shaped
+  sections are hidden and named in one caption, never sent.
+- **The bundle is one 1.46 MB crossing per transport activation. (named
+  here)** Measured in proof 3 and recorded in the note; a page load is N
+  connections because responses close.
+- **Only Settings and Plugins are ported; the nav rail still lists the
+  absent surfaces. (named here)** `nav.ts` is verbatim and its
+  feature-disabled snapshot hides only Notes; an absent destination
+  lands on the plugin splat.
+- **The service worker is dropped** (plan §8, question 4), so the UI is
+  not installable and has no offline shell in this packet.
 
 ### What is not here at all
 

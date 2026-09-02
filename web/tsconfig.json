@@ -1,0 +1,43 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["dom", "dom.iterable", "esnext"],
+    "jsx": "react-jsx",
+    "allowJs": true,
+    "noEmit": true,
+    "declaration": true,
+    "declarationMap": false,
+    "incremental": true,
+    "tsBuildInfoFile": "./tsconfig.tsbuildinfo",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["vite/client", "node"],
+    "paths": {
+      "@/*": [
+        "./src/*"
+      ],
+      "@jinn/plugin-sdk": [
+        "./src/plugins/sdk/index.ts"
+      ],
+      "@jinn/gateway-events": [
+        "./gateway-events/src/index.ts"
+      ],
+      "@jinn/fallback-map-wire": [
+        "./vendor/fallback-map-wire.ts"
+      ],
+      "@jinn/model-id": [
+        "./vendor/model-id.ts"
+      ]
+    }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "scripts/**/*.mjs"
+  ],
+  "exclude": [
+    "node_modules",
+    "out",
+    "dist"
+  ]
+}

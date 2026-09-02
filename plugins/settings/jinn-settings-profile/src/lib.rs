@@ -106,6 +106,7 @@ fn resolved(held: &Held) -> Result<Resolved, SettingsError> {
         layers,
         revision: held.revision,
         hot_keys: held.declaration.hot_keys.clone(),
+        schema: held.declaration.schema.clone(),
         extra: jinn_settings::Extensions::new(),
     })
 }

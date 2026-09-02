@@ -19,11 +19,20 @@
 //! cached — and only a `principal` reaches `dispatch`. A refusal is the
 //! seam's own `unauthenticated` class on the wire.
 //!
+//! THE BUNDLE (packet UI-1): when its profile mounts one, this transport
+//! also serves the web UI — the document and its assets — from memory it
+//! filled ONCE at `activate` from the injected `jinn:ui-bundle`, verified
+//! against the manifest fail-closed (`ui.rs`). A GET on any non-`/v1`
+//! path is answered before the door and with no crossing: a byte is never
+//! a dispatch on the connection's behalf, and a bearer on a static path is
+//! ignored. Every `/v1/*` request keeps the door as 2.8 left it.
+//!
 //! World `jinn:plugin@0.4.0`: the listener and its connections are kernel
 //! registrations — released on suspend, re-listened by the next
 //! `activate`.
 
 mod door;
+mod ui;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -31,12 +40,12 @@ use std::sync::Mutex;
 use jinn_api::{
     decode_engine_answer, decode_session_answer, decode_todo_answer, decode_workflow_answer,
     engine_list, engine_routable, engine_route, is_engines_path, is_sessions_path, is_todos_path,
-    is_workflows_path, plugin_catalog_list, plugin_catalog_routable, plugin_payload,
-    plugin_route, route, run_id_payload, run_payload, session_payload, session_route,
-    store_list, store_routable, todo_payload, todo_route, todo_store_list, todo_store_routable,
-    workflow_payload, workflow_route, workflow_store_list, workflow_store_routable, Answer,
-    ApiError, EngineRoute, ErrorCode, Outcome, PluginRoute, SessionRoute, TodoRoute, WorkflowRoute,
-    ENGINE_METHODS, PLUGIN_METHODS, SESSION_METHODS, TODO_METHODS, WORKFLOW_METHODS,
+    is_workflows_path, plugin_catalog_list, plugin_catalog_routable, plugin_payload, plugin_route,
+    route, run_id_payload, run_payload, session_payload, session_route, store_list, store_routable,
+    todo_payload, todo_route, todo_store_list, todo_store_routable, workflow_payload,
+    workflow_route, workflow_store_list, workflow_store_routable, Answer, ApiError, EngineRoute,
+    ErrorCode, Outcome, PluginRoute, SessionRoute, TodoRoute, WorkflowRoute, ENGINE_METHODS,
+    PLUGIN_METHODS, SESSION_METHODS, TODO_METHODS, WORKFLOW_METHODS,
 };
 use jinn_api::{decode_plugin_answer, is_plugins_path, OP_CATALOG_DESCRIBE};
 use jinn_api_http_wire::{error_answer_response, error_response, parse, response, Parse};
@@ -57,6 +66,10 @@ use exports::jinn::plugin::lifecycle::{Guest, GuestFault};
 use jinn::plugin::{effects, net, services};
 
 const EFFECT_TOKEN: u64 = 1;
+/// The label under which an activation that is about to fail names its
+/// reason on the ledger (a guest's failure records its state and never
+/// its reason at this pin, FINDINGS.md #38; the row outlives the fiber).
+const FAULT_TOKEN: u64 = 3;
 /// Where the kernel delivers socket readiness (the token IS the handle).
 const READABLE_TOPIC: &str = "jinn:net/readable";
 /// One read's size; a request head or body larger than the wire caps is
@@ -107,6 +120,11 @@ struct HttpConfig {
     /// is this seam's own and may never stand in for another seam's.
     #[serde(default)]
     catalogs: Vec<String>,
+    /// The bundle entry this API serves, when the profile mounts one —
+    /// written beside this entry's `jinn:ui-bundle` and `jinn:introspect`
+    /// grants (the discipline of `engines`); watched for on transitions.
+    #[serde(default)]
+    ui_bundle_entry: Option<String>,
 }
 
 fn default_host() -> String {
@@ -126,6 +144,10 @@ static STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static TODO_STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static WORKFLOW_STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static CATALOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// The verified bundle this incarnation serves, `None` without one, and
+/// the entry it is read from.
+static BUNDLE: Mutex<Option<ui::Bundle>> = Mutex::new(None);
+static BUNDLE_ENTRY: Mutex<String> = Mutex::new(String::new());
 
 fn fault(context: &str, error: impl std::fmt::Debug) -> GuestFault {
     GuestFault::Failed(format!("{context}: {error:?}"))
@@ -154,7 +176,7 @@ fn answered(answer: &Answer) -> Vec<u8> {
 
 /// A route miss on a surface: 405 when the path is one this surface
 /// shapes under another method, 404 otherwise. Typed either way.
-fn route_miss(known_path: bool) -> Vec<u8> {
+pub(crate) fn route_miss(known_path: bool) -> Vec<u8> {
     let (status, detail) = if known_path {
         (405, "method not allowed on this path")
     } else {
@@ -271,12 +293,7 @@ fn store_call(
 /// session's life in one of them. Every route is exactly one granted
 /// contract call per store addressed — the store list is one per
 /// configured store.
-fn dispatch_sessions(
-    method: &str,
-    path: &str,
-    query: serde_json::Value,
-    body: &[u8],
-) -> Vec<u8> {
+fn dispatch_sessions(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> Vec<u8> {
     let Some(sessions_route) = session_route(method, path) else {
         return route_miss(
             SESSION_METHODS
@@ -671,6 +688,12 @@ fn serve(conns: &mut Vec<Conn>, handle: u64) -> Result<(), GuestFault> {
         }
     }
     let outcome = match parse(&conns[index].buffer) {
+        // A static path first: bytes from memory, no door, no crossing
+        // (UI-1; proven in tests/composition/tests/ui.rs). The credential
+        // the connection may have presented is never read here.
+        Parse::Request(request) if ui::is_static(&request) => {
+            Some(ui::answer(BUNDLE.lock().unwrap().as_ref(), &request))
+        }
         // The door first, the dispatch only through it: `admit` answers
         // `Err(wire)` — the complete refusal to write — for anything the
         // kernel did not grant a principal, and NO dispatch happens on
@@ -703,28 +726,51 @@ fn serve(conns: &mut Vec<Conn>, handle: u64) -> Result<(), GuestFault> {
     Ok(())
 }
 
+/// The activation proper; `Guest::activate` puts its refusal on the record.
+fn activate(config: Vec<u8>) -> Result<(), GuestFault> {
+    let config: HttpConfig = serde_json::from_slice(&config)
+        .map_err(|error| GuestFault::Failed(format!("malformed config: {error}")))?;
+    effects::register("jinn-api-http on duty", EFFECT_TOKEN)
+        .map_err(|error| fault("effect", error))?;
+    // The bundle BEFORE the bind: read once, verified, held for this
+    // incarnation; a bundle that does not verify fails this fiber
+    // here, with no listener ever opened (R11, UI-1 card §4.3 item 5).
+    *BUNDLE.lock().unwrap() = match &config.ui_bundle_entry {
+        Some(entry) => {
+            *BUNDLE_ENTRY.lock().unwrap() = entry.clone();
+            ui::load()?
+        }
+        None => None,
+    };
+    // The bind: a refusal (port outside the grant, non-loopback host,
+    // no grant) is the broker's, on the record; this fiber then fails
+    // its activation — contained to this entry (R11), never a crash.
+    let addr = format!("{}:{}", config.host, config.port);
+    let listener = net::listen(&addr).map_err(|error| fault(&format!("listen {addr}"), error))?;
+    LISTENER.store(listener, Ordering::SeqCst);
+    CONNS.lock().unwrap().clear();
+    *ENGINES.lock().unwrap() = config.engines;
+    *STORES.lock().unwrap() = config.stores;
+    *TODO_STORES.lock().unwrap() = config.todo_stores;
+    *WORKFLOW_STORES.lock().unwrap() = config.workflow_stores;
+    *CATALOGS.lock().unwrap() = config.catalogs;
+    Ok(())
+}
+
 struct Http;
 
 impl Guest for Http {
     fn activate(config: Vec<u8>) -> Result<(), GuestFault> {
-        let config: HttpConfig = serde_json::from_slice(&config)
-            .map_err(|error| GuestFault::Failed(format!("malformed config: {error}")))?;
-        effects::register("jinn-api-http on duty", EFFECT_TOKEN)
-            .map_err(|error| fault("effect", error))?;
-        // The bind: a refusal (port outside the grant, non-loopback host,
-        // no grant) is the broker's, on the record; this fiber then fails
-        // its activation — contained to this entry (R11), never a crash.
-        let addr = format!("{}:{}", config.host, config.port);
-        let listener =
-            net::listen(&addr).map_err(|error| fault(&format!("listen {addr}"), error))?;
-        LISTENER.store(listener, Ordering::SeqCst);
-        CONNS.lock().unwrap().clear();
-        *ENGINES.lock().unwrap() = config.engines;
-        *STORES.lock().unwrap() = config.stores;
-        *TODO_STORES.lock().unwrap() = config.todo_stores;
-        *WORKFLOW_STORES.lock().unwrap() = config.workflow_stores;
-        *CATALOGS.lock().unwrap() = config.catalogs;
-        Ok(())
+        activate(config).inspect_err(|reason| {
+            // On the record before the fiber is gone (#38): the row stays,
+            // the registration is withdrawn with everything else.
+            let label = format!("jinn-api-http activation failed: {reason:?}");
+            let cut = label
+                .char_indices()
+                .nth(400)
+                .map_or(label.len(), |(at, _)| at);
+            let _ = effects::register(&label[..cut], FAULT_TOKEN);
+        })
     }
 
     fn check(_consumer: u64) -> bool {
@@ -739,6 +785,26 @@ impl Guest for Http {
         // Only the kernel's typed readiness wake of OUR sockets is a
         // reason to touch them; anything else here is a contract
         // violation, refused loudly.
+        // A witnessed transition: the bundle entry reaching Active (ui.rs);
+        // or the one post-commit probe, which reads only while nothing is
+        // held (a bundle already read is the transition's to refresh).
+        let probe = token == ui::PROBE_TOKEN && topic == ui::ALARM_TOPIC;
+        if probe || (token == ui::TRANSITIONS_TOKEN && topic == jinn_plugins::TRANSITIONS_TOPIC) {
+            if probe && BUNDLE.lock().unwrap().is_some() {
+                return Ok(Vec::new());
+            }
+            if probe || ui::completes(&BUNDLE_ENTRY.lock().unwrap(), &payload) {
+                let held = BUNDLE
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|bundle| bundle.manifest.bundle_sha256.clone());
+                if let Some(bundle) = ui::read(held.as_deref())? {
+                    *BUNDLE.lock().unwrap() = Some(bundle);
+                }
+            }
+            return Ok(Vec::new());
+        }
         let handle: Option<[u8; 8]> = payload.as_slice().try_into().ok();
         let (Some(handle), true) = (handle, topic == READABLE_TOPIC) else {
             return Err(GuestFault::Failed(format!(

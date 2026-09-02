@@ -174,6 +174,7 @@ fn the_envelope_and_schemas_round_trip_additively() {
         layers: layers(),
         revision: 3,
         hot_keys: vec!["jobs".into()],
+        schema: Schema::default(),
         extra: Extensions::new(),
     });
     assert_eq!(Answer::decode(&ok.encode()), ok);

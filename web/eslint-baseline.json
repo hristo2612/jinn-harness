@@ -1,0 +1,527 @@
+{
+  "_instructions": "Every entry is code that predates the lint floor, exempt from exactly the rules listed. To leave the list: split the function at its seams into named helpers, give the branchy part its own function with an early return per case, hoist a nested loop or condition into a helper so the body reads flat, group related parameters into one options object, await the promise or hand it to `void`. Then run `node scripts/eslint-baseline.mjs` and commit the shrunken file. Add nothing here by hand — inline eslint-disable comments are ignored outright, so this file is the only suppression channel, and it is meant to shrink.",
+  "files": {
+    "scripts/ratchet.mjs": [
+      "complexity"
+    ],
+    "src/components/activity/log-browser.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/auth/pairing-screen.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/auth/remote-access-panel.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/__tests__/comms-v2.test.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "max-depth"
+    ],
+    "src/components/chat/agent-relay.tsx": [
+      "complexity"
+    ],
+    "src/components/chat/background-activity-status.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/callback-burst.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/chat-blocks.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/chat-employee-picker.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/chat-input.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/chat-messages.tsx": [
+      "complexity",
+      "max-depth",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/chat-pane.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/chat-sidebar.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "complexity",
+      "max-depth",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/chat-tabs.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/cli-keybar.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/comms-callout.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/company-activity-card.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/dispatch-row.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/file-attachment.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/file-view.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/fold-region.tsx": [
+      "complexity",
+      "max-lines-per-function",
+      "max-params"
+    ],
+    "src/components/chat/handoff-card.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/media-preview.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/message-markdown.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/message-media.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/mic-waveform.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/mobile-tab-bar.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/model-selector-row.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/queue-panel.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/session-row-menu.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/shortcut-overlay.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/stale-chat-notice.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/teammate-reply.tsx": [
+      "complexity"
+    ],
+    "src/components/chat/thread-peek.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/todo-activity-burst.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/chat/tts-engine.ts": [
+      "@typescript-eslint/no-floating-promises",
+      "max-depth",
+      "max-lines-per-function"
+    ],
+    "src/components/chat/voice-message.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/cli-terminal.tsx": [
+      "complexity",
+      "max-depth",
+      "max-lines-per-function"
+    ],
+    "src/components/code-block-chrome.tsx": [
+      "@typescript-eslint/no-floating-promises"
+    ],
+    "src/components/crons/weekly-schedule.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/global-search.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/live-stream-widget.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/markdown-view.tsx": [
+      "@typescript-eslint/no-unused-vars",
+      "max-lines-per-function"
+    ],
+    "src/components/onboarding-wizard.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "complexity",
+      "max-depth",
+      "max-lines-per-function"
+    ],
+    "src/components/org/employee-detail.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/org/employee-editor.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/org/employee-node.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/org/layout/d3-tree-layout.ts": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/org/layout/dagre-fallback.ts": [
+      "complexity",
+      "max-depth",
+      "max-lines-per-function"
+    ],
+    "src/components/pill-nav.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/stt/whisper-download-modal.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/ui/emoji-picker.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "max-lines-per-function"
+    ],
+    "src/components/ui/image-lightbox.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/ui/state-line.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/components/ui/video-player.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/workspaces/create-workspace-dialog.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/components/workspaces/workspace-menu.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/hooks/use-chat-tabs.ts": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/hooks/use-gateway.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/hooks/use-keyboard-shortcuts.ts": [
+      "complexity"
+    ],
+    "src/hooks/use-live-session.ts": [
+      "@typescript-eslint/no-floating-promises",
+      "complexity",
+      "max-depth",
+      "max-lines-per-function"
+    ],
+    "src/hooks/use-query-invalidation.ts": [
+      "@typescript-eslint/no-floating-promises",
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/hooks/use-sessions.ts": [
+      "@typescript-eslint/no-floating-promises",
+      "complexity"
+    ],
+    "src/hooks/use-stick-to-bottom.ts": [
+      "max-lines-per-function"
+    ],
+    "src/hooks/use-stt.ts": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/lib/api.ts": [
+      "complexity"
+    ],
+    "src/lib/blocks.ts": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/lib/conversations.ts": [
+      "max-lines-per-function"
+    ],
+    "src/lib/cron-utils.ts": [
+      "complexity",
+      "max-depth",
+      "max-lines-per-function"
+    ],
+    "src/lib/file-read-request.ts": [
+      "complexity"
+    ],
+    "src/lib/skills.ts": [
+      "complexity"
+    ],
+    "src/lib/todos.ts": [
+      "complexity"
+    ],
+    "src/lib/ws.ts": [
+      "max-lines-per-function"
+    ],
+    "src/routes/auth-provider.tsx": [
+      "complexity",
+      "max-depth",
+      "max-lines-per-function"
+    ],
+    "src/routes/chat/page.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/cron/detail.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/cron/page.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/experiments/detail.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/experiments/reading-chart.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/limits/page.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/limits/use-engine-limits.ts": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/logs/page.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/more/page.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/notes/note-editor.tsx": [
+      "complexity",
+      "max-depth",
+      "max-lines-per-function"
+    ],
+    "src/routes/notes/note-list.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/notes/note-mic.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/notes/note-sidebar.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/notes/page.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/org/page.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/redesign/page.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/settings-provider.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/settings/page.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/skills/detail.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/skills/page.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/__tests__/filter-bar.test.tsx": [
+      "@typescript-eslint/no-floating-promises"
+    ],
+    "src/routes/todos/board/board-page.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/board/board-switcher.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/board/card-tree.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/board/card.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/board/column.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/board/use-board-drag.ts": [
+      "complexity",
+      "max-depth",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/board/use-board.ts": [
+      "max-params"
+    ],
+    "src/routes/todos/filter-bar.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/list/group-items.ts": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/list/list-group.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/list/list-row.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/needs-you-view.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/new-todo-dialog.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/pickers/picker-contents.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/pickers/picker-shell.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/acceptance.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/activity.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/attachment-preview.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/attachments.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/banner.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/body-editor.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/chip-cluster.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/crumb-bar.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/live-body-editor.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/props-rail.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/relations.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/subtasks.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/task-page.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/task-page/use-task-pickers.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/todo-dialog.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/todo-edit-request.ts": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/todo-filter-sheet.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/todos/todo-status-mutation.ts": [
+      "complexity"
+    ],
+    "src/routes/workflow/editor/edge.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/workflow/editor/editor.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/workflow/editor/inspector.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/workflow/editor/node-card.tsx": [
+      "complexity"
+    ],
+    "src/routes/workflow/editor/palette.tsx": [
+      "max-lines-per-function"
+    ],
+    "src/routes/workflow/editor/store.ts": [
+      "max-lines-per-function"
+    ],
+    "src/routes/workflow/list.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "max-lines-per-function"
+    ],
+    "src/routes/workflow/page.tsx": [
+      "@typescript-eslint/no-floating-promises",
+      "max-lines-per-function"
+    ],
+    "src/routes/workflow/run-canvas.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/workflow/run-inspector.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "src/routes/workflow/run.tsx": [
+      "complexity",
+      "max-lines-per-function"
+    ],
+    "vite.config.ts": [
+      "complexity",
+      "max-lines-per-function"
+    ]
+  }
+}

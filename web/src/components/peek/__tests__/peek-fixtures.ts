@@ -1,0 +1,61 @@
+import type { WorkItemDetailWire, WorkItemEventWire } from "@/lib/api"
+
+/** Five distinct whispers, oldest first — the order the gateway sends. */
+export const EVENTS: WorkItemEventWire[] = [
+  ["created", "created this todo"],
+  ["label_changed", "changed the labels"],
+  ["relation_added", "linked a related todo"],
+  ["session_linked", "linked a session"],
+  ["attachment_removed", "removed an attachment"],
+].map(([kind], index) => ({
+  id: `e${index + 1}`,
+  workItemId: "ICI-1",
+  kind,
+  fromStatus: null,
+  toStatus: null,
+  actor: "a-lead",
+  detail: null,
+  createdAt: `2026-08-0${index + 1}T00:00:00.000Z`,
+}))
+
+export const BODY = "A body long enough to want clamping across three lines."
+
+export function detailOf(
+  id: string,
+  overrides: Partial<WorkItemDetailWire["workItem"]> = {},
+): WorkItemDetailWire {
+  return {
+    workItem: {
+      id,
+      version: 4,
+      title: `Title of ${id}`,
+      body: BODY,
+      status: "executing",
+      department: null,
+      assignee: "a-lead",
+      priority: 3,
+      rank: null,
+      source: "human",
+      sourceRef: null,
+      acceptance: null,
+      verifyPolicy: null,
+      rounds: 0,
+      budgetUsd: null,
+      approvalState: null,
+      approvalRequest: null,
+      approvalRef: null,
+      approvalTarget: null,
+      approvalEscalatedAt: null,
+      approvalDecidedBy: null,
+      approvalDecidedAt: null,
+      // Only ICI-1 has a parent, so following it does not loop back on itself.
+      parentId: id === "ICI-1" ? "ICI-9" : null,
+      createdAt: "2026-08-01T00:00:00.000Z",
+      updatedAt: "2026-08-05T00:00:00.000Z",
+      closedAt: null,
+      ...overrides,
+    },
+    spendUsd: 0,
+    events: EVENTS,
+  }
+}

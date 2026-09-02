@@ -19,8 +19,10 @@ jobs:
           # The zero-personal-data bound, made mechanical: no target/ tree
           # is ever tracked, and no tracked text contains a machine home
           # path. This file excludes itself (it must name the pattern).
-          if git ls-files | grep -E '(^|/)target/'; then
-            echo "FAIL: tracked build state (target/) in the tree"; exit 1
+          # Widened for the TypeScript tree (inventory §6.4 item 1): an
+          # install tree or a build output in history is the same class.
+          if git ls-files | grep -E '(^|/)(target|node_modules|out|dist)/'; then
+            echo "FAIL: tracked build state (target/, node_modules/, out/, dist/) in the tree"; exit 1
           fi
           if git grep -I -n -E '/(Users|home)/[A-Za-z]' -- ':(exclude).github/workflows/ci.yml'; then
             echo "FAIL: machine path in tracked content"; exit 1
@@ -66,3 +68,31 @@ jobs:
             export JINND_CLONE_URL="https://x-access-token:${JINND_READ_TOKEN}@github.com/hristo2612/jinnd.git"
           fi
           cargo test -p composition -- --nocapture
+
+  web:
+    # The node lane (docs/plans/ui-malleability-arc.md §4.2 "Toolchain"): the
+    # TypeScript client under web/, gated as the Rust lanes are — install
+    # frozen, typecheck, lint, test, build, then the perf budget with its
+    # native-marker scan and the size ratchet. No absolute paths anywhere:
+    # the privacy firewall above greps every tracked file.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.6.4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.13.0
+          cache: pnpm
+          cache-dependency-path: web/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm lint
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm perf:budget
+      - run: pnpm ratchet

@@ -1,0 +1,406 @@
+# The UI-1 port map — the PINNED mapping the verbatim gate (proof 6,
+# tools/ui-kit/tests/verbatim.rs) reads. One row per tracked file under
+# web/, tab-separated: <status> <path at jinn 43e8647> <path under web/>.
+#   verbatim  bytes under web/ EQUAL the bytes at the pinned sha (an EMPTY diff)
+#   adapted   bytes DIFFER, and the file is one of the enumerated adaptations
+#             (docs/plans/ui-malleability-arc.md §4.2, item number in the 4th column)
+#   new       no source at the sha (the 2nd column is `-`), and the path must NOT
+#             exist under packages/web at the sha either — a new file can never
+#             hide an unlisted adaptation.
+# Every tracked file under web/ except this map must appear exactly once; the
+# gate fails in both directions. Item 8 is routes/client-providers.tsx minus its
+# two Talk mounts (§7 forbids porting Talk) — declared on the Todo before the
+# first edit and added to the card by COO ruling (§4.2 item 8, §8 amendment 3).
+# Items 10 and 11 (§8 amendment 6) are the two files the verifier's round-2
+# network transcript caught issuing old-gateway requests from the mounted
+# Settings surface; item 12 is `plugins/disk-plugins.ts`, the shell's client-plugin
+# loader, the ACTUAL source of that transcript's `GET /api/plugins` (declared on
+# the Todo in round 3 with the evidence). Each adapted test row carries its
+# module's item number, the item-9 precedent.
+#
+# --- the shell, Settings, the plugins page, components/ui (the import closure
+# --- of the trimmed route table, computed at the sha)
+verbatim	packages/web/src/components/activity/log-browser.tsx	src/components/activity/log-browser.tsx
+verbatim	packages/web/src/components/auth/auth-motion.tsx	src/components/auth/auth-motion.tsx
+verbatim	packages/web/src/components/auth/native-pairing-screen.tsx	src/components/auth/native-pairing-screen.tsx
+adapted	packages/web/src/components/auth/pairing-screen.tsx	src/components/auth/pairing-screen.tsx	2
+verbatim	packages/web/src/components/auth/remote-access-panel.tsx	src/components/auth/remote-access-panel.tsx
+verbatim	packages/web/src/components/chat/chat-hydration.tsx	src/components/chat/chat-hydration.tsx
+verbatim	packages/web/src/components/chat/chat-route-helpers.ts	src/components/chat/chat-route-helpers.ts
+verbatim	packages/web/src/components/chat/mobile-tab-bar.tsx	src/components/chat/mobile-tab-bar.tsx
+verbatim	packages/web/src/components/chat/new-chat-helpers.ts	src/components/chat/new-chat-helpers.ts
+verbatim	packages/web/src/components/chat/todo-prefix-context.tsx	src/components/chat/todo-prefix-context.tsx
+verbatim	packages/web/src/components/edge-back/edge-back-layer.tsx	src/components/edge-back/edge-back-layer.tsx
+verbatim	packages/web/src/components/edge-back/previous-view-snapshot.ts	src/components/edge-back/previous-view-snapshot.ts
+verbatim	packages/web/src/components/edge-back/use-edge-back-gesture.ts	src/components/edge-back/use-edge-back-gesture.ts
+verbatim	packages/web/src/components/emoji-favicon.tsx	src/components/emoji-favicon.tsx
+verbatim	packages/web/src/components/global-search.tsx	src/components/global-search.tsx
+verbatim	packages/web/src/components/global-search/command-list.tsx	src/components/global-search/command-list.tsx
+verbatim	packages/web/src/components/global-search/command-object-picker.tsx	src/components/global-search/command-object-picker.tsx
+verbatim	packages/web/src/components/global-search/command-pane.tsx	src/components/global-search/command-pane.tsx
+verbatim	packages/web/src/components/global-search/kind-meta.ts	src/components/global-search/kind-meta.ts
+verbatim	packages/web/src/components/global-search/match-snippet.tsx	src/components/global-search/match-snippet.tsx
+verbatim	packages/web/src/components/global-search/preview-pane.tsx	src/components/global-search/preview-pane.tsx
+verbatim	packages/web/src/components/global-search/quick-create-todo.tsx	src/components/global-search/quick-create-todo.tsx
+verbatim	packages/web/src/components/global-search/read-back-line.tsx	src/components/global-search/read-back-line.tsx
+verbatim	packages/web/src/components/global-search/recents.ts	src/components/global-search/recents.ts
+verbatim	packages/web/src/components/global-search/result-list.tsx	src/components/global-search/result-list.tsx
+verbatim	packages/web/src/components/global-search/rows.ts	src/components/global-search/rows.ts
+verbatim	packages/web/src/components/global-search/static-pages.tsx	src/components/global-search/static-pages.tsx
+verbatim	packages/web/src/components/global-search/use-command.ts	src/components/global-search/use-command.ts
+verbatim	packages/web/src/components/global-search/use-global-search.ts	src/components/global-search/use-global-search.ts
+verbatim	packages/web/src/components/global-search/use-search-keyboard.ts	src/components/global-search/use-search-keyboard.ts
+verbatim	packages/web/src/components/global-search/use-todo-workbench.ts	src/components/global-search/use-todo-workbench.ts
+verbatim	packages/web/src/components/global-search/verbs.ts	src/components/global-search/verbs.ts
+verbatim	packages/web/src/components/global-search/workbench.tsx	src/components/global-search/workbench.tsx
+verbatim	packages/web/src/components/live-stream-widget.tsx	src/components/live-stream-widget.tsx
+adapted	packages/web/src/components/page-layout.tsx	src/components/page-layout.tsx	9
+verbatim	packages/web/src/components/pill-nav.tsx	src/components/pill-nav.tsx
+verbatim	packages/web/src/components/route-loading.tsx	src/components/route-loading.tsx
+verbatim	packages/web/src/components/search-overlay-context.tsx	src/components/search-overlay-context.tsx
+verbatim	packages/web/src/components/shell/large-title-header.tsx	src/components/shell/large-title-header.tsx
+verbatim	packages/web/src/components/shell/page-scaffold.tsx	src/components/shell/page-scaffold.tsx
+verbatim	packages/web/src/components/shell/primary-action.tsx	src/components/shell/primary-action.tsx
+verbatim	packages/web/src/components/status-bar.tsx	src/components/status-bar.tsx
+verbatim	packages/web/src/components/talk/orb-canvas.tsx	src/components/talk/orb-canvas.tsx
+verbatim	packages/web/src/components/talk/orb-materials.ts	src/components/talk/orb-materials.ts
+verbatim	packages/web/src/components/talk/orb-motion.ts	src/components/talk/orb-motion.ts
+verbatim	packages/web/src/components/talk/orb-painters.ts	src/components/talk/orb-painters.ts
+verbatim	packages/web/src/components/talk/orb-scene.ts	src/components/talk/orb-scene.ts
+verbatim	packages/web/src/components/talk/orb-variant-picker.tsx	src/components/talk/orb-variant-picker.tsx
+verbatim	packages/web/src/components/talk/use-reduced-motion.ts	src/components/talk/use-reduced-motion.ts
+verbatim	packages/web/src/components/ui/badge.tsx	src/components/ui/badge.tsx
+verbatim	packages/web/src/components/ui/button.tsx	src/components/ui/button.tsx
+verbatim	packages/web/src/components/ui/card.tsx	src/components/ui/card.tsx
+verbatim	packages/web/src/components/ui/dialog.tsx	src/components/ui/dialog.tsx
+verbatim	packages/web/src/components/ui/dropdown-menu.tsx	src/components/ui/dropdown-menu.tsx
+verbatim	packages/web/src/components/ui/emoji-picker.tsx	src/components/ui/emoji-picker.tsx
+verbatim	packages/web/src/components/ui/employee-avatar.tsx	src/components/ui/employee-avatar.tsx
+verbatim	packages/web/src/components/ui/icon.tsx	src/components/ui/icon.tsx
+verbatim	packages/web/src/components/ui/input.tsx	src/components/ui/input.tsx
+verbatim	packages/web/src/components/ui/scroll-area.tsx	src/components/ui/scroll-area.tsx
+verbatim	packages/web/src/components/ui/select.tsx	src/components/ui/select.tsx
+verbatim	packages/web/src/components/ui/skeleton.tsx	src/components/ui/skeleton.tsx
+verbatim	packages/web/src/components/ui/switch.tsx	src/components/ui/switch.tsx
+verbatim	packages/web/src/components/ui/tabs.tsx	src/components/ui/tabs.tsx
+verbatim	packages/web/src/components/ui/textarea.tsx	src/components/ui/textarea.tsx
+verbatim	packages/web/src/components/ui/tooltip.tsx	src/components/ui/tooltip.tsx
+verbatim	packages/web/src/components/workspaces/create-workspace-dialog.tsx	src/components/workspaces/create-workspace-dialog.tsx
+verbatim	packages/web/src/components/workspaces/native-workspace-switcher.tsx	src/components/workspaces/native-workspace-switcher.tsx
+verbatim	packages/web/src/components/workspaces/workspace-menu.tsx	src/components/workspaces/workspace-menu.tsx
+verbatim	packages/web/src/contrib/boundary.tsx	src/contrib/boundary.tsx
+verbatim	packages/web/src/contrib/registry.ts	src/contrib/registry.ts
+verbatim	packages/web/src/contrib/slot.tsx	src/contrib/slot.tsx
+verbatim	packages/web/src/contrib/types.ts	src/contrib/types.ts
+verbatim	packages/web/src/contrib/use-contributions.ts	src/contrib/use-contributions.ts
+verbatim	packages/web/src/hooks/use-cron.ts	src/hooks/use-cron.ts
+verbatim	packages/web/src/hooks/use-departments.ts	src/hooks/use-departments.ts
+verbatim	packages/web/src/hooks/use-features.ts	src/hooks/use-features.ts
+adapted	packages/web/src/hooks/use-gateway.tsx	src/hooks/use-gateway.tsx	3
+verbatim	packages/web/src/hooks/use-idle-mount.ts	src/hooks/use-idle-mount.ts
+verbatim	packages/web/src/hooks/use-keyboard-shortcuts.ts	src/hooks/use-keyboard-shortcuts.ts
+verbatim	packages/web/src/hooks/use-model-registry.ts	src/hooks/use-model-registry.ts
+verbatim	packages/web/src/hooks/use-onboarding.ts	src/hooks/use-onboarding.ts
+verbatim	packages/web/src/hooks/use-query-invalidation.ts	src/hooks/use-query-invalidation.ts
+verbatim	packages/web/src/hooks/use-root-css-variables.ts	src/hooks/use-root-css-variables.ts
+verbatim	packages/web/src/hooks/use-sessions.ts	src/hooks/use-sessions.ts
+verbatim	packages/web/src/hooks/use-todo-prefixes.ts	src/hooks/use-todo-prefixes.ts
+verbatim	packages/web/src/hooks/use-workspaces.ts	src/hooks/use-workspaces.ts
+adapted	packages/web/src/lib/api-config.ts	src/lib/api-config.ts	1
+verbatim	packages/web/src/lib/api-experiments.ts	src/lib/api-experiments.ts
+verbatim	packages/web/src/lib/api-stt.ts	src/lib/api-stt.ts
+verbatim	packages/web/src/lib/api-todo-capture.ts	src/lib/api-todo-capture.ts
+verbatim	packages/web/src/lib/api-workflow-lifecycle.ts	src/lib/api-workflow-lifecycle.ts
+adapted	packages/web/src/lib/api.ts	src/lib/api.ts	1
+new	-	src/lib/api-v1-wire.ts
+adapted	packages/web/src/lib/app-routes.ts	src/lib/app-routes.ts	5
+adapted	packages/web/src/main.tsx	src/main.tsx	5
+adapted	packages/web/src/lib/auth.ts	src/lib/auth.ts	2
+verbatim	packages/web/src/lib/debug-log.ts	src/lib/debug-log.ts
+verbatim	packages/web/src/lib/emoji-pool.ts	src/lib/emoji-pool.ts
+verbatim	packages/web/src/lib/engine-registry.ts	src/lib/engine-registry.ts
+verbatim	packages/web/src/lib/gateway-transport.ts	src/lib/gateway-transport.ts
+verbatim	packages/web/src/lib/lazy-route.ts	src/lib/lazy-route.ts
+verbatim	packages/web/src/lib/legal-targets.ts	src/lib/legal-targets.ts
+verbatim	packages/web/src/lib/model-config.ts	src/lib/model-config.ts
+verbatim	packages/web/src/lib/native-gateway-bootstrap.ts	src/lib/native-gateway-bootstrap.ts
+verbatim	packages/web/src/lib/native-gateway-profile-storage.ts	src/lib/native-gateway-profile-storage.ts
+verbatim	packages/web/src/lib/native-gateway-profiles.ts	src/lib/native-gateway-profiles.ts
+verbatim	packages/web/src/lib/native-gateway-socket.ts	src/lib/native-gateway-socket.ts
+verbatim	packages/web/src/lib/native-gateway-transport.ts	src/lib/native-gateway-transport.ts
+verbatim	packages/web/src/lib/nav.ts	src/lib/nav.ts
+verbatim	packages/web/src/lib/parked.ts	src/lib/parked.ts
+verbatim	packages/web/src/lib/query-client.ts	src/lib/query-client.ts
+verbatim	packages/web/src/lib/query-keys.ts	src/lib/query-keys.ts
+verbatim	packages/web/src/lib/route-prefetch.ts	src/lib/route-prefetch.ts
+verbatim	packages/web/src/lib/search-api.ts	src/lib/search-api.ts
+verbatim	packages/web/src/lib/settings.ts	src/lib/settings.ts
+verbatim	packages/web/src/lib/shortcut-catalog.ts	src/lib/shortcut-catalog.ts
+verbatim	packages/web/src/lib/stale-chat.ts	src/lib/stale-chat.ts
+adapted	packages/web/src/lib/talk-capability.ts	src/lib/talk-capability.ts	11
+verbatim	packages/web/src/lib/themes.ts	src/lib/themes.ts
+verbatim	packages/web/src/lib/todo-caches.ts	src/lib/todo-caches.ts
+verbatim	packages/web/src/lib/todo-id.ts	src/lib/todo-id.ts
+verbatim	packages/web/src/lib/todo-preview.ts	src/lib/todo-preview.ts
+verbatim	packages/web/src/lib/todos.ts	src/lib/todos.ts
+verbatim	packages/web/src/lib/transition-edges.json	src/lib/transition-edges.json
+verbatim	packages/web/src/lib/use-navigation.ts	src/lib/use-navigation.ts
+verbatim	packages/web/src/lib/utils.ts	src/lib/utils.ts
+verbatim	packages/web/src/lib/view-mode.ts	src/lib/view-mode.ts
+verbatim	packages/web/src/lib/work-item-approval-wire.ts	src/lib/work-item-approval-wire.ts
+verbatim	packages/web/src/lib/work-item-comment-wire.ts	src/lib/work-item-comment-wire.ts
+verbatim	packages/web/src/lib/work-item-edit-wire.ts	src/lib/work-item-edit-wire.ts
+verbatim	packages/web/src/lib/work-item-runs-wire.ts	src/lib/work-item-runs-wire.ts
+verbatim	packages/web/src/lib/ws-backoff.ts	src/lib/ws-backoff.ts
+verbatim	packages/web/src/lib/ws.ts	src/lib/ws.ts
+verbatim	packages/web/src/platform/adapters/fallback.ts	src/platform/adapters/fallback.ts
+verbatim	packages/web/src/platform/adapters/lazy-tauri.ts	src/platform/adapters/lazy-tauri.ts
+verbatim	packages/web/src/platform/adapters/tauri.ts	src/platform/adapters/tauri.ts
+verbatim	packages/web/src/platform/adapters/web.ts	src/platform/adapters/web.ts
+verbatim	packages/web/src/platform/contracts.ts	src/platform/contracts.ts
+verbatim	packages/web/src/platform/feedback.ts	src/platform/feedback.ts
+verbatim	packages/web/src/platform/index.ts	src/platform/index.ts
+verbatim	packages/web/src/platform/native-bridge.ts	src/platform/native-bridge.ts
+verbatim	packages/web/src/platform/platform.ts	src/platform/platform.ts
+verbatim	packages/web/src/platform/runtime.ts	src/platform/runtime.ts
+verbatim	packages/web/src/platform/sharing.ts	src/platform/sharing.ts
+verbatim	packages/web/src/platform/viewport.ts	src/platform/viewport.ts
+verbatim	packages/web/src/plugins/disk-plugins-bridge.tsx	src/plugins/disk-plugins-bridge.tsx
+adapted	packages/web/src/plugins/disk-plugins.ts	src/plugins/disk-plugins.ts	12
+verbatim	packages/web/src/plugins/plugin-context.ts	src/plugins/plugin-context.ts
+verbatim	packages/web/src/plugins/runtime-loader.ts	src/plugins/runtime-loader.ts
+verbatim	packages/web/src/plugins/sdk/areas.ts	src/plugins/sdk/areas.ts
+verbatim	packages/web/src/plugins/sdk/errors.ts	src/plugins/sdk/errors.ts
+verbatim	packages/web/src/plugins/sdk/host-bridge.ts	src/plugins/sdk/host-bridge.ts
+verbatim	packages/web/src/plugins/sdk/host-events.ts	src/plugins/sdk/host-events.ts
+verbatim	packages/web/src/plugins/sdk/host-permissions.ts	src/plugins/sdk/host-permissions.ts
+verbatim	packages/web/src/plugins/sdk/host-state.ts	src/plugins/sdk/host-state.ts
+verbatim	packages/web/src/plugins/sdk/host-verbs/connectors.ts	src/plugins/sdk/host-verbs/connectors.ts
+verbatim	packages/web/src/plugins/sdk/host-verbs/cron.ts	src/plugins/sdk/host-verbs/cron.ts
+verbatim	packages/web/src/plugins/sdk/host-verbs/employees.ts	src/plugins/sdk/host-verbs/employees.ts
+verbatim	packages/web/src/plugins/sdk/host-verbs/index.ts	src/plugins/sdk/host-verbs/index.ts
+verbatim	packages/web/src/plugins/sdk/host-verbs/knowledge.ts	src/plugins/sdk/host-verbs/knowledge.ts
+verbatim	packages/web/src/plugins/sdk/host-verbs/notes.ts	src/plugins/sdk/host-verbs/notes.ts
+verbatim	packages/web/src/plugins/sdk/host-verbs/request.ts	src/plugins/sdk/host-verbs/request.ts
+verbatim	packages/web/src/plugins/sdk/host-verbs/sessions.ts	src/plugins/sdk/host-verbs/sessions.ts
+verbatim	packages/web/src/plugins/sdk/host-verbs/todos.ts	src/plugins/sdk/host-verbs/todos.ts
+verbatim	packages/web/src/plugins/sdk/host-verbs/workflows.ts	src/plugins/sdk/host-verbs/workflows.ts
+verbatim	packages/web/src/plugins/sdk/host.ts	src/plugins/sdk/host.ts
+verbatim	packages/web/src/plugins/sdk/index.ts	src/plugins/sdk/index.ts
+verbatim	packages/web/src/plugins/sdk/listeners.ts	src/plugins/sdk/listeners.ts
+verbatim	packages/web/src/plugins/sdk/plugin-host-bridge.tsx	src/plugins/sdk/plugin-host-bridge.tsx
+verbatim	packages/web/src/plugins/sdk/plugin-notices.tsx	src/plugins/sdk/plugin-notices.tsx
+verbatim	packages/web/src/plugins/sdk/route-params.tsx	src/plugins/sdk/route-params.tsx
+verbatim	packages/web/src/plugins/sdk/runtime.ts	src/plugins/sdk/runtime.ts
+verbatim	packages/web/src/plugins/sdk/version.ts	src/plugins/sdk/version.ts
+adapted	packages/web/src/routes/auth-provider.tsx	src/routes/auth-provider.tsx	2
+adapted	packages/web/src/routes/client-providers.tsx	src/routes/client-providers.tsx	8
+verbatim	packages/web/src/routes/contributed-route.tsx	src/routes/contributed-route.tsx
+verbatim	packages/web/src/routes/globals.css	src/routes/globals.css
+verbatim	packages/web/src/routes/experiments/types.ts	src/routes/experiments/types.ts
+verbatim	packages/web/src/routes/notes/types.ts	src/routes/notes/types.ts
+verbatim	packages/web/src/routes/providers.tsx	src/routes/providers.tsx
+verbatim	packages/web/src/routes/settings-provider.tsx	src/routes/settings-provider.tsx
+verbatim	packages/web/src/routes/settings/appearance-pickers.tsx	src/routes/settings/appearance-pickers.tsx
+verbatim	packages/web/src/routes/settings/config-conflict-notice.tsx	src/routes/settings/config-conflict-notice.tsx
+verbatim	packages/web/src/routes/settings/config-save-status.tsx	src/routes/settings/config-save-status.tsx
+verbatim	packages/web/src/routes/settings/config-shape.ts	src/routes/settings/config-shape.ts
+new	-	src/routes/settings/declared-settings.tsx	1
+verbatim	packages/web/src/routes/settings/emoji-rows.tsx	src/routes/settings/emoji-rows.tsx
+verbatim	packages/web/src/routes/settings/engines/chain-editor.tsx	src/routes/settings/engines/chain-editor.tsx
+verbatim	packages/web/src/routes/settings/engines/chain-model.ts	src/routes/settings/engines/chain-model.ts
+verbatim	packages/web/src/routes/settings/engines/engine-card.tsx	src/routes/settings/engines/engine-card.tsx
+verbatim	packages/web/src/routes/settings/engines/entry.tsx	src/routes/settings/engines/entry.tsx
+verbatim	packages/web/src/routes/settings/engines/legacy-row.tsx	src/routes/settings/engines/legacy-row.tsx
+verbatim	packages/web/src/routes/settings/engines/model-map-editor.tsx	src/routes/settings/engines/model-map-editor.tsx
+verbatim	packages/web/src/routes/settings/engines/model-map-model.ts	src/routes/settings/engines/model-map-model.ts
+verbatim	packages/web/src/routes/settings/engines/use-chain-drag.ts	src/routes/settings/engines/use-chain-drag.ts
+adapted	packages/web/src/routes/settings/page.tsx	src/routes/settings/page.tsx	1
+verbatim	packages/web/src/routes/settings/pairing-section.tsx	src/routes/settings/pairing-section.tsx
+verbatim	packages/web/src/routes/settings/plugins/entry.tsx	src/routes/settings/plugins/entry.tsx
+adapted	packages/web/src/routes/settings/plugins/inventory.ts	src/routes/settings/plugins/inventory.ts	10
+new	-	src/routes/settings/plugins/__tests__/inventory.test.ts	10
+adapted	packages/web/src/routes/settings/plugins/page.tsx	src/routes/settings/plugins/page.tsx	4
+verbatim	packages/web/src/routes/settings/plugins/plugin-list.tsx	src/routes/settings/plugins/plugin-list.tsx
+adapted	packages/web/src/routes/settings/plugins/plugin-row.tsx	src/routes/settings/plugins/plugin-row.tsx	4
+verbatim	packages/web/src/routes/settings/shared.tsx	src/routes/settings/shared.tsx
+verbatim	packages/web/src/routes/settings/shortcuts-section.tsx	src/routes/settings/shortcuts-section.tsx
+verbatim	packages/web/src/routes/settings/stt-section.tsx	src/routes/settings/stt-section.tsx
+verbatim	packages/web/src/routes/settings/use-config-commit.ts	src/routes/settings/use-config-commit.ts
+verbatim	packages/web/src/routes/settings/use-voice-capability.ts	src/routes/settings/use-voice-capability.ts
+verbatim	packages/web/src/routes/settings/voice-realtime-fields.tsx	src/routes/settings/voice-realtime-fields.tsx
+verbatim	packages/web/src/routes/settings/voice-section.tsx	src/routes/settings/voice-section.tsx
+verbatim	packages/web/src/routes/todos/new-todo-dialog.tsx	src/routes/todos/new-todo-dialog.tsx
+verbatim	packages/web/src/routes/todos/new-todo-preview.ts	src/routes/todos/new-todo-preview.ts
+verbatim	packages/web/src/routes/todos/pickers/picker-contents.tsx	src/routes/todos/pickers/picker-contents.tsx
+verbatim	packages/web/src/routes/todos/pickers/picker-shell.tsx	src/routes/todos/pickers/picker-shell.tsx
+verbatim	packages/web/src/routes/todos/pickers/status-picker-content.tsx	src/routes/todos/pickers/status-picker-content.tsx
+verbatim	packages/web/src/routes/todos/pickers/use-todo-quick-pickers.tsx	src/routes/todos/pickers/use-todo-quick-pickers.tsx
+verbatim	packages/web/src/routes/todos/state-glyph.tsx	src/routes/todos/state-glyph.tsx
+verbatim	packages/web/src/routes/todos/task-page/label-chip.tsx	src/routes/todos/task-page/label-chip.tsx
+verbatim	packages/web/src/routes/todos/task-page/props-rail.tsx	src/routes/todos/task-page/props-rail.tsx
+verbatim	packages/web/src/routes/todos/todo-dialog.tsx	src/routes/todos/todo-dialog.tsx
+verbatim	packages/web/src/routes/todos/todo-edit-request.ts	src/routes/todos/todo-edit-request.ts
+verbatim	packages/web/src/routes/todos/todo-status-mutation.ts	src/routes/todos/todo-status-mutation.ts
+verbatim	packages/web/src/routes/todos/use-todo-comment.ts	src/routes/todos/use-todo-comment.ts
+verbatim	packages/web/src/routes/todos/use-todos.ts	src/routes/todos/use-todos.ts
+verbatim	packages/web/src/routes/todos/util.ts	src/routes/todos/util.ts
+# --- static assets: fonts (globals.css @font-face), the PWA manifest and icons;
+# --- public/sw-shell-warm.js is NOT ported (the service worker is dropped, §8 q4)
+verbatim	packages/web/src/fonts/OFL-hanken-grotesk.txt	src/fonts/OFL-hanken-grotesk.txt
+verbatim	packages/web/src/fonts/OFL-ibm-plex-mono.txt	src/fonts/OFL-ibm-plex-mono.txt
+verbatim	packages/web/src/fonts/hanken-grotesk-latin-ext-var.woff2	src/fonts/hanken-grotesk-latin-ext-var.woff2
+verbatim	packages/web/src/fonts/hanken-grotesk-latin-var.woff2	src/fonts/hanken-grotesk-latin-var.woff2
+verbatim	packages/web/src/fonts/ibm-plex-mono-latin-400.woff2	src/fonts/ibm-plex-mono-latin-400.woff2
+verbatim	packages/web/src/fonts/ibm-plex-mono-latin-500.woff2	src/fonts/ibm-plex-mono-latin-500.woff2
+verbatim	packages/web/src/fonts/ibm-plex-mono-latin-600.woff2	src/fonts/ibm-plex-mono-latin-600.woff2
+verbatim	packages/web/src/fonts/ibm-plex-mono-latin-ext-400.woff2	src/fonts/ibm-plex-mono-latin-ext-400.woff2
+verbatim	packages/web/src/fonts/ibm-plex-mono-latin-ext-500.woff2	src/fonts/ibm-plex-mono-latin-ext-500.woff2
+verbatim	packages/web/src/fonts/ibm-plex-mono-latin-ext-600.woff2	src/fonts/ibm-plex-mono-latin-ext-600.woff2
+verbatim	packages/web/public/apple-touch-icon.png	public/apple-touch-icon.png
+verbatim	packages/web/public/icons/icon-192.png	public/icons/icon-192.png
+verbatim	packages/web/public/icons/icon-512.png	public/icons/icon-512.png
+verbatim	packages/web/public/icons/icon-maskable-512.png	public/icons/icon-maskable-512.png
+verbatim	packages/web/public/manifest.webmanifest	public/manifest.webmanifest
+verbatim	packages/web/src/test/setup.ts	src/test/setup.ts
+verbatim	packages/web/src/test/virtual-layout.ts	src/test/virtual-layout.ts
+# --- the tests whose subject is on the map and whose import closure resolves
+# --- inside web/ (the harnesses and fixtures they share included), verbatim
+verbatim	packages/web/src/components/__tests__/nav-ribbon.test.tsx	src/components/__tests__/nav-ribbon.test.tsx
+adapted	packages/web/src/components/__tests__/page-layout.test.tsx	src/components/__tests__/page-layout.test.tsx	9
+verbatim	packages/web/src/components/__tests__/pill-nav.test.ts	src/components/__tests__/pill-nav.test.ts
+verbatim	packages/web/src/components/__tests__/route-loading.test.tsx	src/components/__tests__/route-loading.test.tsx
+verbatim	packages/web/src/components/__tests__/status-bar.test.tsx	src/components/__tests__/status-bar.test.tsx
+verbatim	packages/web/src/components/auth/native-pairing-screen.test.tsx	src/components/auth/native-pairing-screen.test.tsx
+verbatim	packages/web/src/components/auth/remote-access-panel.test.tsx	src/components/auth/remote-access-panel.test.tsx
+verbatim	packages/web/src/components/chat/__tests__/chat-route-helpers.test.ts	src/components/chat/__tests__/chat-route-helpers.test.ts
+verbatim	packages/web/src/components/chat/__tests__/mobile-tab-bar.test.tsx	src/components/chat/__tests__/mobile-tab-bar.test.tsx
+verbatim	packages/web/src/components/chat/__tests__/new-chat-employee-flow.test.ts	src/components/chat/__tests__/new-chat-employee-flow.test.ts
+verbatim	packages/web/src/components/chat/__tests__/new-chat-helpers-speech.test.ts	src/components/chat/__tests__/new-chat-helpers-speech.test.ts
+verbatim	packages/web/src/components/edge-back/__tests__/edge-back-harness.tsx	src/components/edge-back/__tests__/edge-back-harness.tsx
+verbatim	packages/web/src/components/edge-back/__tests__/edge-back-layer.test.tsx	src/components/edge-back/__tests__/edge-back-layer.test.tsx
+verbatim	packages/web/src/components/edge-back/__tests__/previous-view-snapshot.test.ts	src/components/edge-back/__tests__/previous-view-snapshot.test.ts
+verbatim	packages/web/src/components/edge-back/__tests__/use-edge-back-gesture.test.ts	src/components/edge-back/__tests__/use-edge-back-gesture.test.ts
+verbatim	packages/web/src/components/global-search/__tests__/command-mode.test.tsx	src/components/global-search/__tests__/command-mode.test.tsx
+verbatim	packages/web/src/components/global-search/__tests__/fixtures.ts	src/components/global-search/__tests__/fixtures.ts
+verbatim	packages/web/src/components/global-search/__tests__/harness.tsx	src/components/global-search/__tests__/harness.tsx
+verbatim	packages/web/src/components/global-search/__tests__/match-snippet.test.tsx	src/components/global-search/__tests__/match-snippet.test.tsx
+verbatim	packages/web/src/components/global-search/__tests__/overlay-keyboard.test.tsx	src/components/global-search/__tests__/overlay-keyboard.test.tsx
+verbatim	packages/web/src/components/global-search/__tests__/overlay-query.test.tsx	src/components/global-search/__tests__/overlay-query.test.tsx
+verbatim	packages/web/src/components/global-search/__tests__/overlay-states.test.tsx	src/components/global-search/__tests__/overlay-states.test.tsx
+verbatim	packages/web/src/components/global-search/__tests__/preview-pane.test.tsx	src/components/global-search/__tests__/preview-pane.test.tsx
+verbatim	packages/web/src/components/global-search/__tests__/read-back-line.test.tsx	src/components/global-search/__tests__/read-back-line.test.tsx
+verbatim	packages/web/src/components/global-search/__tests__/result-list.test.tsx	src/components/global-search/__tests__/result-list.test.tsx
+verbatim	packages/web/src/components/global-search/__tests__/use-global-search.test.ts	src/components/global-search/__tests__/use-global-search.test.ts
+verbatim	packages/web/src/components/global-search/__tests__/verbs.test.ts	src/components/global-search/__tests__/verbs.test.ts
+verbatim	packages/web/src/components/global-search/__tests__/workbench-harness.tsx	src/components/global-search/__tests__/workbench-harness.tsx
+verbatim	packages/web/src/components/global-search/__tests__/workbench.test.tsx	src/components/global-search/__tests__/workbench.test.tsx
+verbatim	packages/web/src/components/peek/__tests__/peek-fixtures.ts	src/components/peek/__tests__/peek-fixtures.ts
+verbatim	packages/web/src/components/shell/__tests__/large-title-header.test.tsx	src/components/shell/__tests__/large-title-header.test.tsx
+verbatim	packages/web/src/components/shell/__tests__/primary-action.test.tsx	src/components/shell/__tests__/primary-action.test.tsx
+verbatim	packages/web/src/components/talk/__tests__/orb-canvas.test.tsx	src/components/talk/__tests__/orb-canvas.test.tsx
+verbatim	packages/web/src/components/talk/__tests__/orb-motion.test.ts	src/components/talk/__tests__/orb-motion.test.ts
+verbatim	packages/web/src/components/talk/__tests__/orb-scene.test.ts	src/components/talk/__tests__/orb-scene.test.ts
+verbatim	packages/web/src/components/talk/__tests__/orb-variant-contract.test.tsx	src/components/talk/__tests__/orb-variant-contract.test.tsx
+verbatim	packages/web/src/components/ui/__tests__/employee-avatar.test.tsx	src/components/ui/__tests__/employee-avatar.test.tsx
+verbatim	packages/web/src/components/workspaces/create-workspace-dialog.test.tsx	src/components/workspaces/create-workspace-dialog.test.tsx
+verbatim	packages/web/src/components/workspaces/workspace-menu.test.tsx	src/components/workspaces/workspace-menu.test.tsx
+verbatim	packages/web/src/contrib/__tests__/registry.test.ts	src/contrib/__tests__/registry.test.ts
+verbatim	packages/web/src/contrib/__tests__/slot.test.tsx	src/contrib/__tests__/slot.test.tsx
+verbatim	packages/web/src/contrib/__tests__/use-contributions.test.tsx	src/contrib/__tests__/use-contributions.test.tsx
+verbatim	packages/web/src/hooks/__tests__/use-keyboard-shortcuts.test.ts	src/hooks/__tests__/use-keyboard-shortcuts.test.ts
+verbatim	packages/web/src/hooks/__tests__/use-model-registry.test.ts	src/hooks/__tests__/use-model-registry.test.ts
+verbatim	packages/web/src/hooks/__tests__/use-query-invalidation-company.test.tsx	src/hooks/__tests__/use-query-invalidation-company.test.tsx
+verbatim	packages/web/src/hooks/__tests__/use-query-invalidation-refresh.test.tsx	src/hooks/__tests__/use-query-invalidation-refresh.test.tsx
+verbatim	packages/web/src/hooks/__tests__/use-query-invalidation-todos.test.tsx	src/hooks/__tests__/use-query-invalidation-todos.test.tsx
+verbatim	packages/web/src/hooks/__tests__/use-sessions.test.ts	src/hooks/__tests__/use-sessions.test.ts
+verbatim	packages/web/src/hooks/__tests__/use-todo-prefixes.test.tsx	src/hooks/__tests__/use-todo-prefixes.test.tsx
+verbatim	packages/web/src/lib/__tests__/fallback-map-wire.test.ts	src/lib/__tests__/fallback-map-wire.test.ts
+verbatim	packages/web/src/lib/__tests__/feature-visibility.test.ts	src/lib/__tests__/feature-visibility.test.ts
+verbatim	packages/web/src/lib/__tests__/gateway-events.types.test.ts	src/lib/__tests__/gateway-events.types.test.ts
+verbatim	packages/web/src/lib/__tests__/gateway-transport.test.ts	src/lib/__tests__/gateway-transport.test.ts
+verbatim	packages/web/src/lib/__tests__/lazy-route.test.ts	src/lib/__tests__/lazy-route.test.ts
+verbatim	packages/web/src/lib/__tests__/legal-targets.test.ts	src/lib/__tests__/legal-targets.test.ts
+verbatim	packages/web/src/lib/__tests__/model-config.test.ts	src/lib/__tests__/model-config.test.ts
+verbatim	packages/web/src/lib/__tests__/native-gateway-fixtures.ts	src/lib/__tests__/native-gateway-fixtures.ts
+verbatim	packages/web/src/lib/__tests__/native-gateway-profiles.test.ts	src/lib/__tests__/native-gateway-profiles.test.ts
+verbatim	packages/web/src/lib/__tests__/native-gateway-transport.test.ts	src/lib/__tests__/native-gateway-transport.test.ts
+verbatim	packages/web/src/lib/__tests__/nav-contributions.test.ts	src/lib/__tests__/nav-contributions.test.ts
+verbatim	packages/web/src/lib/__tests__/nav.test.ts	src/lib/__tests__/nav.test.ts
+verbatim	packages/web/src/lib/__tests__/shortcut-catalog.test.ts	src/lib/__tests__/shortcut-catalog.test.ts
+verbatim	packages/web/src/lib/__tests__/stale-chat.test.ts	src/lib/__tests__/stale-chat.test.ts
+adapted	packages/web/src/lib/__tests__/talk-capability.test.ts	src/lib/__tests__/talk-capability.test.ts	11
+verbatim	packages/web/src/lib/__tests__/todo-id.test.ts	src/lib/__tests__/todo-id.test.ts
+verbatim	packages/web/src/lib/__tests__/todos.test.ts	src/lib/__tests__/todos.test.ts
+verbatim	packages/web/src/lib/__tests__/view-mode.test.ts	src/lib/__tests__/view-mode.test.ts
+verbatim	packages/web/src/lib/__tests__/ws-backoff.test.ts	src/lib/__tests__/ws-backoff.test.ts
+verbatim	packages/web/src/lib/__tests__/ws.test.ts	src/lib/__tests__/ws.test.ts
+verbatim	packages/web/src/platform/__tests__/viewport.test.ts	src/platform/__tests__/viewport.test.ts
+verbatim	packages/web/src/platform/__tests__/web-adapter.test.ts	src/platform/__tests__/web-adapter.test.ts
+verbatim	packages/web/src/plugins/__tests__/data-url-modules.ts	src/plugins/__tests__/data-url-modules.ts
+verbatim	packages/web/src/plugins/__tests__/disk-plugins-bridge.test.tsx	src/plugins/__tests__/disk-plugins-bridge.test.tsx
+adapted	packages/web/src/plugins/__tests__/disk-plugins.test.ts	src/plugins/__tests__/disk-plugins.test.ts	12
+verbatim	packages/web/src/plugins/__tests__/plugin-context.test.ts	src/plugins/__tests__/plugin-context.test.ts
+verbatim	packages/web/src/plugins/__tests__/plugin-events.test.ts	src/plugins/__tests__/plugin-events.test.ts
+verbatim	packages/web/src/plugins/__tests__/runtime-loader-lifecycle.test.ts	src/plugins/__tests__/runtime-loader-lifecycle.test.ts
+verbatim	packages/web/src/plugins/__tests__/runtime-loader.test.ts	src/plugins/__tests__/runtime-loader.test.ts
+verbatim	packages/web/src/plugins/sdk/__tests__/host-permissions.test.ts	src/plugins/sdk/__tests__/host-permissions.test.ts
+verbatim	packages/web/src/plugins/sdk/__tests__/host-verbs-harness.ts	src/plugins/sdk/__tests__/host-verbs-harness.ts
+verbatim	packages/web/src/plugins/sdk/__tests__/host-verbs-instance.test.ts	src/plugins/sdk/__tests__/host-verbs-instance.test.ts
+verbatim	packages/web/src/plugins/sdk/__tests__/host-verbs.test.ts	src/plugins/sdk/__tests__/host-verbs.test.ts
+verbatim	packages/web/src/plugins/sdk/__tests__/host.test.ts	src/plugins/sdk/__tests__/host.test.ts
+verbatim	packages/web/src/plugins/sdk/__tests__/plugin-host-bridge.test.tsx	src/plugins/sdk/__tests__/plugin-host-bridge.test.tsx
+verbatim	packages/web/src/plugins/sdk/__tests__/runtime.test.ts	src/plugins/sdk/__tests__/runtime.test.ts
+verbatim	packages/web/src/routes/__tests__/contributed-route.test.tsx	src/routes/__tests__/contributed-route.test.tsx
+verbatim	packages/web/src/routes/__tests__/settings-provider-operator-emoji.test.tsx	src/routes/__tests__/settings-provider-operator-emoji.test.tsx
+verbatim	packages/web/src/routes/settings/__tests__/config-conflict.test.tsx	src/routes/settings/__tests__/config-conflict.test.tsx
+new	-	src/routes/settings/__tests__/declared-settings.test.tsx	1
+verbatim	packages/web/src/routes/settings/__tests__/instant-apply.test.tsx	src/routes/settings/__tests__/instant-apply.test.tsx
+verbatim	packages/web/src/routes/settings/__tests__/operator-emoji-row.test.tsx	src/routes/settings/__tests__/operator-emoji-row.test.tsx
+verbatim	packages/web/src/routes/settings/__tests__/orb-variant-persistence.test.tsx	src/routes/settings/__tests__/orb-variant-persistence.test.tsx
+verbatim	packages/web/src/routes/settings/__tests__/shortcuts-section.test.tsx	src/routes/settings/__tests__/shortcuts-section.test.tsx
+verbatim	packages/web/src/routes/settings/__tests__/stale-chat-settings.test.tsx	src/routes/settings/__tests__/stale-chat-settings.test.tsx
+verbatim	packages/web/src/routes/settings/__tests__/text-scale-persistence.test.tsx	src/routes/settings/__tests__/text-scale-persistence.test.tsx
+verbatim	packages/web/src/routes/settings/__tests__/voice-settings.test.tsx	src/routes/settings/__tests__/voice-settings.test.tsx
+verbatim	packages/web/src/routes/settings/engines/__tests__/chain-drag.test.tsx	src/routes/settings/engines/__tests__/chain-drag.test.tsx
+verbatim	packages/web/src/routes/settings/engines/__tests__/chain-model.test.ts	src/routes/settings/engines/__tests__/chain-model.test.ts
+verbatim	packages/web/src/routes/settings/engines/__tests__/engines-section.test.tsx	src/routes/settings/engines/__tests__/engines-section.test.tsx
+verbatim	packages/web/src/routes/settings/engines/__tests__/model-map-editor.test.tsx	src/routes/settings/engines/__tests__/model-map-editor.test.tsx
+verbatim	packages/web/src/routes/settings/engines/__tests__/model-map-model.test.ts	src/routes/settings/engines/__tests__/model-map-model.test.ts
+verbatim	packages/web/src/routes/todos/__tests__/new-todo-dialog.test.tsx	src/routes/todos/__tests__/new-todo-dialog.test.tsx
+verbatim	packages/web/src/routes/todos/__tests__/redirect.test.tsx	src/routes/todos/__tests__/redirect.test.tsx
+verbatim	packages/web/src/routes/todos/__tests__/todo-dialog.test.tsx	src/routes/todos/__tests__/todo-dialog.test.tsx
+verbatim	packages/web/src/routes/todos/__tests__/todo-edit-request.test.ts	src/routes/todos/__tests__/todo-edit-request.test.ts
+verbatim	packages/web/src/routes/todos/__tests__/todo-status-mutation.test.tsx	src/routes/todos/__tests__/todo-status-mutation.test.tsx
+# --- the package: index.html UNCHANGED (item 7); vite.config.ts adapted (item 6);
+# --- the manifests and configs adapted only where the tree moved (no Turbo, no
+# --- workspace, no PWA plugin, the two surviving aliases re-pointed under web/)
+verbatim	packages/web/index.html	index.html
+adapted	packages/web/vite.config.ts	vite.config.ts	6
+adapted	packages/web/vitest.config.ts	vitest.config.ts	6
+adapted	packages/web/tsconfig.json	tsconfig.json	6
+adapted	packages/web/package.json	package.json	6
+adapted	packages/web/perf-budgets.json	perf-budgets.json	6
+verbatim	packages/web/scripts/perf-budget.mjs	scripts/perf-budget.mjs
+verbatim	packages/web/postcss.config.mjs	postcss.config.mjs
+verbatim	packages/web/components.json	components.json
+verbatim	packages/web/.gitignore	.gitignore
+verbatim	tsconfig.base.json	tsconfig.base.json
+verbatim	.npmrc	.npmrc
+new	-	pnpm-workspace.yaml
+new	-	pnpm-lock.yaml
+# --- @jinn/gateway-events (the event vocabulary the shell's transport types
+# --- against; UI-3 retires it) and the two zero-import leaves settings/engines
+# --- imports through @jinn/model-id and @jinn/fallback-map-wire — ported
+# --- verbatim under web/, never a path alias into a daemon source tree
+verbatim	packages/gateway-events/src/index.ts	gateway-events/src/index.ts
+verbatim	packages/gateway-events/src/payloads.ts	gateway-events/src/payloads.ts
+verbatim	packages/gateway-events/src/payload-guards.ts	gateway-events/src/payload-guards.ts
+verbatim	packages/jinn/src/shared/model-id.ts	vendor/model-id.ts
+verbatim	packages/jinn/src/shared/fallback-map-wire.ts	vendor/fallback-map-wire.ts
+# --- the two source-repo gates carried (inventory §6.5): the size ratchet with
+# --- the web slice of its baseline, and the eslint config with its baseline
+adapted	scripts/ratchet.mjs	scripts/ratchet.mjs	6
+adapted	size-baseline.json	size-baseline.json	6
+adapted	eslint.config.mjs	eslint.config.mjs	6
+adapted	eslint-baseline.json	eslint-baseline.json	6

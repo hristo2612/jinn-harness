@@ -29,6 +29,9 @@ jinn-workflow = { path = "../../plugins/workflows/jinn-workflow" }
 # from their one home rather than spelled again in a test.
 jinn-plugins = { path = "../../plugins/plugins/jinn-plugins" }
 harness-pin = { path = "../../tools/harness-pin" }
+# The UI seam's names and the kit's entry ids, from their one home.
+jinn-ui = { path = "../../plugins/ui/jinn-ui" }
+ui-kit = { path = "../../tools/ui-kit" }
 jinn-api = { path = "../../plugins/api/jinn-api" }
 jinn-cron = { path = "../../plugins/cron/jinn-cron" }
 jinn-settings = { path = "../../plugins/settings/jinn-settings" }

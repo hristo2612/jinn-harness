@@ -1,0 +1,31 @@
+# The UI seam's kit builder (the UI-1 card, docs/plans/ui-malleability-arc.md
+# §4.2). Usage:
+#
+#     cargo run -p ui-kit -- kit <root> --port N [--every-ms N] [--tick-ms N]
+#
+# Runs the web client's build (`pnpm --filter @jinn/web build` under web/),
+# archives `web/out` into the embedded provider's `include_bytes!` input,
+# builds and encodes the provider by the shared kit machinery, and writes
+# the `ui` profile (the api trio + the settings pair + the plugins catalogs
+# + the bundle) pinned by content hash. The seam's profile ENTRIES live in
+# the library half (one home per fact). `tests/verbatim.rs` is proof 6 of
+# the card: the view layer under web/ is byte-for-byte jinn 43e8647
+# through the pinned map `web/port-map.txt`.
+[package]
+name = "ui-kit"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+api-kit = { path = "../api-kit" }
+cron-kit = { path = "../cron-kit" }
+jinn-api = { path = "../../plugins/api/jinn-api" }
+jinn-cron = { path = "../../plugins/cron/jinn-cron" }
+jinn-plugins = { path = "../../plugins/plugins/jinn-plugins" }
+jinn-ui = { path = "../../plugins/ui/jinn-ui" }
+plugin-kit = { path = "../plugin-kit" }
+serde_json = "1.0"
+sha2 = "0.10"
