@@ -1,0 +1,1062 @@
+# The UI malleability arc - plan
+
+**Status:** PLAN, docs only (PLA-347), APPROVED by the COO on 2026-09-02 with the rulings recorded in §8. Nothing in this document is implemented.
+The first packet (§4) is carded to dispatch the day the 2026-09-04 §7(b) soak
+audit closes; the later phases (§3) are cards with one decision each and are
+re-priced when their turn comes. Every number marked *estimate* is one.
+
+**Written against.** jinn-harness `main` at `2149d82` (seams 2.1 through 2.8
+landed); kernel pin `85d36b4` (`jinn:plugin@0.10.0`, `jinn:net` 0.3.0 with
+outbound and TLS, `jinn:auth` 0.1.0, `jinn:introspect` 0.5.0 -
+`KERNEL-PIN.md`); the existing web UI at `43e8647` exactly as surveyed by
+`docs/notes/web-ui-port-inventory.md`, cited below as **inventory §N** and
+nowhere re-derived. The kernel facts cited by file are read at the pin.
+
+**What it obeys.** The direction is recorded on PLA-347 and restated in the
+inventory's preamble: port the existing UI and its quirks close to verbatim
+("we don't reinvent it and have to fix all of the bugs we banged our heads
+against the wall for. we just make it malleable"); the UI is a RENDERER of a
+plugin tree, never an extension API; a user extension is a waterfall listener
+on the kernel's one event bus (SOURCE-OF-TRUTH §3, "Events"); the user-facing
+tier is JS inside a WASM plugin so Laws 1 and 5 stand unamended; port the
+pixels and the fixes, not the spine (inventory, "The line it makes
+actionable"). And the cutover rule, verbatim from `AGENTS.md`: **the old
+gateway keeps ALL production until parity.**
+
+**How to read this.** §1 is the ground the plan stands on, every claim cited.
+§2 is the shape. §3 is the arc, one card per phase. §4 is the first packet,
+dispatch-ready. §5 is the extension tier's feasibility with the measured
+spike. §6 traces the operator's own example through the seams end to end.
+§7 is what this arc will not do. §8 is what the COO has to decide.
+
+---
+
+## 1. Ground truth
+
+Facts this plan rests on, with where each one lives. Nothing below is a
+design choice.
+
+**About the existing UI (inventory).**
+
+- The production source is 85,653 lines across 614 files; the irreducible
+  shell is roughly 15,600 lines; surfaces are roughly 70,000, of which Chat is
+  19,960, Todos 12,700, Workflows 5,400, with Talk's 10,810 outside the route
+  system entirely (inventory §1.4, §1.5).
+- `components/chat` cannot move as one surface: ten of its modules are
+  imported by seven other surfaces and by core hooks, so the chat port begins
+  with an extraction (inventory §1.5, last paragraph). `globals.css` (1,557
+  lines) moves as one unit or not at all (same place).
+- The client is origin-agnostic by construction, but `/api/*` and `/ws` must
+  be on the SAME origin as the app; a split origin needs a real CORS and
+  credentials design, not a config change (inventory §3.5, §3.6 item 5). The
+  old gateway's route order - CORS, OPTIONS, auth gate, `/api/` dispatch,
+  static - is itself a stated security property (inventory §2.15, §2.24).
+- The old gateway serves the document `no-cache`, hashed `/assets/*`
+  `immutable`, a missing asset as `404 text/plain` and never the SPA
+  fallback, and `.webmanifest` as `application/manifest+json`; every one of
+  those was an individually hunted bug (inventory §2.15, §2.16, §2.24).
+- The client holds no bearer token anywhere; auth is HttpOnly cookie pairing
+  gated by `AuthGate` over a four-field `GET /api/auth/state` contract
+  (inventory §3.3). The door built by packet 2.8 forbids exactly a cookie as
+  identity and is bearer-only (`docs/notes/2026-09-02-the-door-presents-what-it-was-given.md`).
+- The realtime channel is one WebSocket carrying a 33-name event map;
+  frames failing their payload guard are dropped silently, so a near-miss
+  shows as a dead UI, not an error; `status: 'running'` must land
+  synchronously at enqueue or three separate client mechanisms are left
+  patching over its absence (inventory §3.2, §3.6 items 1 and 2).
+- The Todo status vocabulary is eight statuses with `done -> backlog`
+  reopening on the web side, six with terminal-is-terminal on the harness
+  side, and the web mirrors the edge table in a checked-in JSON held by a
+  parity test (inventory §2.19, §3.4 Tier 3, §4.2).
+- The workflow editor compiles against the old daemon's source tree through
+  a Vite path alias - the single hardest coupling, and not an endpoint
+  (inventory §3.6 item 9, §6.6).
+- The disk-plugin system's own loader says it is error isolation, not a
+  capability boundary; its events are `void`, inbound only, with no return
+  channel (inventory §1.3, §4.4).
+- The existing UI's own optimistic-send reconciliation matches a server row
+  to the optimistic bubble by a content-identity key (role, content, media
+  fingerprint) as well as by id; a content change between the two shows the
+  message twice (inventory §2.7 G1, G2).
+
+**About the harness at `2149d82` (its own README and notes).**
+
+- `jinn-api-http` is one `jinn:net` loopback listener served from readiness
+  wakes; no keep-alive (every response closes), no chunked encoding, no
+  server push, no static-file serving of any kind; request head cap 16 KiB,
+  body cap 256 KiB (`plugins/api/jinn-api-http-wire/src/lib.rs`; inventory
+  §4.1 "api").
+- The door: every parsed request is exactly one `jinn:auth` `verify` before
+  any dispatch on the connection's behalf, no grant cached, 401 with the
+  `WWW-Authenticate: Bearer` challenge; the contract's own words are that a
+  transport "issues NO dispatch on that connection's behalf before this call
+  answers `principal`" (README §2.8; the 2.8 note).
+- `jinn:profile.patch-entry` writes ONE subtree, `config`. A package-and-hash
+  swap, an added entry, a removed entry, or a `disabled` toggle is not
+  reachable through the operator API at all (`FINDINGS.md` #37; the 2.7 note
+  `docs/notes/2026-08-31-the-catalog-is-the-swappable-part.md`).
+- Every feed on the harness side is a cursor read, because a listener that
+  calls back into the seam that is delivering to it deadlocks to the guest
+  deadline (`FINDINGS.md` #4/#32, unretired; latency compounds per layer,
+  #35, measured 513/755/1084 ms at two/three/four layers).
+- The plugins seam is read-only and answers a guest's activation failure with
+  its state and never its reason (`FINDINGS.md` #38).
+
+**About the kernel at `85d36b4` (read at the pin).**
+
+- The bus has five dispatch modes; `waterfall` is in the pinned WIT and the
+  return channel exists: `events.emit(topic, mode, target, payload) ->
+  result<list<list<u8>>>` and `lifecycle.handle-event -> result<list<u8>>`
+  (`kernel-pin/wit/plugin.wit`; inventory §4.0). The harness has never used
+  `waterfall` (inventory §4.0, fact 1).
+- Waterfall semantics, exactly: the payload is handed to listeners in
+  REGISTRATION order; a NON-EMPTY output replaces the payload for the next
+  listener; an empty output leaves it unchanged; a failing listener is
+  recorded and the walk continues (R9); the final payload is the one output;
+  every dispatch lands a `DispatchTrace { topic, mode, listeners, failures,
+  emitter }` ledger row (`crates/jinnd-wasm/src/topics.rs`,
+  `crates/jinnd-events/src/dispatch.rs`, `crates/jinnd-events/src/table.rs`).
+- A reply-expecting walk is refused whole - `restarting`, `gone`,
+  `suspended`, `stalled` - if any selected listener's incarnation owes a
+  transition; nothing is delivered (`plugin.wit`, `events.emit`; M2-K9). A
+  walk that would close a wait cycle is refused in every mode (M2-K10).
+- A subscription is covered by the grant of the topic's own name
+  (`plugin.wit`, `events.listen`). Grants are written on the entry under
+  `config.grants`; a topic name is a grant like a contract name is
+  (`tools/cron-kit/src/lib.rs`, `cron_entries`).
+- The guest deadline is 5 s per crossing (`crates/jinnd-wasm/src/lane.rs`,
+  `DEADLINE`); fuel metering is on with a 10,000-fuel yield interval and no
+  per-delivery cap (`crates/jinnd-wasm/src/instance.rs`).
+- Sibling activation order is unspecified (`FINDINGS.md` #7), and listener
+  order is registration order - so two extensions on one topic compose in an
+  order nothing declares.
+- A profile entry's `package` plus `hash` pins one artifact at
+  `<artifacts>/<basename>.wasm` with a `.sha256` sidecar; that is the
+  content-addressed unit the kernel loads and hot-swaps
+  (`crates/jinnd-daemon/src/paths.rs`, `watch.rs`; constitution 04, 05).
+- Constitution 04 names `jinn:profile-admin` as the separate
+  operator-authorized capability for grants, identity, nesting and
+  `disabled`; no such contract exists at the pin.
+
+---
+
+## 2. The shape
+
+One repo, the Rust workspace, the TypeScript client inside it under `web/`
+(not a Cargo member - guests are not either, `Cargo.toml`), built by a kit,
+its output embedded in ONE plugin artifact, served by the transport the
+distribution already has, and extended through the bus.
+
+```text
+browser ──HTTP/1.1 loopback, one origin──▶ jinn-api-http  (the transport; holds jinn:net, jinn:auth)
+   │  GET /, /assets/*, /manifest.webmanifest │  answered from memory the transport filled at
+   │  (public bytes: no door, no crossing)    │  activation from ONE crossing on ▼
+   │                                          │  jinn:ui-bundle ─▶ jinn-ui-bundle-<name>  (provider: the bundle
+   │  GET|POST|PATCH /v1/*  + Bearer          │                    IS its artifact; swapping the UI is swapping
+   │  (the door: one verify per request)      │                    this entry's package+hash, and nothing else)
+   │                                          │
+   │  POST /v1/moments/<topic> + Bearer  ─────┼─▶ events.emit("jinn:ui/<topic>", waterfall, all, body)
+   │                                          │        │ registration order
+   ▼                                          │        ▼
+ the view layer, ported verbatim,             │   jinn-ext-js-<engine>  (Tier A guest; JS engine inside;
+ its data layer re-seated on /v1              │   config = the user's source; grant = the topic name)
+```
+
+Three seam triples, named per `AGENTS.md` standing order 4:
+
+| Seam | Definition | Providers | Consumers |
+|---|---|---|---|
+| The bundle | `jinn-ui` - contract `jinn:ui-bundle`: `manifest` (paths, sha256, mime, immutable?) and `bundle` (the whole archive as one blob) | `jinn-ui-bundle-embedded` (the built `web/out` embedded at kit time; the artifact hash pins the UI) | `jinn-api-http` (injects the definition, serves the bytes) |
+| Moments | `jinn-ui` again - the `jinn:ui/*` topic vocabulary, each topic's payload schema, and the fail-closed law | none: a moment is a walk, not a service | `jinn-api-http` (emits), every extension (listens) |
+| The JS-in-WASM extension tier | `jinn-ext` - the extension entry's config schema (`topics`, `source`, `origin: agent \| human`, `budget`) and the activation law: the guest registers the source's sha256 as a breadcrumb (Law 2) | `jinn-ext-js-boa` first; `jinn-ext-js-quickjs` if and when §5's gap closes | none: an extension is a listener |
+
+Why the transport serves the bundle rather than the bundle plugin holding its
+own `jinn:net` grant: the client requires `/api/*` and the app on one origin
+(inventory §3.6 item 5), one port is one listener, and the alternative -
+two ports and a CORS layer on the door - adds a preflight surface the wire
+does not have and the 2.8 proofs never covered. The Todo's "a plugin holding
+a `jinn:net` grant serves the pinned bundle" is satisfied literally, by the
+plugin that already holds it. The bundle stays a separate entry because that
+is what makes the UI a profile edit and the transport a transport.
+
+Why "from memory filled at activation" and not per request: the door's
+contract forbids a dispatch on an unauthenticated connection's behalf, and a
+browser's top-level navigation cannot carry a bearer header. Reading the
+bundle ONCE, at `activate`, as an injected dependency, keeps both true: no
+request for a byte causes a crossing, and a bundle swap forces the transport
+through the kernel's own epoch gating (SOURCE-OF-TRUTH §3) - it restarts,
+re-reads, and serves the new hash. The cost is a ~30 ms blip of the API port
+on a UI swap (`FINDINGS.md` #27's measured reconcile) and one ~4 MB payload
+across the broker per transport activation. Both are stated in §4 as
+measured acceptance, not assumed.
+
+---
+
+## 3. The arc
+
+Seven phases. Each is one packet card with ONE design decision; acceptance is
+composition proofs against the pinned daemon built from `git archive` of the
+pin (`tests/composition/src/daemon.rs`), never a hand-mounted test
+(`AGENTS.md` standing order 3); kernel gaps are candidate jinnd cards, never
+harness workarounds (standing order 1). Ordering follows inventory §4.5 with
+one deliberate inversion, stated at UI-2.
+
+| Phase | Packet | The one decision | Depends on | Estimate |
+|---|---|---|---|---|
+| UI-1 | UI-as-profile | The bundle is a plugin's artifact; the transport serves it same-origin from memory filled at activation | 2.8 | 2 rounds, ~4 agent-days *(estimate)* |
+| UI-2 | Moments and the JS-in-WASM extension tier | A moment is a `jinn:ui/<topic>` waterfall the transport dispatches for `POST /v1/moments/<topic>`, fail-closed | UI-1 | 2 rounds, ~4 agent-days *(estimate)* |
+| UI-3 | The live half | Server-sent events over held loopback connections, fed by cursor reads on one alarm; the client's vocabulary becomes the harness's | UI-1 | 2 rounds, ~5 agent-days *(estimate)* |
+| UI-4 | Todos | One status vocabulary: the harness's six-status terminal law wins; the client's edge table is GENERATED from the definition | UI-3 | 3 rounds, ~6 agent-days *(estimate)* |
+| UI-5 | Workflows | The editor compiles against a PUBLISHED wire package generated from `jinn-workflow`, never a path alias into a source tree | UI-4 | 2 rounds, ~5 agent-days *(estimate)* |
+| UI-6 | Chat | The transcript reducer keeps its shape; `session:delta` is derived from `jinn:session/event` by ONE adapter with a parity suite | UI-3, UI-2 | 3 rounds, ~8 agent-days *(estimate)* |
+| UI-7 | The plugin tree | The seven fixed areas become a tree read from `jinn:plugins`; nav is the `nav:after-build-tree` waterfall | UI-2, UI-1 | 2 rounds, ~4 agent-days *(estimate)* |
+
+### UI-1 - UI-as-profile
+
+Fully carded in §4. In one line: the shell (inventory §1.4) and two surfaces
+with a direct seam fit - Settings (inventory §4.2, the only `direct` row) and
+the plugins page (read-only, three ops) - ported verbatim, served from a
+profile, behind the door.
+
+### UI-2 - Moments and the JS-in-WASM extension tier
+
+**Decision.** A moment is a waterfall on a `jinn:ui/<topic>` topic that the
+transport dispatches when an authenticated client calls
+`POST /v1/moments/<topic>` with the moment's payload, and answers with the
+folded payload. A refused walk (`restarting`, `gone`, `suspended`,
+`stalled`, `cycle`) is answered `503 unavailable` naming the refusal, never
+silently the unmodified payload: a validator extension ("refuse a send
+containing an API key", inventory §4.3 moment 1) is defeated by fail-open,
+and the client retries once after the ~30 ms a restart takes. The extension
+tier is `jinn-ext-js-boa` (§5): a Tier A guest whose config carries the
+operator's JS source and the topics it listens on, whose only authority is
+the topic names in its grants, and whose JS has NO host calls - so it cannot
+re-enter a seam and #4/#32 cannot reach it.
+
+**Why before the live half (the inversion of inventory §4.5).** The arc
+exists for this phase; UI-1 already carries a working data path for the
+moment endpoint; and the operator's example (§6) needs no push transport to
+be demonstrated end to end.
+
+**Scope.** `jinn:ui/before-send` and `jinn:ui/before-create-session`
+(inventory §4.3 moments 1 and 3, both with a gateway twin) as the first two
+topics; the client's `sendText` choke point (inventory §4.3 moment 1) calls
+the moment from the re-seated data layer BEFORE the optimistic bubble is
+built, so inventory §2.7 G1's identity key matches the server twin (§6).
+`jinn-ext` definition, `jinn-ext-js-boa` provider, `ext-kit`. Two rules from
+the §8 ruling on source-as-config: the entry's data carries `origin: agent |
+human` (constitution 05's attestation, restated for data) and the plugins
+page shows it; and the guest records the source's sha256 as an activation
+breadcrumb (`effects.register("source sha256:<hex>")`) so WHAT CODE RAN is on
+the record (Law 2).
+
+**Acceptance (composition proofs, `tests/composition/tests/moments.rs`).**
+
+1. `a_moment_with_no_listener_answers_its_own_payload` - one `DispatchTrace`
+   row with `listeners: 0`, the body echoed.
+2. `one_js_extension_folds_the_payload_and_the_ledger_says_so` - the
+   operator's `(p) => ({...p, text: p.text + " 🟢"})` from a profile entry;
+   the answer carries the emoji; `DispatchTrace { listeners: 1, failures: 0 }`.
+3. `two_extensions_compose_in_registration_order_and_the_order_is_named` -
+   both fold; the answer shows both, in the order the ledger's listen rows
+   record; the proof asserts the order it OBSERVED and the card records it as
+   unspecified across siblings (#7) - KG-3 below.
+4. `a_throwing_extension_is_recorded_and_the_walk_continues` - `failures: 1`,
+   the other extension's fold present (R9).
+5. `a_restarting_extension_refuses_the_moment_typed_and_nothing_is_sent` -
+   patch the extension's config mid-walk; `503` naming `restarting`; zero
+   session crossings on the ledger.
+6. `an_extension_is_granted_its_topic_and_nothing_else` - an extension whose
+   entry lacks the topic grant fails to listen, on the record.
+7. `a_looping_extension_costs_the_send_the_guest_deadline` - `while(true){}`
+   answers after the 5 s deadline, MEASURED and recorded, which is the
+   evidence for KG-2.
+8. Real-composition: the extension boots from a profile through the pinned
+   daemon; the JS self-test at activation (§5.4) is the guest's own
+   fail-closed check.
+
+**Kernel gaps this phase will surface (candidate jinnd cards).**
+
+- **KG-1 `jinn:profile-admin` - CARDED as jinnd M2-K23 (PLA-348, backlog,
+  sequenced after the 2026-09-04 audit on the kernel lane; UI-1 does not
+  wait for it).** Installing an extension is adding an ENTRY
+  with GRANTS; `patch-entry` writes `config` only (#37). Until the capability
+  constitution 04 names exists, "install an extension from the UI" is a file
+  edit, and the card says so. Scope: add, remove, `disabled` toggle, grants,
+  under an operator-authorized contract, every write a ledger row.
+- **KG-2 per-delivery budget.** A `handle-event` has the whole 5 s guest
+  deadline; a looping extension costs every send that much. Candidate: a
+  per-listen fuel or deadline cap declared at `listen`, refused typed when
+  exceeded, so a bad extension costs its own slot and not the walk.
+- **KG-3 listener order is a declaration nowhere.** Registration order is
+  activation order, which is unspecified across siblings (#7). Candidate: an
+  ordinal on `listen`, or profile order honored and stated.
+- **KG-4 WASI-lite for Tier A** - only if QuickJS is chosen; §5.
+
+**Dependencies.** UI-1 (the data path and the door). Nothing in the live
+half.
+
+### UI-3 - The live half
+
+**Decision.** The transport holds an authenticated `GET /v1/events?after=N`
+connection open and writes `text/event-stream` frames to it from cursor
+reads it takes on ONE `jinn:clock` alarm; the client's `lib/ws.ts` becomes
+an `EventSource` client with the same backoff (inventory §2.19, equal
+jitter), and the client's event vocabulary becomes the harness's:
+`@jinn/gateway-events` is NOT ported; the 35 importing files (inventory §6.6)
+move to a generated `web/src/lib/harness-events.ts` whose guards are derived
+from the seams' own Rust types.
+
+**Why this and not a WebSocket or a push from the seams.** The wire has no
+upgrade path and the door is per-request; SSE is a plain authenticated GET
+that never closes, which the transport can already hold (a connection is a
+kernel registration; readiness wakes are level-triggered). A push from a
+seam is #4/#32: a store cannot emit from inside a delivery, so the transport
+polls the cursors it already exposes. The cost is one poll period of
+latency and it is the honest bound (#35).
+
+**Scope.** `/v1/events` on the transport; `harness-events.ts` and its
+generator; `use-gateway`, `use-query-invalidation` (inventory §2.19) re-seated
+verbatim on it; the status bar's connection indicator.
+
+**Acceptance.** `a_held_connection_receives_every_event_after_its_cursor_in_order`;
+`a_closed_client_releases_its_registration_on_the_record`; `latency_from_seam_row_to_frame_is_measured`
+(the number joins #35); `a_frame_failing_its_guard_is_dropped_and_counted`
+(inventory §3.2's silent drop made visible); `reconnect_resumes_from_the_cursor_with_no_gap`.
+
+**Kernel gaps.** #35 (measured again, now with the client attached); #4/#32
+(the reason for the poll); the bounded event rings' drop counts per seam
+(README, 2.4 and 2.5) - a candidate for a kernel-level bounded, cursored
+publish path rather than six guest rings.
+
+**Dependencies.** UI-1.
+
+### UI-4 - Todos
+
+**Decision.** One status vocabulary. The harness's six-status law with
+terminal-is-terminal wins (inventory §4.2, §4.1 "todos"); the web's
+`transition-edges.json` mirror (inventory §2.19, §3.4 Tier 3) is GENERATED
+from `jinn-todo`'s table by the kit, and the parity test that held the old
+mirror (inventory §2.23) is re-pointed at the generator. `assigned` and
+`escalated` and `done -> backlog` are not ported; the board's columns are
+the definition's statuses.
+
+**Scope.** Board (deliberately NOT virtualised - inventory §2.21), list,
+task page (wire types to the leaves, 20 files - inventory §3.4 Tier 1),
+quick-add; the `*-wire.ts` layer extended (inventory §3.6 item 10).
+
+**Acceptance.** `a_drag_the_client_pre_checks_legal_is_legal_on_the_daemon`
+(generated mirror vs definition, every edge); `a_refused_move_is_shown_from_its_recorded_refusal`;
+`an_optimistic_status_is_version_fenced_against_the_definition_s_version`;
+board and list render-cost budgets carried (inventory §2.23).
+
+**Kernel gaps.** None expected in the kernel; the harness side owes edit and
+delete on a Todo and a comment (README 2.5), approvals, labels and
+attachments - each a harness seam packet, listed on the card as
+prerequisites, not workarounds.
+
+**Dependencies.** UI-3 (the board is live-updated), UI-1.
+
+### UI-5 - Workflows
+
+**Decision.** The editor compiles against a published wire package generated
+from `jinn-workflow`'s Rust types, never a path alias into a daemon source
+tree (inventory §3.6 item 9 is the coupling this retires). The canvas's
+hand-maintained `edgeTaken` mirror (inventory §2.21) is replaced by the run
+store's own `edge-activated` reading.
+
+**Scope.** List, editor (three canvas surfaces each import the React Flow
+stylesheet - inventory §2.21, carry it), run canvas, run inspector.
+
+**Acceptance.** `a_definition_saved_by_the_editor_round_trips_the_definition_byte_for_byte`;
+`a_run_is_pinned_to_its_revision_and_the_canvas_shows_which`;
+`the_canvas_paints_the_edge_the_run_store_recorded`.
+
+**Kernel gaps.** None in the kernel. Harness prerequisites: triggers,
+enable/disable/retire/duplicate, node retry, run approvals, the
+`expectedRevision` 409 contract (inventory §4.2).
+
+**Dependencies.** UI-4.
+
+### UI-6 - Chat
+
+**Decision.** The transcript reducer (`use-live-session.ts`, 1,428 lines,
+plus `blocks.ts` - inventory §3.4 Tier 1, §3.6 item 8) keeps its shape;
+`session:delta`'s eight sub-types and the five session events are DERIVED
+from `jinn:session/event` by one adapter module with a parity suite that
+replays recorded harness event pages and asserts the exact frames the old
+gateway would have produced. `status: 'running'` at enqueue (inventory §3.6
+item 2) is answered by the session definition's own law: `send` answers
+`TurnAccepted` at once and the `turn-started` record lands before any engine
+is asked (`docs/notes/2026-08-30-sessions-seam-stores.md`).
+
+**Scope.** The extraction first (inventory §1.5: ten cross-imported chat
+modules become core), then the chat surface; every quirk in inventory §2.1
+through §2.13 carried verbatim, the unexplained carries (§2.13) byte for
+byte.
+
+**Acceptance.** The render-cost budget (a streaming token executes zero row
+bodies, inventory §2.23); `the_optimistic_bubble_settles_on_the_first_frame_not_the_response`
+(inventory §3.1, send); `a_dropped_completion_is_recovered_by_the_watchdog`
+(inventory §2.8 H2, driven through the daemon); `a_send_from_cron_passes_the_same_before_send_moment`
+(the gateway-side half of §6).
+
+**Kernel gaps.** Attachments need a file seam and there is none (inventory
+§4.2, §4.3 moment 7); interrupt; the block envelope. All harness seams, not
+kernel.
+
+**Dependencies.** UI-3, UI-2.
+
+### UI-7 - The plugin tree
+
+**Decision.** The seven fixed contribution areas (inventory §1.3) become a
+tree whose nodes are read from `jinn:plugins` `list`/`describe`; the nav is
+the `nav:after-build-tree` waterfall (inventory §4.3 moment 8) so an
+extension reorders, hides or renames without a plugin API. The contrib
+registry's provenance stamping, boundary and namespacing survive unchanged
+(inventory §1.3, "Could a plugin tree subsume it?"); the no-build ESM door
+(inventory §2.20) is NOT ported - the extension tier is the WASM one.
+
+**Acceptance.** `a_contributed_route_cannot_shadow_a_core_route` (inventory
+§1.3 route semantics, carried); `hiding_a_surface_is_a_profile_edit_and_the_nav_says_so`;
+`a_failed_plugin_shows_failed_and_names_where_its_reason_would_be` (#38).
+
+**Kernel gaps.** KG-1 (enable/disable from the page; M2-K23 / PLA-348); #38 (a reason).
+
+**Dependencies.** UI-2, UI-1.
+
+---
+
+## 4. The first packet, carded: UI-1 - UI-as-profile
+
+**Milestone:** M3 preparation (the arc's first packet; the web UI running
+against the kernel API is M3's own acceptance line, SOURCE-OF-TRUTH §7) ·
+**Owner:** kernel-dev - ONE build node; sub-agents allowed for the
+verbatim TypeScript port because the diff gate (proof 6) is what makes a
+mechanical port safe to parallelize; the seam and the proofs stay with the
+card owner (§8 ruling 6) · **Status:** ready to dispatch after the 2026-09-04
+§7(b) audit closes · **Binding rules:** `AGENTS.md` standing orders 1
+through 5; jinnd R1 (no blocking in a guest), R3 (typed wire), R9 (no
+silent replacement: a bundle swap is a restart), R11 (a bad bundle fails the
+transport's activation, nothing else), R12 (additive contract, 0.x minor),
+Laws 1, 2, 5 · **LOC ceiling (card-authoritative, binding):** production Rust net delta
+**≤ 800** across `plugins/ui/`, `plugins/api/jinn-api-http/src`,
+`tools/ui-kit`. The harness has no loc-meter, so the meter is declared here:
+`git diff --numstat main -- 'plugins/ui/**/*.rs' 'plugins/api/jinn-api-http/src/*.rs' 'tools/ui-kit/**/*.rs'`,
+added minus deleted, summed over every file that is not under a `tests/`
+directory and not named `tests.rs`; a `#[cfg(test)]` module inside a
+production file is a declared category - the PR lists each such module with
+its line count and that count is subtracted, so the ceiling binds
+production code and never incentivizes golfing a test. The composition
+suite is excluded. The TypeScript tree carries NO line ceiling because its
+acceptance is a DIFF against the pinned sha, not a size ·
+**Standing gates:** `cargo fmt --check && cargo clippy --workspace
+--all-targets -- -D warnings && cargo test --workspace`, plus the node lane
+of §4.4, plus `cargo test -p composition`.
+
+### 4.1 The one decision
+
+The UI bundle is one plugin artifact, content-addressed by the kernel's own
+`package` + `hash`, embedded at kit time; the transport injects the bundle
+definition, reads the whole bundle ONCE at activation as a single crossing,
+verifies every file's sha256 against the manifest (fail closed), and serves
+the document and its assets from memory to any loopback peer with no door
+and no crossing. Every `/v1/*` request keeps the door exactly as 2.8 left it.
+A UI swap is a profile edit of the bundle entry's `package` and `hash`; the
+kernel's epoch gating restarts the transport, which re-reads.
+
+### 4.2 Scope
+
+**The bundle seam (Rust).**
+
+- `plugins/ui/jinn-ui` (definition, workspace member): contract name
+  `jinn:ui-bundle`; operations `manifest` (answers `{ files: [{ path,
+  sha256, mime, immutable }], document: "index.html", bundle-sha256 }`) and
+  `bundle` (answers one blob: u32-LE count, then per file u32-LE path
+  length, path, u32-LE byte length, bytes); the serving law in prose: the
+  document `no-cache`, `immutable` files `public, max-age=31536000,
+  immutable`, unknown `/assets/*` answered `404 text/plain`, every other
+  non-`/v1` path answered the document (inventory §2.15), `.webmanifest` as
+  `application/manifest+json` (inventory §2.16). Additivity and the envelope
+  as every seam (`plugins/api/jinn-api/README.md`).
+- `plugins/ui/jinn-ui-bundle-embedded` (provider guest): `include_bytes!`
+  of the kit's archive, `manifest` and `bundle` answered verbatim, no grant
+  but its own contract. Its config is empty; its identity is its hash.
+- `plugins/api/jinn-api-http`: at `activate`, resolve `jinn:ui-bundle`
+  (when granted; the operator-api profile without a UI keeps serving `/v1`
+  and answers `503 unavailable` on `/`), read `bundle`, verify, hold; the
+  route family `GET /`, `GET /assets/*`, `GET /manifest.webmanifest`, and
+  the SPA fallback, answered before the door is consulted and with no
+  crossing; response framing gains the two `Cache-Control` values and
+  `text/html`, `text/css`, `application/javascript`, `image/*`, `font/woff2`,
+  `application/manifest+json` MIME rows. Responses still close (no
+  keep-alive); a page load is N connections, and the proof counts them.
+- `tools/ui-kit`: runs `pnpm --filter @jinn/web build`, archives `web/out`
+  into the provider's `include_bytes!` input (`JINN_UI_BUNDLE_DIR`), builds
+  and encodes the provider by the shared kit machinery, writes the `ui`
+  profile (api trio + settings seam + plugins catalogs + the bundle).
+
+**The client (TypeScript, `web/`).** Ported VERBATIM from `43e8647`
+`packages/web/`, restricted to: the shell (inventory §1.4: bootstrap and
+routing, the provider stack, the auth gate, layout and nav, theming,
+transport, platform adapters, the contrib registry), the Settings surface,
+the plugin settings page, and the `components/ui` family. Not one quirk from
+inventory §2.16 through §2.19 and §2.22 that touches these files is tidied.
+The ENUMERATED adaptations, and only these, are the diff:
+
+1. `lib/api.ts`, `lib/api-config.ts`: the calls the two surfaces make,
+   re-pointed to `/v1/settings[/{ns}]`, `/v1/plugins[/{catalog}[/{id}[/history]]]`,
+   `/v1/status`, `/v1/health`, `/v1/engines`; each mapped in ONE adapter
+   function per endpoint, never in a component (inventory §3.6 item 7's
+   shape). The config editor's `X-Jinn-Config-Revision` token has no
+   counterpart; the settings page's YAML editor is replaced by the seam's
+   namespace patches, and the conflict notice (inventory §2.22) reads the
+   seam's typed `refused`.
+2. `lib/auth.ts`, `routes/auth-provider.tsx`, `components/auth/*`: the
+   four-field state is SYNTHESISED client-side (`authRequired: true`,
+   `authenticated` = a `GET /v1/health` with the held bearer answered 200);
+   the pairing screen gains a "paste the operator credential" mode (the
+   value read from `<data>.operator-token` - the 2.8 note says where); the
+   credential lives in `sessionStorage`, never a cookie; `authFetch` adds
+   `Authorization: Bearer`; a 401 clears it and shows the pairing screen
+   (inventory §3.3's transparent retry becomes a transparent sign-out).
+3. `hooks/use-gateway.tsx`: the socket is not opened; gateway status is a
+   5 s `GET /v1/health` poll until UI-3. `use-query-invalidation.ts` is
+   carried whole and receives no frames.
+4. `routes/settings/plugins/*`: enable, disable, rescan and reveal are
+   rendered disabled with the finding (#37 class, KG-1 / PLA-348); the row's
+   lifecycle reading and `history` come from the catalog.
+5. `src/main.tsx`, `lib/app-routes.ts`: the route table lists Settings,
+   Plugins, the plugin splat and the two redirects; every other route is
+   absent, and `nav.ts`'s feature-disabled snapshot (inventory §2.18) hides
+   what is absent.
+6. `vite.config.ts`: the PWA plugin and the service worker are REMOVED for
+   this packet (§8, question 4); `preloadUiFont` stays; `manualChunks` stays;
+   the three `@jinn/*-wire` aliases into the old daemon's source are gone
+   (their consumers are not in scope); `@jinn/plugin-sdk` stays an alias.
+7. `index.html`: unchanged, including the `crypto.randomUUID` polyfill and
+   the blocking theme script (inventory §2.13 item 1, §2.17).
+
+Everything else is `git diff 43e8647 -- packages/web/<path>` empty, file by
+file, and the acceptance below asserts it.
+
+**Toolchain (inventory §6, decided here).**
+
+- `web/` at the repo root; `pnpm@10.6.4` via `packageManager`, Node
+  `24.13.0` via `.npmrc` `use-node-version` and `engine-strict=true`
+  (inventory §6.2 - the pin records an ABI incident); Vite 7, Tailwind 4,
+  TypeScript 5.8, Vitest 4, ESLint 10 as pinned there. No Turbo.
+- `.gitignore` gains `node_modules/`, `web/out/`, `dist/`, `coverage/`,
+  `*.tsbuildinfo` (inventory §6.3) BEFORE the first TypeScript file lands.
+- The CI privacy firewall's tracked-tree check gains `node_modules/`, `out/`
+  and `dist/` (inventory §6.4 item 1); the home-path pattern is unchanged
+  and the node lane's snippets are written around it (item 2).
+- The ratchet and its 153-entry web baseline come across (inventory §6.5,
+  the recommendation) so the tree arrives green with its debt visible; the
+  footgun gate does NOT come across in this packet (named in §7).
+- The bundle is built in CI and by the kit and never vendored (inventory
+  §6.10 item 2): its hash is the component's, printed by the kit, never
+  hand-written.
+- The node lane, gated as the Rust lanes are (inventory §6.9): install
+  frozen, typecheck (this is where the gateway-events types test fires,
+  inventory §2.23), lint, test, build, then `perf-budget` with its
+  native-marker scan (inventory §2.24, "worth carrying").
+
+### 4.3 Acceptance
+
+Composition proofs in `tests/composition/tests/ui.rs`, each booting the `ui`
+profile through the pinned daemon; every one runs red first against a
+transport that does not serve:
+
+1. `the_document_and_every_asset_are_served_from_the_pinned_bundle_by_hash` -
+   `GET /` is 200 `text/html` with `Cache-Control: no-cache`; every
+   `/assets/<hashed>` the document references is 200 with the `immutable`
+   value and its bytes hash to the manifest's; `/manifest.webmanifest` is
+   `application/manifest+json`; `/assets/missing.js` is `404 text/plain`;
+   `/settings` answers the document (inventory §2.15, §2.16, §2.24).
+2. `a_byte_is_never_a_dispatch_and_a_v1_request_is_always_the_door` - on the
+   ledger, every connection segment that requested a document or an asset
+   carries transport rows and nothing else (2.8's `provider_segments`
+   discipline, reused); every `/v1` segment carries exactly one `verify`
+   before its dispatch; a `/v1` request with no bearer is 401 (the 2.8 suite
+   unchanged, now also green on the `ui` profile).
+3. `the_bundle_crosses_once_per_transport_activation_and_its_size_is_recorded` -
+   exactly one `jinn:ui-bundle` `bundle` crossing after the transport's
+   activation; the ledger row count and the bundle byte count are printed
+   into the proof's output and copied to the card's report.
+4. `swapping_the_ui_is_a_profile_edit_of_one_entry` - edit the bundle
+   entry's `package` and `hash` to a second kit-built bundle whose document
+   carries a marker; the transport's `incarnation` INCREMENTS by exactly one;
+   `GET /` answers the marker; the settings consumer's incarnation is
+   unchanged; the blip is measured (first refused connect to first 200) and
+   recorded.
+5. `a_bundle_whose_bytes_do_not_match_its_manifest_fails_the_transport_and_nothing_else` -
+   a deliberately corrupted archive: the transport's fiber reads `failed`,
+   the settings and plugins consumers stay `active`, the operator-api
+   profile without a bundle entry still answers `/v1/health` 200.
+6. `the_view_layer_is_verbatim` - not a daemon proof: a repo test that runs
+   `git diff --stat 43e8647 -- packages/web/<f>` for every ported file
+   against `web/<f>` through a pinned mapping and asserts an EMPTY diff for
+   every file not on the seven-item adaptation list, and a non-empty one
+   for every file on it (the gate has to be able to fail in both
+   directions).
+7. Browser-level, driven by the INDEPENDENT VERIFIER with `agent-browser`
+   against a throwaway root (§8 amendment): open `/`, be shown the pairing
+   screen, paste the credential, see Settings and Plugins, patch a namespace
+   and read it back. The verifier posts the transcript on the Todo; no
+   person is in the acceptance loop.
+
+Plus: node lane green; `cargo test -p harness-docs` green; the privacy
+firewall green with the widened check; every quirk carried is named on the
+PR by its inventory row.
+
+### 4.4 Round protocol
+
+Standard harness packet rounds; the verifier owns the composition
+additions. Hostile probes to expect: an asset request while the transport is
+restarting (must refuse, never serve a mixed set - inventory §2.24, "404 not
+SPA fallback"); a 16 KiB+ request head on a static path (413, close); a
+`/v1` path spelled `/V1` or with a `..` segment (404, no dispatch); a bearer
+on a static path (ignored, no verify - and the proof that it is IGNORED,
+not consumed, since the door is not on that path; MANDATORY by the §8
+ruling, not a probe the verifier may skip); a second bundle entry
+claiming `jinn:ui-bundle` (`DuplicateProvision`, the second fails, the first
+keeps serving).
+
+### 4.5 Out of scope
+
+Every surface not named; the live half; moments; the service worker; the
+Tauri shell; Talk; the footgun gate; connectors; production data of any
+instance (the cutover rule).
+
+### 4.6 Kernel findings this packet is likely to file
+
+- **KG-1** (`jinn:profile-admin`, carded M2-K23 / PLA-348) - the plugins
+  page cannot enable or disable, and a UI swap is a file edit. The card
+  exists; this packet adds the transcript of the surface trying.
+- **KG-5** (#38) - a broken bundle shows `failed` with no reason on the
+  page it was meant to show reasons on.
+- A payload-size observation: one ~4 MB crossing per activation is measured
+  in proof 3; if the broker's copy shows in the activation time, that number
+  becomes a finding rather than a workaround.
+
+---
+
+## 5. The JS-in-WASM extension tier, measured
+
+The question the Todo asks: does a QuickJS component build for plugin world
+0.10.0 today, how big is it, and what host imports does it need. A throwaway
+spike answered it on 2026-09-02 with the pinned toolchain; nothing from it is
+committed. `$SPIKE` below is a scratch directory outside every checkout;
+`$HARNESS` is a checkout of this repo at `2149d82`; the Rust toolchain is
+rustup `stable-aarch64-apple-darwin` 1.96.0 with `wasm32-unknown-unknown`
+installed (the Homebrew `cargo` on the same machine has no wasm32 std - the
+kits' `rustup which rustc` fallback exists for exactly that, and the first
+attempt failed on it before anything was measured).
+
+### 5.1 Spike A - QuickJS through `rquickjs`, for the plugin world's target
+
+```text
+$SPIKE/a-rquickjs/Cargo.toml   rquickjs = { version = "0.12.2", default-features = false }
+                               [lib] crate-type = ["cdylib"]; release: opt-level "s", lto, codegen-units 1, panic abort
+$SPIKE/a-rquickjs/src/lib.rs   Runtime::new -> Context::full -> ctx.eval::<i32,_>("1+2")
+cargo build --release --target wasm32-unknown-unknown
+```
+
+Result, 2 s: **does not build.** `rquickjs-sys` compiles QuickJS's C sources
+with the system `clang --target=wasm32-unknown-unknown` and fails at the
+first include:
+
+```text
+libregexp.c:24:10: fatal error: 'stdlib.h' file not found
+```
+
+The plugin world's target is freestanding: there is no libc. QuickJS is C
+and needs one. This is the whole answer to "does it build for plugin world
+0.10.0 today": no, and not for a reason a Rust flag fixes.
+
+### 5.2 Spike A2 - the same crate against a libc, to measure what QuickJS needs
+
+A self-contained `wasi-sdk-34.0` (unpacked under `$SPIKE`, nothing installed
+on the machine) supplies a libc for `wasm32-wasip2`:
+
+```text
+CC_wasm32_wasip2=$SPIKE/wasi-sdk/bin/clang AR_wasm32_wasip2=$SPIKE/wasi-sdk/bin/ar \
+  cargo build --release --target wasm32-wasip2
+```
+
+Result, 12.65 s: **builds.** Artifact `spike_a_rquickjs.wasm`, a component:
+
+| Measure | Value |
+|---|---|
+| Component size | 863,575 bytes |
+| gzip -9 | 330,472 bytes |
+| Top-level imports | 15, all `wasi:*@0.2.6`: `io/poll`, `io/error`, `io/streams`, `clocks/monotonic-clock`, `clocks/wall-clock`, `cli/environment`, `cli/exit`, `cli/stdin`, `cli/stdout`, `cli/stderr`, `cli/terminal-input`, `cli/terminal-output`, `cli/terminal-stdin`, `cli/terminal-stdout`, `cli/terminal-stderr` |
+| Of those present in `jinn:plugin@0.10.0` | 0 |
+
+The libc surface QuickJS itself needs, read off the built static library
+(`llvm-nm -u libquickjs.a`, internal cross-object symbols removed): 96
+undefined names, of which the libc and libm ones are - allocation (`malloc`,
+`calloc`, `realloc`, `free`), memory and string (`memchr`, `memcmp`,
+`strchr`, `strcmp`, `strlen`, `strncmp`, `strrchr`, `strstr`), the printf
+family (`printf`, `fprintf`, `snprintf`, `vfprintf`, `vsnprintf`, `fputc`,
+`fwrite`, `putchar`, `puts`, `stdout`), number parsing (`strtod`), time
+(`clock_gettime`, `gettimeofday`, `localtime_r`), termination (`abort`,
+`__assert_fail`), and about thirty libm functions (`acos` through `tanh`,
+`pow`, `fmod`, `frexp`, `scalbn`, `lrint`, `round`, `hypot`, `cbrt`,
+`expm1`, `log1p`, `log2`, `log10`).
+
+So a QuickJS Tier A guest needs ONE of: a libc shim of roughly sixty symbols
+written against the plugin world (the allocator and libm are mechanical;
+`printf`/`strtod`/`localtime_r` are not), or a kernel import - **KG-4, a
+WASI-lite subset for Tier A** (`clocks`, `cli/exit`, stdio as ledger lines,
+empty `environment`, no filesystem, no sockets). Neither exists at the pin.
+
+### 5.3 Spike B - a JS engine that IS a plugin-world guest today
+
+`boa_engine` is pure Rust. The spike builds it as a real `jinn:plugin@0.10.0`
+guest in the shape every harness guest has (`wit_bindgen::generate!` on
+`kernel-pin/wit`, `export!`), with a waterfall listener that runs the
+operator's JS over the payload:
+
+```text
+$SPIKE/b-boa-guest/Cargo.toml   boa_engine = { version = "0.22", default-features = false }
+                                serde_json = "1.0"; wit-bindgen = "0.43.0"; getrandom = "0.4"
+                                [lib] crate-type = ["cdylib"]; release: opt-level "s", lto, codegen-units 1, panic abort, strip
+$SPIKE/b-boa-guest/src/lib.rs   activate: events.listen("jinn:ui/before-send", token); config.source held
+                                handle-event: JSON.stringify((SOURCE)(JSON.parse(payload))) -> the bytes
+                                __getrandom_v03_custom: a deterministic backend (the world imports no entropy)
+RUSTFLAGS='--cfg getrandom_backend="custom"' cargo build --release --target wasm32-unknown-unknown
+encode: wit_component::ComponentEncoder::default().module(core).validate(true).encode()   # the kits' own call
+```
+
+Result: **builds** (dependencies cold in about 30 s; 11.9 s incremental) and
+**encodes as a validated component**:
+
+| Measure | Value |
+|---|---|
+| Component, as booted in §5.4 (breadcrumbs and the clock fix included) | 3,944,216 bytes |
+| gzip -9 | 1,160,114 bytes |
+| Component, the bare listener before either | 3,942,572 bytes |
+| Component imports | exactly `jinn:plugin/types@0.10.0`, `jinn:plugin/effects@0.10.0`, `jinn:plugin/events@0.10.0` |
+| Core imports beneath them | `effects.register`, `events.listen` |
+| WASI or any other host import | none |
+
+Three toolchain facts the packet card must carry: `getrandom` (pulled by
+Boa) refuses `wasm32-unknown-unknown` unless a backend is chosen by cfg, and
+the custom backend's symbol is `__getrandom_v03_custom` even in 0.4 (read
+from the crate's `backends/custom.rs`); Boa 0.22's value API is not the enum
+older examples show (`JsValue::to_string(&mut ctx)` is the stable read); and
+a context must be built with a guest-supplied `Clock` (§5.4, lesson 1).
+
+### 5.4 Spike B, booted through the pinned daemon
+
+The guest was mounted from a profile through the pinned daemon built by
+`git archive` of `85d36b4` and `cargo build -p jinnd-daemon`, exactly as
+`tests/composition/src/daemon.rs` builds it. Its `activate` evaluates the
+operator's example ONCE and fails the fiber unless the engine's answer equals
+`config.data.expect`, so the pair below discriminates: the same artifact,
+two expectations, two fates.
+
+```json
+{ "id": "ext-green", "package": "ext/jinn-ext-js-boa", "hash": "20304da648c5…",
+  "config": { "grants": ["jinn:ui/before-send"],
+              "data": { "topics": ["jinn:ui/before-send"],
+                        "source": "(p) => ({ ...p, text: p.text + ' 🟢' })",
+                        "expect": "<see the table>" } } }
+```
+
+| Boot | `expect` | Fiber | The entry's own ledger rows, in order |
+|---|---|---|---|
+| good | `{"text":"hello 🟢"}` | **`Active`** | `EffectRegistered` for each of four breadcrumbs (`activate entered`, `config parsed`, `js context built`, `js evaluated`), `EffectRegistered "listen jinn:ui/before-send"`, `Pending → Loading → Active`; on SIGINT `EffectWithdrawn` for the listen, `FiberSuspended { retained: 0 }`, `Active → Unloading → Disposed` |
+| bad | `{"text":"hello"}` | **`Failed`** | the same four breadcrumbs, their withdrawal LIFO and `clean: true`, then `Pending → Loading → Unloading → Failed` |
+
+Read together: the component loads at its hash (`ArtifactLoaded`), a Boa
+context builds inside the kernel's wasmtime, the operator's source evaluates
+under fuel metering with the default 1 MB guest stack, its RESULT decides the
+fiber's fate, the listen lands as an effect under the topic's grant, and a
+daemon stop suspends it cleanly. That is the extension tier's shape, running
+on the pinned kernel, with zero kernel change.
+
+Two things the first boots taught, recorded because they cost most of an
+hour and would cost the packet the same:
+
+1. **A JS engine needs a clock, and a guest has none.** `Context::default()`
+   builds Boa's `StdClock` from `Instant::now()`, which has no implementation
+   on `wasm32-unknown-unknown` and aborts before `activate` can say a word.
+   The provider supplies its own `Clock` through `ContextBuilder::clock`
+   (the spike: Boa's `FixedClock`; the real provider: `jinn:clock`'s `now`,
+   read once per delivery).
+2. **When it aborted, nothing said why.** The ledger carried
+   `Loading → Unloading → Failed` and no reason, and the daemon's log at
+   `RUST_LOG=trace` carried nothing either: `FINDINGS.md` #38 observed from
+   the outside, on the first day a machine-written guest was mounted. The
+   debugger that worked was the ledger itself - one `effects.register` with a
+   label per activation step, read back in order. UI-2's card carries that
+   as its activation discipline until #38 closes, and KG-5 carries this
+   transcript.
+
+### 5.5 The verdict, and what is not measured
+
+- **The tier is buildable today with zero kernel change**, with Boa as the
+  engine. Its authority is exactly the plugin world's; its only imports are
+  the two host calls a listener needs. Laws 1 and 5 stand.
+- **QuickJS is not buildable for the plugin world today.** It becomes
+  buildable with a libc shim (harness work, roughly sixty symbols, estimate
+  2 to 4 agent-days *(estimate)*) or with KG-4 (kernel work). The size case
+  for it is real - 864 KB against 3.9 MB, 330 KB against 1.16 MB gzipped -
+  and the engine is a PROVIDER swap in this design (`jinn-ext-js-boa` to
+  `jinn-ext-js-quickjs`), so choosing Boa first forecloses nothing.
+- **Not measured, and named as UI-2 round 1's first job:** the cost of one
+  moment - `Context::default()` plus one eval - under the kernel's fuel
+  metering (10,000-fuel yield interval), on the real daemon, per delivery;
+  the guest's memory high-water mark; whether a `Context` can be kept across
+  deliveries in a single-threaded guest without the operator's source
+  leaking state between moments (the spike creates one per delivery, which
+  is correct and slow). Inventory §4.6's first uncertainty stands until
+  those numbers exist.
+
+---
+
+## 6. A user extension is a waterfall listener - the operator's example, traced
+
+The example: "i want my chat to be extended to parse my input before
+sending and append emoji 🟢". Through the seams as UI-1 and UI-2 leave them.
+
+**Install (a profile edit; KG-1, carded as M2-K23 `jinn:profile-admin`, PLA-348, is why it is not a click yet).**
+
+```json
+{ "id": "ext-green", "package": "ext/jinn-ext-js-boa", "hash": "<the provider's component sha256>",
+  "config": { "grants": ["jinn:ui/before-send"],
+              "data": { "topics": ["jinn:ui/before-send"],
+                        "source": "(p) => ({ ...p, text: p.text + ' 🟢' })",
+                        "origin": "human" } } }
+```
+
+The grant is the topic's own name (`plugin.wit`, `events.listen`). The
+source is data to a signed plugin; it has no host calls, so its authority is
+the grant list and nothing else (Law 5's structural containment; §8
+question 1 asks whether that is enough).
+
+**Activate.** The loader mounts `ext-green`; the guest's `activate` calls
+`events.listen("jinn:ui/before-send", token)`; the kernel records the
+listen effect and the listener's registration position. The spike's
+self-test at activation evaluates the source once and fails the fiber if it
+does not round-trip, so a syntax error is a `failed` fiber on the record,
+never a silent no-op listener (R11).
+
+**The moment, client side.** The operator types `hello` and presses Enter.
+`chat-input.tsx`'s `sendText` (inventory §4.3 moment 1, the single choke
+point for Enter and for STT auto-send) calls the re-seated data layer's
+`sendMessage`, which FIRST calls
+`POST /v1/moments/ui/before-send` with `Authorization: Bearer <credential>`
+and body `{ "text": "hello", "session-id": "…", "attachments": [] }`.
+
+**The door.** `jinn-api-http` puts the bearer to `jinn:auth` `verify`: one
+crossing, one `AuthDecided { granted: true }` row, before anything else
+(2.8, unchanged).
+
+**The walk.** The transport calls
+`events.emit("jinn:ui/before-send", waterfall, all, <body bytes>)`. The
+kernel selects every listener of the topic in registration order and, for a
+reply-expecting mode, first checks that none owes a transition
+(`plugin.wit`, `events.emit`). It delivers `handle-event(token,
+"jinn:ui/before-send", <body>)` to `ext-green`; the guest runs
+`JSON.stringify((source)(JSON.parse(body)))` inside Boa inside wasmtime
+under fuel metering and returns `{"text":"hello 🟢",…}`; the kernel, seeing
+a non-empty output, makes it the payload for the next listener
+(`topics.rs`, `Waterfall` arm); with no next listener the walk ends with
+that payload as its one output, and a `DispatchTrace { topic:
+"jinn:ui/before-send", mode: waterfall, listeners: 1, failures: 0, emitter:
+jinn-api-http }` row lands (Law 2).
+
+**The answer.** The transport answers `200 { "text": "hello 🟢", … }`. The
+client now builds the optimistic bubble from the FOLDED text and calls the
+session store's `send` with it - so the bubble's content-identity key
+(inventory §2.7 G1) matches the server twin exactly and the message renders
+once, and the optimistic id survives (G2). Ordering the moment before the
+bubble is the one place the view layer's contract had to be understood to be
+left alone.
+
+**The transcript.** The turn's user message reads `hello 🟢`. The engine
+receives `hello 🟢`. Nothing between the composer and the engine had to know
+an extension exists.
+
+**What happens when it goes wrong, each on the record.**
+
+- The source throws: the listener's failure is recorded, `failures: 1`,
+  the payload is unchanged, the send proceeds with `hello` (R9: a failing
+  listener never aborts the walk). The operator sees the failure on the
+  plugins page's history for `ext-green`.
+- The extension is mid-restart (the operator just edited its source):
+  the walk is refused whole with `restarting`, the transport answers `503`
+  naming it, the client retries once after the restart lands (about 30 ms,
+  #27) - the send is never silently unextended (UI-2's decision).
+- Two extensions on the topic: both fold, in registration order; the order
+  is what the ledger's listen rows say and nothing else (KG-3).
+- The extension loops: the walk costs the guest deadline, 5 s, and the send
+  waits for it (KG-2).
+- A send from cron or a workflow: it does not pass through the transport's
+  moment endpoint in UI-2. UI-6 makes the session definition's `send` emit
+  the same topic gateway-side, so every sender pays the same moment - and
+  that emitter must itself never be a listener's target (#4/#32).
+
+**What an extension cannot do, by construction.** It cannot call any seam
+(no `services` import in the extension guest's world usage; the spike's
+component imports prove the shape); it cannot see any moment it is not
+granted; it cannot change a decision that is not a waterfall (approvals are
+`on-`, not `before-`, inventory §4.3 moment 20); it cannot outlive its
+entry.
+
+---
+
+## 7. Non-goals, and the cutover rule
+
+**The cutover rule, verbatim (`AGENTS.md`): the old gateway keeps ALL
+production until parity. No plugin here reads or writes production data
+before the parity gate passes for its instance.** Every packet in this arc
+runs against kit-built profiles and the composition rig, and the one
+browser-level acceptance in UI-1 runs against a throwaway root. The old
+gateway's web UI is untouched and keeps serving every instance.
+
+This arc will NOT:
+
+- Rewrite the view layer, re-derive a tuned constant, or tidy an unexplained
+  carry (inventory §2.13, §2.25 are ported byte for byte).
+- Port the no-build ESM plugin door (inventory §2.20) or any same-realm
+  extension mechanism; the extension tier is WASM (Law 1, Law 5).
+- Adopt a second UI framework (SOURCE-OF-TRUTH §8).
+- Port Talk (10,810 lines, an always-mounted overlay with a server-declared
+  control manifest - inventory §1.2, §3.4 Tier 1) until a Talk seam exists.
+- Port the Tauri shell path, its CSP or the base64 native transport
+  (inventory §2.17, §2.24 "Unknown") in any phase here.
+- Port Org, Notes, Skills, Files, Experiments, Global search, Limits, or
+  Logs beyond the ledger tail, each of which waits on a seam that does not
+  exist (inventory §4.2, §4.5 item 9); the cards that build those seams are
+  not UI cards.
+- Carry the service worker in UI-1 (inventory §6.10 item 3: the artifact
+  pin and a client cache need one owner; decided in §8 question 4).
+- Carry `scripts/check-footguns.mjs` in UI-1 (inventory §6.5); its
+  mechanism is worth having and its rule set is gateway-shaped; a later
+  card re-derives the rules for a view layer.
+- Change any kernel contract, vendor a kernel crate, or work around a
+  kernel gap (standing order 1): every gap above is a candidate card.
+- Amend any Law. Everything here runs under Laws 1 through 5 as ratified.
+
+---
+
+## 8. Decisions taken (COO, 2026-09-02)
+
+The seven questions this plan put to the COO, each with its ruling in one
+line; the reasoning that was put with each question follows, kept as the
+record of why.
+
+| # | Question | Ruling |
+|---|---|---|
+| 1 | Is the operator's JS allowed to be config? | ACCEPTED for UI-2; entry data carries `origin: agent \| human` (shown on the plugins page); the guest records the source's sha256 as an activation breadcrumb; revisit with KG-1 |
+| 2 | Public bytes with no door? | ACCEPTED as carded; proof 2 is the boundary; the "bearer on a static path is IGNORED" probe is a mandatory acceptance line |
+| 3 | UI-2 before UI-3? | ACCEPTED |
+| 4 | Service worker dropped in UI-1? | ACCEPTED; returns only in a card owning both the artifact pin and the client cache |
+| 5 | Boa first? | ACCEPTED; the tier is "the JS-in-WASM extension tier"; QuickJS is a later provider packet (libc shim) or KG-4, prerequisite of nothing |
+| 6 | Who implements the TypeScript half? | One card, ONE build node (kernel-dev); sub-agents allowed for the verbatim port; proof 6 makes that safe |
+| 7 | Card KG-1 now? | Carded as jinnd M2-K23 `jinn:profile-admin` (PLA-348); UI-1 does not wait for it |
+
+Two amendments beyond the questions: §4.3 proof 7 is the independent
+verifier's over `agent-browser`; §4's LOC ceiling binds, with its meter
+declared. Dispatch of UI-1 waits for the 2026-09-04 audit.
+
+### The questions as put, with their reasoning
+
+1. **Is the operator's JS allowed to be config?** In §6 the source is data
+   inside a signed first-party plugin whose only authority is topic grants.
+   Law 5 says plugins are signed; an extension's SOURCE is not, under this
+   design. The alternative - every extension a signed envelope of its own
+   (constitution 05, with the local development key) - is stricter and makes
+   "type it in Settings" a build step. Recommendation: config for UI-2, with
+   the origin attested as `agent | human` in the entry's data and shown on
+   the plugins page; revisit with KG-1.
+   **Ruled: ACCEPTED for UI-2**, with two additions now in UI-2's scope: the
+   `origin` field on the entry and on the plugins page, and the source's
+   sha256 recorded as an activation breadcrumb (Law 2).
+2. **Public bytes with no door.** §4.1 serves the document and assets to any
+   loopback peer without `verify`, on the reading that the door's contract
+   forbids a DISPATCH on an unauthenticated connection's behalf and a byte
+   from memory is not one. The 2.8 note's "every parsed request is exactly
+   one verify" was true of a transport that served only `/v1`. If the COO
+   reads the contract as every REQUEST, the alternative is a bearer in the
+   URL fragment consumed by the pairing screen - which the 2.8 note rejected
+   for the API. Recommendation: as carded, with proof 2 as the boundary.
+   **Ruled: ACCEPTED as carded.** Proof 2 is the boundary; the §4.4 probe
+   "a bearer on a static path is IGNORED, not consumed" is mandatory.
+3. **The order of UI-2 and UI-3.** This plan puts moments before the live
+   half, against inventory §4.5, because the arc exists for malleability.
+   The cost is that chat is two packets further out.
+   **Ruled: ACCEPTED.**
+4. **The service worker.** Dropped in UI-1. It returns, if at all, in a
+   card that owns both the artifact pin and the client cache.
+   **Ruled: ACCEPTED.**
+5. **Boa as the first engine of the JS-in-WASM extension tier.** §5 is
+   the evidence; the name describes the shape (JS inside WASM), the engine
+   is a provider. If the COO wants QuickJS first, KG-4 or the shim is a
+   prerequisite packet and UI-2 slips by its estimate.
+   **Ruled: ACCEPTED - Boa first.** The tier is named "the JS-in-WASM
+   extension tier" throughout; the engine is a provider (`jinn-ext-js-boa`,
+   later `jinn-ext-js-quickjs` via a libc-shim packet or KG-4). Neither is a
+   prerequisite of anything.
+6. **Who implements the TypeScript half of UI-1.** The card is kernel-dev's;
+   the verbatim port and the node lane are `jinn-dev`'s craft. Recommendation:
+   one card, two sessions, kernel-dev owns the seam and the proofs.
+   **Ruled: one card, ONE build node (kernel-dev), sub-agents allowed for
+   the verbatim port** - the diff gate (proof 6) is what makes the
+   mechanical port safe to parallelize; the seam and the proofs stay with the
+   card owner. §4's owner line says so.
+7. **Whether a PLA card for KG-1 is opened now.** Every phase from UI-2 on
+   names it; UI-7 is blocked on it for its headline feature.
+   **Ruled: carded NOW as jinnd M2-K23 `jinn:profile-admin` (PLA-348,
+   backlog)**, sequenced after the 2026-09-04 audit on the kernel lane; UI-1
+   does not wait for it.
+
+
+
+---
+
+## Appendix - the spike, reproducibly
+
+Throwaway; run under a scratch directory, delete after. Paths relative to
+`$SPIKE`; `$HARNESS` is a checkout of this repo at `2149d82`; `$JINND` a
+checkout of the kernel holding `85d36b4`.
+
+```text
+# toolchain (the kits' fallback, spelled out)
+RUSTC=$(rustup which rustc); CARGO=$(dirname "$RUSTC")/cargo
+rustup target list --installed | grep wasm32-unknown-unknown
+
+# A: QuickJS for the plugin world's target - fails at 'stdlib.h'
+cd $SPIKE/a-rquickjs && RUSTC=$RUSTC $CARGO build --release --target wasm32-unknown-unknown
+
+# A2: the same against wasi-libc (wasi-sdk-34.0 unpacked under $SPIKE/wasi-sdk)
+CC_wasm32_wasip2=$SPIKE/wasi-sdk/bin/clang AR_wasm32_wasip2=$SPIKE/wasi-sdk/bin/ar \
+  RUSTC=$RUSTC $CARGO build --release --target wasm32-wasip2
+$SPIKE/imports/target/release/imports target/wasm32-wasip2/release/spike_a_rquickjs.wasm
+$SPIKE/wasi-sdk/bin/llvm-nm -u target/wasm32-wasip2/release/build/rquickjs-sys-*/out/libquickjs.a
+
+# B: Boa as a jinn:plugin@0.10.0 guest (wit path: $HARNESS/kernel-pin/wit)
+cd $SPIKE/b-boa-guest && RUSTFLAGS='--cfg getrandom_backend="custom"' \
+  RUSTC=$RUSTC $CARGO build --release --target wasm32-unknown-unknown
+$SPIKE/encode/target/release/encode target/wasm32-unknown-unknown/release/spike_b_boa_guest.wasm ext.wasm
+$SPIKE/imports/target/release/imports ext.wasm
+
+# B, booted: the pinned daemon from git archive, exactly as tests/composition/src/daemon.rs does
+git -C $JINND archive 85d36b4d846a54857a9e4d96d2039a298918375a | tar -x -C $SPIKE/pinned-jinnd
+(cd $SPIKE/pinned-jinnd && $CARGO build -p jinnd-daemon)
+# one root per boot: artifacts/jinn-ext-js-boa.wasm + .sha256 sidecar (the component's sha256),
+# profile.json holding the §5.4 entry with "expect" set per row; then
+$SPIKE/pinned-jinnd/target/debug/jinnd --profile $ROOT/profile.json --ledger $ROOT/ledger.sqlite \
+  --artifacts $ROOT/artifacts --data $ROOT/data      # wait for {"jinnd":"ready"}, SIGINT
+sqlite3 $ROOT/ledger.sqlite "select seq, kind from events where entry='ext-green' order by seq"
+```
+
+`imports` is a 30-line `wasmparser` program printing a component's top-level
+imports and each nested core module's; `encode` is the kits' own
+`wit_component::ComponentEncoder` call with `validate(true)`, printing size
+and sha256. Neither is committed; both are trivially rewritten.
