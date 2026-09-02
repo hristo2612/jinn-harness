@@ -20,3 +20,9 @@ publish = false
 jinn-settings = { path = "../../settings/jinn-settings" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+[dev-dependencies]
+# The introspect mirror check (tests/introspect_mirror.rs): this crate's
+# hand-mirrored `jinn:introspect` shapes against the vendored contract,
+# PARSED. The pin gate owns the parser and the path to the vendored file.
+harness-pin = { path = "../../../tools/harness-pin" }
