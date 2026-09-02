@@ -36,6 +36,7 @@ fn tracked_assets_carry_no_machine_paths() {
         "record-build.sh",
         "run.jinn.harness-soak.plist.template",
         "detach.py",
+        "provision-token.sh",
     ] {
         let text = read(name);
         for (n, line) in text.lines().enumerate() {
@@ -90,7 +91,12 @@ fn plist_template_declares_the_supervision_contract() {
 /// least parse, and the wrapper must log its start reason to `ops.log`.
 #[test]
 fn shell_assets_parse_and_log_their_reason() {
-    for name in ["soak-run.sh", "install-launchd.sh", "record-build.sh"] {
+    for name in [
+        "soak-run.sh",
+        "install-launchd.sh",
+        "record-build.sh",
+        "provision-token.sh",
+    ] {
         let status = Command::new("/bin/sh")
             .arg("-n")
             .arg(soak_dir().join(name))
@@ -1589,4 +1595,98 @@ fn an_unreadable_kernel_repo_answers_nothing_rather_than_no() {
         !out.contains("absent-from-kernel-repo"),
         "a repo that could not be read was made to say no: {out}"
     );
+}
+
+/// The launcher's half of the door (packet 2.8): the wrapper provisions
+/// the `jinn:auth` credential of record before it execs the daemon, and
+/// the installer ships the script that does it.
+#[test]
+fn the_wrapper_provisions_the_operator_token_before_the_daemon() {
+    let wrapper = read("soak-run.sh");
+    let provision = wrapper
+        .find("provision-token.sh")
+        .expect("the wrapper calls the provisioning script");
+    let exec = wrapper
+        .rfind("exec \"$SOAK/bin/jinnd\"")
+        .expect("the wrapper execs the daemon");
+    assert!(
+        provision < exec,
+        "the credential is provisioned BEFORE the daemon starts"
+    );
+    assert!(
+        read("install-launchd.sh").contains("provision-token.sh"),
+        "the installer ships the provisioning script beside the wrapper"
+    );
+}
+
+/// Drives the provisioning script over a scratch root: the file appears
+/// beside the data root as `data.operator-token`, holds 64 hex characters
+/// (32 random bytes), is mode 0600, is NEVER printed, and a second run
+/// keeps it byte for byte; a file with a wide mode is refused rather
+/// than kept.
+#[test]
+fn provisioning_writes_a_private_random_token_once_and_refuses_a_wide_mode() {
+    use std::os::unix::fs::PermissionsExt;
+    let root = std::env::temp_dir().join(format!(
+        "jinn-harness-provision-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("after the epoch")
+            .as_nanos()
+    ));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("scratch root");
+    let run = || {
+        Command::new("/bin/sh")
+            .arg(soak_dir().join("provision-token.sh"))
+            .env("SOAK", &root)
+            .output()
+            .expect("/bin/sh")
+    };
+    let first = run();
+    assert!(first.status.success(), "{first:?}");
+    let token = root.join("data.operator-token");
+    assert!(token.is_file(), "the file is beside the data root");
+    let value = std::fs::read_to_string(&token).expect("readable by the owner");
+    let value = value.trim();
+    assert_eq!(value.len(), 64, "32 random bytes, hex-encoded: {value:?}");
+    assert!(value.chars().all(|c| c.is_ascii_hexdigit()), "{value:?}");
+    let mode = std::fs::metadata(&token)
+        .expect("metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "mode {mode:o}");
+    let stdout = String::from_utf8_lossy(&first.stdout);
+    assert!(
+        !stdout.contains(value) && !String::from_utf8_lossy(&first.stderr).contains(value),
+        "the value is never printed: {stdout}"
+    );
+    assert!(stdout.contains("provisioned"), "{stdout}");
+    // A second run is a restart: the credential is kept as it is.
+    let second = run();
+    assert!(second.status.success(), "{second:?}");
+    assert_eq!(
+        std::fs::read_to_string(&token).expect("readable").trim(),
+        value,
+        "a restart keeps its credential"
+    );
+    assert!(
+        String::from_utf8_lossy(&second.stdout).contains("kept"),
+        "{second:?}"
+    );
+    // A wide mode is what the kernel refuses; the script says so at the
+    // start instead of leaving a ledger of refusals to explain it.
+    std::fs::set_permissions(&token, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+    let wide = run();
+    assert!(
+        !wide.status.success(),
+        "a group-readable credential is refused"
+    );
+    assert!(
+        String::from_utf8_lossy(&wide.stderr).contains("group- or world-accessible"),
+        "{wide:?}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
 }

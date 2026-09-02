@@ -430,6 +430,18 @@ rm -f "$reason_file"
 # From here, anything the daemon says on stdout/stderr is the soak log.
 exec >>"$SOAK/logs/jinnd.log" 2>&1
 
+# The launcher's half of the door (packet 2.8): the `jinn:auth` credential
+# of record beside the data root, provisioned if absent, its mode checked
+# if present. The script beside this one is the one home of that rule
+# (`provision-token.sh`); it prints the path and never the value. A
+# refusal here is a refusal to start: a daemon whose door cannot open is
+# not on duty, and saying so in ops.log beats a ledger of refusals.
+if ! "$SOAK/bin/provision-token.sh"; then
+    printf '%s start REFUSED: the operator token could not be provisioned (see jinnd.log)\n' \
+        "$(date -u +%FT%TZ)" >>"$SOAK/logs/ops.log"
+    exit 1
+fi
+
 now=$(date -u +%FT%TZ)
 # Each line states the DERIVATION as a derivation ("readings are consistent
 # with"), then hands over the readings. The audit counts the word; a reader

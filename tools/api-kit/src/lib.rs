@@ -12,8 +12,11 @@ pub const STORE_ID: &str = "jinn-settings-store";
 
 /// The api trio's profile entries. Authority is the profile side's: the
 /// provider's `jinn:net` grant is scoped to exactly its port (loopback is
-/// the bundle's own v0.1 bound) and it holds NO clock (served from the
-/// kernel's readiness wakes); the status consumer holds the read-only
+/// the bundle's own v0.1 bound), it holds NO clock (served from the
+/// kernel's readiness wakes), and it holds `jinn:auth` BARE — the door
+/// (packet 2.8): the bundle declares no scope, a scoped grant would
+/// refuse at admission, and without the grant the provider cannot ask
+/// and answers every request `refused`; the status consumer holds the read-only
 /// kernel contracts (`jinn:introspect`, `jinn:ledger`) and reads the
 /// document of record through a `jinn:profile` grant attenuated to
 /// `ops: ["document"]` — a viewer that CANNOT patch (FINDINGS.md #24
@@ -34,6 +37,7 @@ pub fn api_entries(http: &str, status: &str, edit: &str, port: u16) -> Vec<serde
         serde_json::json!({ "id": PROVIDER_ID, "package": "api/jinn-api-http", "hash": http,
           "config": { "grants": [
                           { "contract": "jinn:net", "scope": { "bind": [port, port] } },
+                          jinn_api::AUTH_CONTRACT,
                           jinn_api::STATUS_CONTRACT, jinn_api::PROFILE_CONTRACT,
                           jinn_settings::SETTINGS_CONTRACT ],
                       "data": { "port": port } } }),

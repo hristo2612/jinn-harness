@@ -28,6 +28,7 @@ SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
 | `$SOAK/data/profile.json`, `$SOAK/artifacts/` | The generated kit (`api-kit kit`: the cron seam plus the operator-API trio since the sixth bump; `cron-kit kit` before it) — never hand-edited. The profile moved INTO the data root at the sixth bump so the api consumers can read it through their scoped `jinn:fs` (FINDINGS.md #25); the wrapper passes `--artifacts`/`--data` explicitly. |
 | `$SOAK/ledger.sqlite` | The daemon's append-only ledger (the evidence surface) |
 | `$SOAK/data/` | The daemon's data root: `cron/` (state, the append-only history log, per-fire run records), `health/` (the consumer's reports), and since the sixth bump `profile.json` (the daemon's watcher is non-recursive on the profile's directory, so the fibers' subdirectories never wake it) |
+| `$SOAK/data.operator-token` | The `jinn:auth` credential of record (packet 2.8; kernel M2-K21): 32 random bytes as 64 hex characters, mode 0600, a SIBLING of `data/` and never inside a guest's `jinn:fs` reach. The daemon only reads it — on every call, so rotation and revocation need no restart. Provisioned if absent by `bin/provision-token.sh`, which both start lanes run; see §Credential for how the operator reads and presents it |
 | `$SOAK/data.inverses/` | The kernel's `jinn:fs` effect-retention store (since pin `41cb2f47`): one durable inverse per live revertible effect, keyed by effect id — the byte curve FINDINGS.md #8 asked for is measured here |
 | `$SOAK/logs/` | `jinnd.log`, `ops.log` (operator actions, one timestamped line each — restarts and the pin bump count toward the +7d audit) |
 | `$SOAK/run/` | `jinnd.pid` (pid and mtime are ONE previous-start record: the wrapper proves both or neither, then compares the mtime to `kern.boottime` to derive whether the readings are consistent with a reboot or with a crash restart); `launchd.reason` (one word an operator drops to name a planned start; the wrapper consumes it) |
@@ -45,7 +46,7 @@ cargo test -p composition          # builds the PINNED daemon via git archive + 
 tools/soak/record-build.sh target/composition/pinned-jinnd   # installs the daemon AND records what it is
 cargo build --release -p api-kit && cp target/release/api-kit "$SOAK/bin/api-kit"
 install -m 0755 tools/soak/detach.py "$SOAK/bin/detach.py"
-tools/soak/install-launchd.sh                  # wrapper + LaunchAgent, files only (§Supervisor)
+tools/soak/install-launchd.sh                  # wrapper + provisioning script + LaunchAgent, files only (§Supervisor)
 "$SOAK/bin/api-kit" kit "$SOAK" --port 7921 --every-ms 900000 --tick-ms 900000
 mv "$SOAK/profile.json" "$SOAK/data/profile.json"   # the document sits in the data root (FINDINGS.md #25)
 ```
@@ -65,6 +66,53 @@ The composition suite is the setup's preflight: a red gate means do not
 start the soak. `record-build.sh` installs the daemon and writes the
 record of what it is; before the seventh bump this step was two `cp`s and
 a `jinnd.commit` marker, which is the shape §What the record is describes.
+
+## Credential (the door, since packet 2.8)
+
+The operator API refuses every request that does not present the
+operator's credential: `jinn-api-http` puts the request's
+`Authorization: Bearer` token to the kernel's `jinn:auth` `verify` BEFORE
+it dispatches anything, one call per request, and answers a typed 401
+(`"code":"unauthenticated"`) otherwise
+(`docs/notes/2026-09-02-the-door-presents-what-it-was-given.md`). The
+credential of record is `$SOAK/data.operator-token`; the launcher owns
+it, the daemon only reads it.
+
+**Where the operator reads it:**
+
+```sh
+SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
+cat "$SOAK/data.operator-token"
+```
+
+**How the operator presents it** (the health check and every other
+request):
+
+```sh
+curl -s -H "Authorization: Bearer $(cat "$SOAK/data.operator-token")" 127.0.0.1:7921/v1/health
+```
+
+**Provisioning** is part of every start: `bin/provision-token.sh` writes
+the file if absent (32 random bytes, hex, mode 0600) and leaves an
+existing one alone, so a restart keeps its credential; it never prints
+the value. The supervised lane runs it from the wrapper; the unsupervised
+lane runs it by hand (§Start). A file that is group- or world-accessible
+is REFUSED at the start — the kernel would refuse every call against it.
+
+**Rotation:** overwrite the file (mode 0600) — the new value grants and
+the old refuses from the next request on, no restart. **Revocation:**
+delete it — everything refuses from the next request on. Each is an
+operator action; log it in `ops.log` (never the value).
+
+**What it does not defend against**, by the kernel contract's own words:
+a process running as the daemon's uid can read the file. The boundary is
+against a foreign process, a mistaken second instance, or a transport
+written without a check.
+
+The LIVE soak at the time of writing runs pin `3a8e5c0`, which predates
+`jinn:auth`; this section applies from the next pin bump's kit onward
+(§Pin bump mid-soak), when the regenerated profile grants the API
+`jinn:auth` and the wrapper provisions the token on its first start.
 
 ## What the record is (and why it is not typed)
 
@@ -367,6 +415,7 @@ Do not run this while the agent is loaded; that is the double start.
 
 ```sh
 SOAK=${SOAK:-$HOME/.local/state/jinn-harness-soak}
+"$SOAK/bin/provision-token.sh"        # the door's credential, if absent (§Credential)
 mark=$(wc -l < "$SOAK/logs/jinnd.log")
 /usr/bin/python3 "$SOAK/bin/detach.py" "$SOAK/logs/jinnd.log" \
   "$SOAK/bin/jinnd" --profile "$SOAK/data/profile.json" --ledger "$SOAK/ledger.sqlite" \
@@ -391,8 +440,11 @@ Since the sixth bump the operator API is the second check — one loopback
 request, answered from the kernel's own view of the composition:
 
 ```sh
-curl -s 127.0.0.1:7921/v1/health
+curl -s -H "Authorization: Bearer $(cat "$SOAK/data.operator-token")" 127.0.0.1:7921/v1/health
 ```
+
+(The header is the door, §Credential; without it the answer is a typed
+401, which is the door working, not the daemon failing.)
 
 Healthy: the daemon alive, last fire under 30 min old (two wakes), ledger
 rows growing, size growing slowly, `/v1/health` answering `"ok":true` with
@@ -497,7 +549,11 @@ The procedure, for this bump and any future one:
    cached daemon at the new pin (the `.commit` marker flips), the kit
    rebuild refreshes `$SOAK/bin` and regenerates `profile.json` +
    `artifacts/` with the new honest pins. **Do not touch `ledger.sqlite`
-   or `data/`** — schedule state survives the regeneration.
+   or `data/`** — schedule state survives the regeneration. The first
+   bump past `85d36b4` also brings the door (§Credential): the regenerated
+   profile grants the API `jinn:auth`, and the wrapper provisions
+   `data.operator-token` on that start — read it before the first health
+   check.
 4. Start per §Start (`printf planned-start`, then `kickstart`), and log
    `pin bump <old> -> <new>` in `ops.log` beside the wrapper's start line.
 5. The next fires after the bump are the adoption evidence for the +7d

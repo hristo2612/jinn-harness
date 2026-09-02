@@ -1,4 +1,4 @@
-# `jinn-api` 0.3.0 — the operator-API contracts
+# `jinn-api` 0.4.0 — the operator-API contracts
 
 The service definition of the operator-API seam. This document is the
 contracts' prose law; the types in `src/` are their schema. Designed to
@@ -15,7 +15,8 @@ precedent).
 | Status contract | `jinn:api-status` | Provided by `jinn-status`; operations `status`, `health`, `ledger-tail`. |
 | Profile contract | `jinn:api-profile` | Provided by `jinn-profile-edit`; operations `get`, `patch-entry`. |
 | Engine contracts | `jinn:engine.<engine-id>` | One provider slot per engine; routed to directly, like the settings seam. The contract, its operations and its types have ONE home: `plugins/engines/jinn-engine/README.md`. |
-| Provider grants | `jinn:net` (scoped to one loopback port), both contracts above | The HTTP provider's authority: transport + the right to call the consumers. No clock: it serves from the kernel's readiness wakes. |
+| Provider grants | `jinn:net` (scoped to one loopback port), both contracts above, `jinn:auth` (bare — the bundle declares no scope) | The HTTP provider's authority: transport + the right to call the consumers + the right to ASK the kernel who a connection is. No clock: it serves from the kernel's readiness wakes. |
+| The door (0.4.0) | `jinn:auth` / `verify`, before every dispatch | The transport puts the request's `Authorization: Bearer` token (or NOTHING, when there is none) to the kernel's one decision point, one call per request, and dispatches only on a `principal`. The vocabulary is `auth.rs`; the names are asserted against the vendored `contract.wit` by parsing (`tests/auth_mirror.rs`). |
 | Consumer grants | the contract each provides; `jinn:fs` scoped to the profile document (read); `jinn:introspect`, `jinn:ledger`, `jinn:cron` (status); `jinn:profile` scoped `["*"]` (editor) | Authority is the profile side's — requests are not grants. |
 
 All payloads on this seam are UTF-8 JSON with kebab-case keys. Every
@@ -54,7 +55,17 @@ whether the payload is the body or the query (`body`).
 
 HTTP status mapping of the typed error codes is the provider's
 (`jinn-api-http-wire`): `not-found` 404, `invalid` 422, `unavailable`
-503, `refused` 502; a route miss is 404/405.
+503, `refused` 502, `unauthenticated` 401 (with the `WWW-Authenticate:
+Bearer` challenge); a route miss is 404/405.
+
+`unauthenticated` (0.4.0) is its own class because its next move is its
+own: present the operator's credential, or stop. It is neither `refused`
+(a grant or provider said no — the caller's profile to widen) nor
+`unavailable` (the transport — worth retrying). Its `detail` is the
+kernel's reason and never carries credential bytes. A door that cannot
+ASK — `jinn:auth` unresolvable, the crossing refused, an answer off the
+contract's wire — is `refused`: closed, and named as the composition's
+defect rather than the operator's.
 
 ## The engines routes (0.3.0)
 
@@ -196,6 +207,13 @@ rows of the static one. `GET /v1/engines/{engine}` is one engine's own
 
 ## Changes
 
+- **0.4.0 (2026-09-02, kernel pin `85d36b4`):** additive. The door:
+  `unauthenticated` joins the error classes (401 on the HTTP provider,
+  with its challenge), `auth.rs` carries the `jinn:auth` names and wire
+  decode, and every route now owes one `verify` before its dispatch.
+  Existing routes, schemas and status codes are unchanged; a request
+  that presents no credential is now answered 401 where it was answered
+  before, which is the boundary this edition exists to add.
 - **0.3.0 (2026-08-29):** additive. The engines surface: five routes onto
   `jinn:engine.<id>` (list, describe, run, run-get, cancel), the list's
   schema, the engines-seam error mapping, and `engines` on the status
