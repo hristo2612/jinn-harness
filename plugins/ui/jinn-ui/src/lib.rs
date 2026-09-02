@@ -19,10 +19,6 @@ pub const BUNDLE_CONTRACT: &str = "jinn:ui-bundle";
 pub const OP_MANIFEST: &str = "manifest";
 /// Operation: the whole archive as one blob ([`encode_bundle`]'s shape).
 pub const OP_BUNDLE: &str = "bundle";
-/// Emitted by a provider once it provides (mode `emit`, empty payload):
-/// sibling activation order is unspecified (FINDINGS.md #7), so a
-/// transport that activated first completes its one read on this event.
-pub const PROVIDED_TOPIC: &str = "jinn:ui-bundle/provided";
 /// The document every non-asset, non-API path answers (inventory §2.15).
 pub const DOCUMENT: &str = "index.html";
 /// Files under this prefix are hashed by the build and served immutable.

@@ -2,7 +2,7 @@
 //! compiled in from `$JINN_UI_BUNDLE_DIR`, answered verbatim. No grant but
 //! its own contract, no config, no state: the artifact IS the UI.
 
-use jinn_ui::{API_VERSION, BUNDLE_CONTRACT, OP_BUNDLE, OP_MANIFEST, PROVIDED_TOPIC};
+use jinn_ui::{API_VERSION, BUNDLE_CONTRACT, OP_BUNDLE, OP_MANIFEST};
 
 wit_bindgen::generate!({
     path: "../../../kernel-pin/wit",
@@ -10,8 +10,7 @@ wit_bindgen::generate!({
 });
 
 use exports::jinn::plugin::lifecycle::{Guest, GuestFault};
-use jinn::plugin::events::{DispatchMode, Selector};
-use jinn::plugin::{effects, events, services};
+use jinn::plugin::{effects, services};
 
 const EFFECT_TOKEN: u64 = 1;
 /// The kit's archive (`jinn_ui::encode_bundle`'s shape).
@@ -30,11 +29,6 @@ impl Guest for Embedded {
         effects::register("jinn-ui-bundle-embedded on duty", EFFECT_TOKEN)
             .map_err(|error| fault("effect", error))?;
         services::provide(BUNDLE_CONTRACT).map_err(|error| fault("provide", error))?;
-        // Announced AFTER the provision: a transport that activated first
-        // completes its read on this (FINDINGS.md #7); one that activates
-        // later reads at its own activation and never hears it.
-        events::emit(PROVIDED_TOPIC, DispatchMode::Emit, &Selector::All, &[])
-            .map_err(|error| fault("emit", error))?;
         Ok(())
     }
 

@@ -116,13 +116,13 @@ struct HttpConfig {
     /// is this seam's own and may never stand in for another seam's.
     #[serde(default)]
     catalogs: Vec<String>,
-    /// Whether the profile mounts a `jinn:ui-bundle` this API serves,
-    /// written by the profile from the SAME source as this entry's
-    /// `jinn:ui-bundle` grant — the same discipline as `engines`: the
-    /// GRANT is the authority, this is that fact told to the provider so a
-    /// profile without a UI never spends a resolve to learn it.
+    /// The bundle entry this API serves, when the profile mounts one —
+    /// written by the profile beside this entry's `jinn:ui-bundle` and
+    /// `jinn:introspect` grants (the discipline of `engines`: the GRANT is
+    /// the authority, this is that fact told to the provider). Its id is
+    /// what the transport watches for on the kernel's transitions.
     #[serde(default)]
-    ui_bundle: bool,
+    ui_bundle_entry: Option<String>,
 }
 
 fn default_host() -> String {
@@ -142,8 +142,10 @@ static STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static TODO_STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static WORKFLOW_STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static CATALOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-/// The verified bundle this incarnation serves, `None` without one.
+/// The verified bundle this incarnation serves, `None` without one, and
+/// the entry it is read from.
 static BUNDLE: Mutex<Option<ui::Bundle>> = Mutex::new(None);
+static BUNDLE_ENTRY: Mutex<String> = Mutex::new(String::new());
 
 fn fault(context: &str, error: impl std::fmt::Debug) -> GuestFault {
     GuestFault::Failed(format!("{context}: {error:?}"))
@@ -738,10 +740,12 @@ impl Guest for Http {
         // The bundle BEFORE the bind: read once, verified, held for this
         // incarnation; a bundle that does not verify fails this fiber
         // here, with no listener ever opened (R11, UI-1 card §4.3 item 5).
-        *BUNDLE.lock().unwrap() = if config.ui_bundle {
-            ui::load()?
-        } else {
-            None
+        *BUNDLE.lock().unwrap() = match &config.ui_bundle_entry {
+            Some(entry) => {
+                *BUNDLE_ENTRY.lock().unwrap() = entry.clone();
+                ui::load()?
+            }
+            None => None,
         };
         // The bind: a refusal (port outside the grant, non-loopback host,
         // no grant) is the broker's, on the record; this fiber then fails
@@ -771,10 +775,15 @@ impl Guest for Http {
         // Only the kernel's typed readiness wake of OUR sockets is a
         // reason to touch them; anything else here is a contract
         // violation, refused loudly.
-        // The bundle provider announcing itself: the read this incarnation
-        // could not complete at activation completes now (ui.rs).
-        if token == ui::PROVIDED_TOKEN && topic == jinn_ui::PROVIDED_TOPIC {
-            *BUNDLE.lock().unwrap() = ui::load()?;
+        // A witnessed transition: the bundle entry reaching Active is the
+        // read this incarnation could not complete at activation, or a
+        // swap (ui.rs). Any other transition costs nothing.
+        if token == ui::TRANSITIONS_TOKEN && topic == jinn_plugins::TRANSITIONS_TOPIC {
+            if ui::completes(&BUNDLE_ENTRY.lock().unwrap(), &payload) {
+                if let Some(bundle) = ui::read()? {
+                    *BUNDLE.lock().unwrap() = Some(bundle);
+                }
+            }
             return Ok(Vec::new());
         }
         let handle: Option<[u8; 8]> = payload.as_slice().try_into().ok();

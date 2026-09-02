@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use jinn_ui::{encode_bundle, manifest_for, Manifest, BUNDLE_CONTRACT, PROVIDED_TOPIC};
+use jinn_ui::{encode_bundle, manifest_for, Manifest, BUNDLE_CONTRACT};
 
 /// The bundle entry's id — the ONE entry a UI swap edits.
 pub const BUNDLE_ID: &str = "jinn-ui-bundle";
@@ -33,15 +33,16 @@ pub fn bundle_entry(package: &str, hash: &str) -> serde_json::Value {
 }
 
 /// Tells the transport's entry a bundle is mounted: the `jinn:ui-bundle`
-/// grant and the `provided` topic's (the authority the kernel enforces),
-/// and `ui-bundle: true` (that fact told to the provider).
+/// grant and `jinn:introspect` (its transitions publish is what says the
+/// bundle entry is Active — the authority the kernel enforces), and the
+/// entry's id (that fact told to the provider).
 pub fn mount_bundle_on(transport: &mut serde_json::Value) {
     let grants = transport["config"]["grants"]
         .as_array_mut()
         .expect("grants");
     grants.push(serde_json::json!(BUNDLE_CONTRACT));
-    grants.push(serde_json::json!(PROVIDED_TOPIC));
-    transport["config"]["data"]["ui-bundle"] = serde_json::json!(true);
+    grants.push(serde_json::json!(jinn_api::INTROSPECT_CONTRACT));
+    transport["config"]["data"]["ui-bundle-entry"] = serde_json::json!(BUNDLE_ID);
 }
 
 /// Every regular file under `dir`, as `(relative /-path, bytes)`, sorted.
