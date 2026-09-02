@@ -303,13 +303,39 @@ fn the_view_layer_is_verbatim() {
 /// change here, so the ones still carrying the string are listed as the
 /// carried inventory (a call on one answers the SPA document, never
 /// old-gateway data), not failed.
+///
+/// §8 amendment 6 (round 3): the verifier's network transcript is the
+/// binding proof, and it caught the mounted Settings surface issuing two
+/// live requests from files this test had listed as carried. Those files
+/// (items 10, 11) and the shell's client-plugin loader (item 12, the
+/// actual source of the transcript's `GET /api/plugins`) are pinned here
+/// as ADAPTED rows, so a map edit can never move a live requester back
+/// into the inventory unnoticed.
 #[test]
 fn no_old_gateway_route_survives_in_the_adapted_client() {
     const ADAPTERS: [&str; 2] = ["src/lib/api.ts", "src/lib/api-config.ts"];
+    /// Mounted requesters caught live in round 2 (amendment 6) — adapted, never carried.
+    const MOUNTED_REQUESTERS: [&str; 3] = [
+        "src/routes/settings/plugins/inventory.ts",
+        "src/lib/talk-capability.ts",
+        "src/plugins/disk-plugins.ts",
+    ];
     let web = repo_root().join("web");
     let mut offending = Vec::new();
     let mut carried = Vec::new();
-    for row in map() {
+    let rows = map();
+    for requester in MOUNTED_REQUESTERS {
+        let status = rows
+            .iter()
+            .find(|row| row.dest == requester)
+            .map(|row| row.status.as_str());
+        assert_eq!(
+            status,
+            Some("adapted"),
+            "{requester}: a mounted old-gateway requester (amendment 6) must be an adapted row"
+        );
+    }
+    for row in rows {
         if !row.dest.starts_with("src/") {
             continue;
         }
