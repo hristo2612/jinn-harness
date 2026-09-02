@@ -24,8 +24,9 @@ serves the document and its assets from memory to any loopback peer
 with NO door and NO crossing — a byte is never a dispatch, a bearer on
 a static path is ignored — while every `/v1/*` request keeps the door
 exactly as 2.8 left it. Swapping the UI is a profile edit of one
-entry's `package` and `hash`; a bundle that does not verify fails the
-transport and nothing else. The client under `web/` is jinn `43e8647`'s
+entry's `package` and `hash` (witnessed on the kernel's transitions
+publish and re-read — not a restart at this pin, #46); a bundle that
+does not verify fails the transport and nothing else. The client under `web/` is jinn `43e8647`'s
 shell, Settings and plugins page ported VERBATIM behind a byte-for-byte
 gate over a pinned map (`tools/ui-kit/tests/verbatim.rs`,
 `web/port-map.txt`): the eight enumerated adaptations (the eighth, `routes/client-providers.tsx`
@@ -572,7 +573,12 @@ Its own README carries these in full; the load-bearing ones:
 - **A failed plugin shows `failed` and no reason** (#38), on the page
   that exists to show reasons — the transcript of the page trying is
   this packet's addition to that finding.
-- **The bundle is one ~MB crossing per transport activation. (named
+- **Activation-time injection is a coin toss the kernel does not
+  re-arm** (#45), and **a provider swap does not restart its wasm
+  consumer** (#46): the transport completes and refreshes its one read
+  on `jinn:introspect/transitions`, a read-only kernel grant it has no
+  other use for.
+- **The bundle is one 1.46 MB crossing per transport activation. (named
   here)** Measured in proof 3 and recorded in the note; a page load is N
   connections because responses close.
 - **Only Settings and Plugins are ported; the nav rail still lists the

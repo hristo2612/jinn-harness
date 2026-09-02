@@ -3,7 +3,9 @@
 The plugins profile plus ONE entry: `jinn-ui-bundle`
 (`ui/jinn-ui-bundle-embedded`, granted only `jinn:ui-bundle`, empty
 config), and the transport `jinn-api-http` additionally granted
-`jinn:ui-bundle` with `ui-bundle: true` in its data. Everything else is
+`jinn:ui-bundle` and `jinn:introspect` (the transitions publish that
+completes its read when the bundle entry activates after it, #45) with
+`ui-bundle-entry: "jinn-ui-bundle"` in its data. Everything else is
 exactly what `plugin-kit` mounts — the cron seam, the api trio, the
 settings pair, the live and fixed catalogs, the shelved entry and the
 deliberately failing one — so the ported plugins page has a tree with a
@@ -35,8 +37,11 @@ crossing.
 
 Swapping the UI is a profile edit of the ONE bundle entry's `package`
 and `hash` (a second kit-built provider under another name); the
-kernel's epoch gating restarts the transport, which re-reads and serves
-the new hash — measured in `tests/composition/tests/ui.rs` (proof 4).
+transport witnesses the entry reach `Active` on the kernel's
+`jinn:introspect/transitions` publish and re-reads — 1.24 s, no refused
+connect, its own incarnation unchanged (`FINDINGS.md` #46: the epoch
+gating the card assumed stops at the string lane) — measured in
+`tests/composition/tests/ui.rs` (proof 4).
 A bundle whose bytes do not match its manifest fails the transport's
 activation and nothing else (proof 5).
 

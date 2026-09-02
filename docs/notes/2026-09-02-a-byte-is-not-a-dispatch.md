@@ -15,9 +15,11 @@ read exactly: "every parsed request is exactly one verify" was true of
 a transport that served only `/v1`; the contract's own obligation is
 narrower — a transport "issues NO dispatch on that connection's behalf
 before this call answers `principal`". A byte answered from the
-transport's own memory is not a dispatch. So the bundle is read ONCE, at
-`activate`, as an injected dependency; nothing a static request does
-ever crosses into a guest; and the door is not on that path at all — a
+transport's own memory is not a dispatch. So the bundle is read ONCE per
+incarnation — at `activate` when the provider is live, otherwise on the
+kernel's witnessed `Active` transition (#45) — as an injected
+dependency; nothing a static request does ever crosses into a guest; and
+the door is not on that path at all — a
 bearer presented there is IGNORED, not consumed. The COO ruled on it
 (plan §8, question 2) and made the "ignored, not consumed" probe a
 mandatory acceptance line; proof 2 is that line on the ledger: three
@@ -56,18 +58,38 @@ reached by a route the door does not sit on.
 
 ## Measured
 
-- Proof 3: the bundle crossed ONCE per transport activation —
-  {{BUNDLE_BYTES}} bytes, {{BUNDLE_FILES}} files, in {{LEDGER_ROWS}}
-  ledger rows at rest, {{TRANSPORT_ROWS}} of them on the transport's
-  account.
-- Proof 4: the swap landed {{SWAP_LANDED}} after the edit; the blip
-  (first refused connect to first marked 200) was {{BLIP}}; the
-  transport's incarnation +1, the settings consumer's and the catalog's
-  unchanged.
+- Proof 3: the bundle crossed ONCE per transport activation — 1,464,011
+  bytes (35 files; the plan's "~4 MB" was an estimate of a full build,
+  this is the two-surface one), in a ledger of 190 rows at rest, 31 of
+  them on the transport's account, three of those `manifest` probes
+  (the activation-order path of #45).
+- Proof 4: the swap served the marked document 1.24 s after the edit,
+  with 0 refused connects (no blip: the transport never restarted, #46),
+  one more `bundle` crossing on the record, the settings consumer's and
+  the catalog's incarnations unchanged — and the transport's unchanged
+  too, which is the finding, not the design.
+- The web build: initial critical path 181,517 gzip bytes against the
+  carried 195,000 budget; 347 files verbatim, 20 adapted, 3 new on the
+  port map; 98 test files / 840 tests green.
 
 ## What was found
 
-{{FINDINGS}}
+- **#45** — a wasm entry that injects a sibling's contract at activation
+  is a coin toss (four boots of five failed the transport), the kernel
+  never re-arms it when the sibling lands, and a provider's own "I am
+  here" event is the #4/#32 cycle (`CycleRefused` on the record). The
+  transport now completes its one read on the kernel's own
+  `jinn:introspect/transitions` publish, under a `jinn:introspect` grant
+  it has no other use for.
+- **#46** — a provider swap does not restart a wasm consumer that
+  injected it: the card's "a bundle swap is a restart" (R9, epoch
+  gating) is not available on the string lane; the swap is a witnessed
+  transition and a re-read, on the record.
+- **#38, a transcript added** — the transport's verify fault names the
+  mismatched file and the record keeps only `Failed` (KG-5).
+- Not a finding: the activation crossing is 1.46 MB and shows nowhere in
+  the boot time; KG-1 (#37 / PLA-348) is the reason every write on the
+  plugins page is disabled.
 
 ## What this packet does NOT do
 
