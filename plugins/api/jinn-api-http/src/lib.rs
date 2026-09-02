@@ -739,7 +739,7 @@ impl Guest for Http {
         // incarnation; a bundle that does not verify fails this fiber
         // here, with no listener ever opened (R11, UI-1 card §4.3 item 5).
         *BUNDLE.lock().unwrap() = if config.ui_bundle {
-            Some(ui::load()?)
+            ui::load()?
         } else {
             None
         };
@@ -771,6 +771,12 @@ impl Guest for Http {
         // Only the kernel's typed readiness wake of OUR sockets is a
         // reason to touch them; anything else here is a contract
         // violation, refused loudly.
+        // The bundle provider announcing itself: the read this incarnation
+        // could not complete at activation completes now (ui.rs).
+        if token == ui::PROVIDED_TOKEN && topic == jinn_ui::PROVIDED_TOPIC {
+            *BUNDLE.lock().unwrap() = ui::load()?;
+            return Ok(Vec::new());
+        }
         let handle: Option<[u8; 8]> = payload.as_slice().try_into().ok();
         let (Some(handle), true) = (handle, topic == READABLE_TOPIC) else {
             return Err(GuestFault::Failed(format!(

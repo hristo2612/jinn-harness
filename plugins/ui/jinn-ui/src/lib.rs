@@ -1,15 +1,7 @@
-//! The `jinn:ui-bundle` service definition: the contract's names, the
-//! manifest and bundle wire shapes, the bundle codec, verification, and
-//! the SERVING LAW as pure functions. The prose law lives in this crate's
-//! README; this code is its schema. Compiled natively (unit tests, the
-//! kit) and into the guests, so it depends on nothing but serde and sha2.
-//!
-//! The one decision it encodes (the UI-1 card, §4.1): the UI bundle is ONE
-//! plugin artifact, content-addressed by the kernel's own `package` +
-//! `hash`; a transport injects this contract, reads the whole bundle ONCE
-//! at activation, verifies every file against the manifest FAIL CLOSED,
-//! and serves the document and its assets from memory to any loopback
-//! peer with no door and no crossing — a byte is never a dispatch.
+//! The `jinn:ui-bundle` service definition: names, the manifest and bundle
+//! wire shapes, the codec, fail-closed verification, and the serving law
+//! as pure functions. The prose law is this crate's README; this is its
+//! schema. Native (tests, the kit) and wasm; depends on serde and sha2 only.
 
 use std::collections::BTreeMap;
 
@@ -27,18 +19,19 @@ pub const BUNDLE_CONTRACT: &str = "jinn:ui-bundle";
 pub const OP_MANIFEST: &str = "manifest";
 /// Operation: the whole archive as one blob ([`encode_bundle`]'s shape).
 pub const OP_BUNDLE: &str = "bundle";
+/// Emitted by a provider once it provides (mode `emit`, empty payload):
+/// sibling activation order is unspecified (FINDINGS.md #7), so a
+/// transport that activated first completes its one read on this event.
+pub const PROVIDED_TOPIC: &str = "jinn:ui-bundle/provided";
 /// The document every non-asset, non-API path answers (inventory §2.15).
 pub const DOCUMENT: &str = "index.html";
 /// Files under this prefix are hashed by the build and served immutable.
 pub const ASSETS_PREFIX: &str = "assets/";
 /// `Cache-Control` for a hashed asset (inventory §2.16).
 pub const CACHE_IMMUTABLE: &str = "public, max-age=31536000, immutable";
-/// `Cache-Control` for everything else, the document above all: iOS
-/// Safari over a tunnel hostname caches HTML indefinitely (inventory
-/// §2.16, `90e37113`).
+/// `Cache-Control` for everything else, the document above all (inventory §2.16).
 pub const CACHE_NO_STORE_REVALIDATE: &str = "no-cache";
-/// The MIME of a typed refusal on a static path (inventory §2.15: a
-/// missing asset is `404 text/plain`, never the SPA fallback).
+/// The MIME of a typed refusal on a static path (inventory §2.15).
 pub const MIME_TEXT: &str = "text/plain; charset=utf-8";
 
 /// Unknown sibling fields, preserved across a decode → encode round trip
@@ -84,9 +77,8 @@ pub fn hex_sha256(bytes: &[u8]) -> String {
     format!("{:x}", Sha256::digest(bytes))
 }
 
-/// The `Content-Type` a path is served with, by extension. The table is
-/// the old gateway's (inventory §2.16): `.webmanifest` is
-/// `application/manifest+json` or the install prompt never appears.
+/// The `Content-Type` a path is served with, by extension (the old
+/// gateway's table, inventory §2.16).
 #[must_use]
 pub fn mime_of(path: &str) -> &'static str {
     match path.rsplit_once('.').map(|(_, extension)| extension) {
@@ -174,11 +166,8 @@ pub fn manifest_for(files: &[(String, Vec<u8>)], bundle: &[u8]) -> Manifest {
     }
 }
 
-/// Verifies a `bundle` blob against its manifest, FAIL CLOSED: the blob
-/// hashes to `bundle-sha256`, every named file is present and hashes to
-/// its `sha256`, no unnamed file is present, and the document is among
-/// them. Answers the files by path. A transport that cannot verify does
-/// not serve (R11: the transport's activation fails, nothing else).
+/// Verifies a `bundle` blob against its manifest, FAIL CLOSED (the README's
+/// four conditions); answers the files by path.
 ///
 /// # Errors
 ///
@@ -241,12 +230,7 @@ pub enum Static<'a> {
     NotFound,
 }
 
-/// THE SERVING LAW (inventory §2.15, §2.16, §2.24), for a GET on a
-/// non-API path: a path with a dot-dot or empty segment, or whose first
-/// segment spells the API namespace in another case, is nothing (404);
-/// `/assets/<x>` is that file immutable or 404, never the document; any
-/// other path the bundle holds is that file; everything else is the
-/// document, `no-cache`.
+/// THE SERVING LAW for a GET on a non-API path (the README's table).
 #[must_use]
 pub fn serve<'a>(manifest: &'a Manifest, files: &'a Files, path: &str) -> Static<'a> {
     let Some(relative) = path.strip_prefix('/') else {

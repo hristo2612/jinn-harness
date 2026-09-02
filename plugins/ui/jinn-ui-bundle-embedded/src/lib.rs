@@ -1,10 +1,8 @@
-//! The `jinn:ui-bundle` embedded provider. The archive and its manifest
-//! are the kit's output compiled in (`include_bytes!` of
-//! `$JINN_UI_BUNDLE_DIR/bundle.bin` and `manifest.json`); `manifest` and
-//! `bundle` answer them verbatim. No grant but its own contract, no
-//! config, no state: the artifact IS the UI, and its hash pins it.
+//! The `jinn:ui-bundle` embedded provider: the kit's archive and manifest
+//! compiled in from `$JINN_UI_BUNDLE_DIR`, answered verbatim. No grant but
+//! its own contract, no config, no state: the artifact IS the UI.
 
-use jinn_ui::{API_VERSION, BUNDLE_CONTRACT, OP_BUNDLE, OP_MANIFEST};
+use jinn_ui::{API_VERSION, BUNDLE_CONTRACT, OP_BUNDLE, OP_MANIFEST, PROVIDED_TOPIC};
 
 wit_bindgen::generate!({
     path: "../../../kernel-pin/wit",
@@ -12,7 +10,8 @@ wit_bindgen::generate!({
 });
 
 use exports::jinn::plugin::lifecycle::{Guest, GuestFault};
-use jinn::plugin::{effects, services};
+use jinn::plugin::events::{DispatchMode, Selector};
+use jinn::plugin::{effects, events, services};
 
 const EFFECT_TOKEN: u64 = 1;
 /// The kit's archive (`jinn_ui::encode_bundle`'s shape).
@@ -31,6 +30,11 @@ impl Guest for Embedded {
         effects::register("jinn-ui-bundle-embedded on duty", EFFECT_TOKEN)
             .map_err(|error| fault("effect", error))?;
         services::provide(BUNDLE_CONTRACT).map_err(|error| fault("provide", error))?;
+        // Announced AFTER the provision: a transport that activated first
+        // completes its read on this (FINDINGS.md #7); one that activates
+        // later reads at its own activation and never hears it.
+        events::emit(PROVIDED_TOPIC, DispatchMode::Emit, &Selector::All, &[])
+            .map_err(|error| fault("emit", error))?;
         Ok(())
     }
 

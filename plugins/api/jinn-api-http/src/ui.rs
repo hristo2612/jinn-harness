@@ -1,33 +1,25 @@
-//! THE BUNDLE (harness packet UI-1). At `activate` this transport resolves
-//! `jinn:ui-bundle` — when its profile says a bundle is mounted — reads
-//! the manifest and the WHOLE archive as one crossing each, verifies every
-//! file's sha256 against the manifest FAIL CLOSED (`jinn_ui::verify`; a
-//! mismatch fails this fiber's activation and nothing else, R11), and
-//! holds the verified files in memory for the fiber's life. From then on
-//! a GET on any non-`/v1` path is answered from that memory by the
-//! serving law — BEFORE the door and WITHOUT a crossing: a byte is never
-//! a dispatch on the connection's behalf, so the door's contract ("no
-//! dispatch before `verify` answers a principal") is untouched, and a
-//! bearer presented on a static path is IGNORED — never read, never put
-//! to the kernel. Every `/v1/*` request keeps the door exactly as packet
-//! 2.8 left it.
-//!
-//! WHY ONCE, AT ACTIVATION. A browser's top-level navigation cannot carry
-//! a bearer header, so a per-request read would be a crossing on an
-//! unauthenticated connection's behalf — the very thing the door forbids.
-//! Reading at activation as an injected dependency also makes a UI swap a
-//! profile edit of the bundle entry's `package` and `hash`: the kernel's
-//! epoch gating restarts this transport, which re-reads and serves the
-//! new hash (proven in `tests/composition/tests/ui.rs`).
+//! THE BUNDLE (packet UI-1): read ONCE — at `activate`, or on the
+//! provider's `provided` event when the provider activates later (sibling
+//! order is unspecified, FINDINGS.md #7) — verified fail-closed, held for
+//! the incarnation's life, and served on every non-`/v1` GET BEFORE the
+//! door with NO crossing: a byte is never a dispatch on the connection's
+//! behalf, and a bearer on a static path is never read. Never per request:
+//! a top-level navigation carries no bearer, and a read it caused would be
+//! the crossing the door forbids. The rationale is
+//! `docs/notes/2026-09-02-a-byte-is-not-a-dispatch.md`.
 
 use jinn_api_http_wire::{framed, Request};
 use jinn_ui::{
     is_api_path, serve, verify, Files, Manifest, Static, BUNDLE_CONTRACT, MIME_TEXT, OP_BUNDLE,
-    OP_MANIFEST,
+    OP_MANIFEST, PROVIDED_TOPIC as TOPIC,
 };
 
 use crate::exports::jinn::plugin::lifecycle::GuestFault;
-use crate::jinn::plugin::services;
+use crate::jinn::plugin::types::KernelError;
+use crate::jinn::plugin::{events, services};
+
+/// The listen token of the provider's `provided` event.
+pub(crate) const PROVIDED_TOKEN: u64 = 2;
 
 /// The verified bundle this incarnation serves.
 pub(crate) struct Bundle {
@@ -36,21 +28,28 @@ pub(crate) struct Bundle {
 }
 
 /// Reads and verifies the bundle: one `manifest` crossing, one `bundle`
-/// crossing, then the check. Any refusal — no provider live yet (sibling
-/// activation order is unspecified, FINDINGS.md #7), a grant missing, a
-/// blob that does not verify — is this fiber's typed activation failure.
-pub(crate) fn load() -> Result<Bundle, GuestFault> {
+/// crossing, then the check. `Ok(None)` when no provider is live YET —
+/// the read completes on the `provided` event, which this registers a
+/// listen for. Any other refusal — a grant missing, a blob that does not
+/// verify — is this fiber's typed failure (R11: this entry, nothing else).
+pub(crate) fn load() -> Result<Option<Bundle>, GuestFault> {
     let fault = |context: &str, error: &dyn std::fmt::Debug| {
         GuestFault::Failed(format!("{BUNDLE_CONTRACT}: {context}: {error:?}"))
     };
     let handle = services::resolve(BUNDLE_CONTRACT).map_err(|error| fault("resolve", &error))?;
-    let manifest = services::call(handle, OP_MANIFEST, &[])
-        .map_err(|error| fault(OP_MANIFEST, &error))?;
+    let manifest = match services::call(handle, OP_MANIFEST, &[]) {
+        Ok(bytes) => bytes,
+        Err(KernelError::MissingDependency(_)) => {
+            events::listen(TOPIC, PROVIDED_TOKEN).map_err(|error| fault("listen", &error))?;
+            return Ok(None);
+        }
+        Err(error) => return Err(fault(OP_MANIFEST, &error)),
+    };
     let manifest: Manifest =
         serde_json::from_slice(&manifest).map_err(|error| fault("manifest decode", &error))?;
     let blob = services::call(handle, OP_BUNDLE, &[]).map_err(|error| fault(OP_BUNDLE, &error))?;
     let files = verify(&manifest, &blob).map_err(|error| fault("verify", &error))?;
-    Ok(Bundle { manifest, files })
+    Ok(Some(Bundle { manifest, files }))
 }
 
 /// Whether the transport answers this request itself, with no door and

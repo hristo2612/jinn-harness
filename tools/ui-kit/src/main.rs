@@ -1,10 +1,6 @@
-//! The UI seam's kit builder (see Cargo.toml for usage): the web client
-//! built by its pinned toolchain, archived, compiled into the embedded
-//! provider, and mounted beside the api trio, the settings pair, the
-//! plugins catalogs and the cron seam — the `ui` profile, pinned by
-//! content hash. `variant` builds a second provider from the same archive
-//! (a marked document, or a corrupted blob) for the swap and fail-closed
-//! proofs; the composition suite is its only caller.
+//! The UI seam's kit builder (see Cargo.toml for usage). `variant` builds
+//! a second provider from the same archive (a marked document, or a
+//! corrupted blob) for the swap and fail-closed proofs.
 
 use std::path::{Path, PathBuf};
 

@@ -1,13 +1,10 @@
 //! The UI seam's profile entries and the bundle-building half of the kit
-//! (one home per fact: every profile that mounts the bundle mounts these
-//! exact entries; every bundle the daemon ever loads was archived here).
-//! The binary that runs the web build and writes the `ui` profile is
-//! `main.rs`.
+//! (one home per fact); `main.rs` runs the web build and writes the profile.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use jinn_ui::{encode_bundle, manifest_for, Manifest, BUNDLE_CONTRACT};
+use jinn_ui::{encode_bundle, manifest_for, Manifest, BUNDLE_CONTRACT, PROVIDED_TOPIC};
 
 /// The bundle entry's id — the ONE entry a UI swap edits.
 pub const BUNDLE_ID: &str = "jinn-ui-bundle";
@@ -36,13 +33,14 @@ pub fn bundle_entry(package: &str, hash: &str) -> serde_json::Value {
 }
 
 /// Tells the transport's entry a bundle is mounted: the `jinn:ui-bundle`
-/// grant (the authority the kernel enforces) and `ui-bundle: true` (that
-/// fact told to the provider, the same discipline as its `engines` list).
+/// grant and the `provided` topic's (the authority the kernel enforces),
+/// and `ui-bundle: true` (that fact told to the provider).
 pub fn mount_bundle_on(transport: &mut serde_json::Value) {
-    transport["config"]["grants"]
+    let grants = transport["config"]["grants"]
         .as_array_mut()
-        .expect("grants")
-        .push(serde_json::json!(BUNDLE_CONTRACT));
+        .expect("grants");
+    grants.push(serde_json::json!(BUNDLE_CONTRACT));
+    grants.push(serde_json::json!(PROVIDED_TOPIC));
     transport["config"]["data"]["ui-bundle"] = serde_json::json!(true);
 }
 
@@ -76,9 +74,8 @@ pub fn archive(dir: &Path) -> Vec<(String, Vec<u8>)> {
     files
 }
 
-/// Writes `bundle.bin` and `manifest.json` for `files` under `out`;
-/// answers the manifest. This is the ONLY writer of a manifest: the
-/// hashes in it are computed from the bytes it archives, never typed.
+/// Writes `bundle.bin` and `manifest.json` for `files` under `out` — the
+/// ONLY writer of a manifest: its hashes are computed, never typed.
 ///
 /// # Panics
 ///
@@ -104,9 +101,7 @@ pub fn write_bundle(out: &Path, files: &[(String, Vec<u8>)]) -> Manifest {
 }
 
 /// Runs the web client's pinned build (`pnpm install --frozen-lockfile`,
-/// then `pnpm build` under `web/`) and answers its output directory. The
-/// toolchain is the node lane's (`web/.npmrc` pins Node; `packageManager`
-/// pins pnpm); `pnpm` must be on `PATH`.
+/// then `pnpm build` under `web/`; `pnpm` on `PATH`) and answers `web/out`.
 ///
 /// # Panics
 ///
