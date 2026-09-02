@@ -1094,6 +1094,19 @@ declared. Dispatch of UI-1 waits for the 2026-09-04 audit.
   `/api/` string survives outside the adapters). The behaviour-free Major
   (divider ASCII) is fixed before land. Round 2 of 2 under the STOP RULE;
   a third round only by ruling.
+- **Amendment 5 (COO, 2026-09-02, UI-1 build round 2 declarations).**
+  (1) The item-2 lines in `jinn-api-http/src` (the activation names its
+  fault on the record; a provider's contained failure classified "not
+  yet") are MANDATED by amendment 4 and an overrun of the ≤ 800 ceiling
+  consisting solely of them is reported as such, never a Blocker. (2) One
+  delta outside §4.2's exhaustive scope is authorized: the settings seam's
+  `Resolved` gains a `schema` field (additive, R12; `plugins/settings/*`,
+  declared beside the meter) so the page can render only declared settings;
+  `routes/settings/page.tsx` is adapted under item 1. The declared setting
+  proof 7 patches is `cron` / `tick-ms`. (3) The `/api/` repo test is scoped
+  to adapted and new files; verbatim files carrying dead `/api/` strings are
+  listed as inventory, and proof 7's network transcript proves no such
+  request is issued by the mounted pages.
 
 
 
