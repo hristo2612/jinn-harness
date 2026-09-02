@@ -85,8 +85,13 @@ pub(crate) fn answer(bundle: Option<&Bundle>, request: &Request) -> Vec<u8> {
     if request.method != "GET" {
         return text(405, "static paths answer GET only");
     }
+    // No bundle: `/` says so; any other path is 2.8's typed route miss.
     let Some(bundle) = bundle else {
-        return text(503, "no UI bundle is mounted in this profile");
+        return if request.path == "/" {
+            text(503, "no UI bundle is mounted in this profile")
+        } else {
+            crate::route_miss(false)
+        };
     };
     match serve(&bundle.manifest, &bundle.files, &request.path) {
         Static::File {

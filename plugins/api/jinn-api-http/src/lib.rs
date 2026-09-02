@@ -172,7 +172,7 @@ fn answered(answer: &Answer) -> Vec<u8> {
 
 /// A route miss on a surface: 405 when the path is one this surface
 /// shapes under another method, 404 otherwise. Typed either way.
-fn route_miss(known_path: bool) -> Vec<u8> {
+pub(crate) fn route_miss(known_path: bool) -> Vec<u8> {
     let (status, detail) = if known_path {
         (405, "method not allowed on this path")
     } else {

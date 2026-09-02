@@ -206,10 +206,8 @@ pub fn response(status: u16, body: &[u8]) -> Vec<u8> {
     framed(status, "application/json", None, body)
 }
 
-/// Frames one response of any `Content-Type`, with an optional
-/// `Cache-Control` — the static-bundle rows (UI-1): the document and its
-/// assets carry their own MIME and their cache class (`jinn_ui`'s serving
-/// law), a JSON answer carries neither. Every response still closes.
+/// Frames one response of any `Content-Type` with an optional
+/// `Cache-Control` (UI-1's static rows, `jinn_ui`'s serving law); closes.
 #[must_use]
 pub fn framed(
     status: u16,

@@ -23,6 +23,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
 
 /// The jinn commit the view layer is ported from (the card's pinned sha).
 const SOURCE_SHA: &str = "43e864750168e163b55855a79f955e471da0bcc1";
@@ -58,7 +59,14 @@ fn has_commit(dir: &Path, commit: &str) -> bool {
 
 /// A jinn repo and the commit in it to read from: the pin where a local
 /// checkout holds it, the public twin otherwise (fetched if needed).
+/// Discovered ONCE per process: the two tests here run in parallel, and
+/// two concurrent fetches into one cache race each other (seen in CI).
 fn source() -> (PathBuf, &'static str) {
+    static SOURCE: OnceLock<(PathBuf, &'static str)> = OnceLock::new();
+    SOURCE.get_or_init(discover).clone()
+}
+
+fn discover() -> (PathBuf, &'static str) {
     if let Ok(dir) = std::env::var("JINN_WEB_SOURCE_DIR") {
         let dir = PathBuf::from(dir);
         for commit in [SOURCE_SHA, PUBLIC_TWIN] {
