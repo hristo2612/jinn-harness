@@ -1,6 +1,5 @@
-// jinn:introspect@0.4.0 (M2-K13, harness #40/#41; 0.3.0 M2-K10, #32;
-// 0.2.0 M2-K9, #31; 0.1.0
-// M2-K7, #19) — the read-only composition
+// jinn:introspect@0.5.0 (M2-K16; 0.4.0 M2-K13, harness #40/#41; 0.3.0
+// M2-K10, #32; 0.2.0 M2-K9, #31; 0.1.0 M2-K7, #19) — the read-only composition
 // contract. The kernel supplies it (01 §Mechanical closure); a plugin sees
 // the composition only when its profile entry grants this contract. Every
 // read crosses the broker (grant check → ledger append → dispatch) and is
@@ -8,7 +7,11 @@
 // this path (R1). Reached over `services.resolve("jinn:introspect")` +
 // `services.call(handle, <operation>, [])`; answers are the UTF-8 JSON of
 // the records below, field names as written (kebab-case).
-package jinn:introspect@0.4.0;
+// 0.5.0 (2026-09-02, M2-K16) is the FIRST PARSEABLE edition: 0.4.0 never
+// parsed (`from` is a WIT keyword; `record readiness` collided with the
+// `readiness` operation). The wire operation `readiness` and its answer
+// shape are unchanged; the record is `readiness-report` (README, R12).
+package jinn:introspect@0.5.0;
 
 interface composition {
   // The kernel registrations one live seat holds, by class.
@@ -80,7 +83,7 @@ interface composition {
   // The daemon's readiness: the boot reconcile has landed, and the
   // profile/artifact watcher is armed (the machine-readable shape of the
   // readiness line, harness #12).
-  record readiness { boot-reconciled: bool, watcher-armed: bool }
+  record readiness-report { boot-reconciled: bool, watcher-armed: bool }
 
   // ONE COMMITTED FIBER TRANSITION, PUSHED (0.4.0). The kernel publishes
   // every transition it commits on the RESERVED topic
@@ -138,7 +141,7 @@ interface composition {
     // transition was committed; absent when no incarnation was installed.
     incarnation: option<u64>,
     // The states, from `entry.state`'s vocabulary.
-    from: string,
+    %from: string,
     to: string,
     // This kernel process's publish count, from 1. Gaps are losses; a
     // first value above 1 is a late join. Never reused, never reordered.
@@ -153,8 +156,8 @@ interface composition {
   entries: func() -> list<entry>;
 
   // Effect class: read. Operation `readiness`, empty payload; answer = the
-  // JSON `readiness` record.
-  readiness: func() -> readiness;
+  // JSON `readiness-report` record.
+  readiness: func() -> readiness-report;
 
   // Effect class: read. Operation `waits`, empty payload; answer = the
   // JSON list of `wait`, in the order the waits were taken. A crossing

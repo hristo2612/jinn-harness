@@ -1,27 +1,110 @@
-// jinn:net@0.1.0 (M2-K6) — the base host-provider network contract.
+// jinn:net@0.3.0 (M2-K15) — the base host-provider network contract.
 // Host capability contract supplied by the kernel (01 §Mechanical closure):
-// `request` is the outbound one-shot (NOT PROVIDED in v0.1 — no HTTP client
-// in the kernel, R10; answered as a typed failure), the server edition
-// listens on loopback and serves connections. Listeners and connections are
-// KERNEL REGISTRATIONS (metadata `lifecycle`): closed and ledgered on
-// suspend and on dispose; a plugin re-listens in `activate`. Every call is
-// non-blocking (R1). The plugin world's `net` import (wit/plugin.wit,
-// 0.4.0) carries this interface verbatim with the broker wire beside each
-// operation; this bundle is the contract of record (R12).
-package jinn:net@0.1.0;
+// `request` and `send-request` are the outbound one-shots (PROVIDED from
+// 0.2.0, plain HTTP to a LOOPBACK target only); the server edition listens
+// on loopback and serves
+// connections. Listeners and connections are KERNEL REGISTRATIONS (metadata
+// `lifecycle`): closed and ledgered on suspend and on dispose; a plugin
+// re-listens in `activate`. Every call is non-blocking (R1). The plugin
+// world's `net` import (wit/plugin.wit, 0.9.0) carries this interface
+// verbatim with the broker wire beside each operation; this bundle is the
+// contract of record (R12).
+//
+// 0.2.0 -> 0.3.0 (R12): STRICTLY ADDITIVE. Outbound reaches the real
+// network: `https://` is provided over a TLS connection whose server
+// certificate is VERIFIED, and `net-error` gains one case, `untrusted`.
+// No existing operation, case, or meaning changes; `http://` keeps its
+// loopback-only reading exactly. The trust anchors are a VENDORED public
+// root bundle, not the platform store, so every profile on every device
+// verifies against the same named set (Law 4) and an audit can say which.
+// A grant is matched on the normal form as before, with 443 as the https
+// default port: an entry naming `example.com` still confers
+// `example.com:80` and NOTHING else, so a grant meant for https says
+// `example.com:443` (Law 1 — a default is not a widening).
+//
+// 0.1.0 -> 0.2.0 (R12): STRICTLY ADDITIVE. `request` keeps its 0.1.0
+// declaration byte for byte and starts working; the shape a real call
+// needs — headers in, status and headers out — arrives as a NEW operation
+// beside it, `send-request`, with the records `outbound-request` and
+// `outbound-response` and the type `header`. No existing operation, case,
+// or meaning changes.
+package jinn:net@0.3.0;
 
 interface net {
   // `not-found`: an unknown or foreign handle. Callers classify by case:
   // the plugin world's `net` import answers this variant verbatim.
-  variant net-error { not-found, denied(string), failed(string), invalid(string) }
+  // `untrusted` (0.3.0): the peer did not PROVE it is the authority the
+  // allowlist named — an unanchored issuer, a name the certificate does
+  // not cover, a certificate outside its dates. Its own case because it
+  // is its own NEXT MOVE: `denied` is the caller's profile to widen,
+  // `failed` is worth retrying, and `untrusted` is neither and must
+  // never be worked around.
+  variant net-error { not-found, denied(string), failed(string), invalid(string), untrusted(string) }
 
   type net-handle = u64;
   variant accept-result { connection(net-handle), would-block }
   variant read-result { data(list<u8>), would-block, eof }
 
-  // Outbound one-shot; authorized against the scope's outbound host
-  // allowlist by the edition that provides it.
+  // Outbound one-shot, PROVIDED from 0.2.0 at its 0.1.0 DECLARATION,
+  // unchanged byte for byte: answers the response body alone and sends no
+  // header of its own. A caller needing headers, or the response's status
+  // and headers, calls `send-request`. R12 within a major admits addition
+  // and nothing else — a provision is not a licence to re-shape a declared
+  // operation, however reliably it used to fail.
   request: func(method: string, url: string, body: list<u8>) -> result<list<u8>, net-error>;
+
+  // One request or response header line (0.2.0).
+  type header = tuple<string, string>;
+
+  record outbound-request { method: string, url: string, headers: list<header>, body: list<u8> }
+  record outbound-response { status: u16, headers: list<header>, body: list<u8> }
+
+  // The whole-response outbound one-shot (0.2.0, ADDITIVE — added beside
+  // `request`, never in place of it). Both operations are ONE door with
+  // two handles: same authority, same ledger record, same effect class.
+  //
+  // effect = IRREVERSIBLE (Law 3, 03 §51): a sent request cannot be
+  // un-sent, there is no inverse, and a revert unit containing one is
+  // REJECTED — never partially applied, never silently skipped. No
+  // compensator is declared: the kernel cannot know what would correct an
+  // arbitrary call. The refusal is durable, not merely live: the ledger
+  // row carries the effect id, so a request stays irreversible across a
+  // daemon reopen rather than fading to an unknown handle.
+  //
+  // Authority is the scope's `outbound` allowlist, matched on the URL's
+  // normalized `host:port` authority (metadata §scope). Refusals are three
+  // DISTINCT answers, never one blurred one: `denied` = off the allowlist
+  // (or a non-loopback target), `invalid` = a URL this provider cannot
+  // make sense of, `failed` = the call was authorized and the network or
+  // the response failed.
+  //
+  // TWO TRANSPORTS, TWO REACHES (0.3.0). `https://` reaches any authority
+  // the allowlist admits: the target's name IS resolved, because the
+  // certificate — not the resolver — decides who answered, and a peer that
+  // fails verification is `untrusted`, never quietly accepted. `http://`
+  // is UNCHANGED and stays LOOPBACK-only (`127.0.0.0/8`, `::1`,
+  // `localhost`, literal, no resolver): a kernel that would carry a
+  // credential in the clear to an arbitrary host is not one TLS made
+  // safer, so plaintext keeps the narrower reach it was given.
+  //
+  // Verification is not configurable. There is no profile key, no
+  // environment variable, and no plugin operation that weakens or skips
+  // it; the provider holds ONE client configuration, built once, with the
+  // vendored anchors and nothing else.
+  //
+  // v0.3 limits, stated: `transfer-encoding: chunked` is not decoded; the
+  // response body is capped and the whole call is bounded, TLS handshake
+  // included (metadata §notes); client certificates are not offered.
+  //
+  // REDIRECTS. A `30x` is never followed. One whose `location` names an
+  // authority the allowlist does not admit — or one the provider cannot
+  // parse, and so cannot prove admitted — is `denied` INSIDE this call,
+  // naming the authority. Answering the hop and trusting the caller not to
+  // take it would move the allowlist boundary out of the kernel and into
+  // the guarded party, which is not an authority at all. A `30x` to an
+  // authority the allowlist DOES admit is answered, still unfollowed: the
+  // caller may re-issue it, under the same check as any other call.
+  send-request: func(req: outbound-request) -> result<outbound-response, net-error>;
 
   // effect = kernel registration: inverse obligation = close. Loopback
   // only in v0.1; the port must sit in the granted bind range.
