@@ -2,21 +2,24 @@ import { useEffect } from "react"
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { GATEWAY_EVENTS } from "@jinn/gateway-events"
 import { useGateway } from "@/hooks/use-gateway"
-import { authFetch } from "@/lib/auth"
+import { api, type PluginCatalogEntryWire } from "@/lib/api"
 
 /**
  * The `/settings/plugins` data lane.
  *
- * It talks to the gateway directly through `authFetch`, the way
- * `plugins/disk-plugins.ts` does, rather than through `lib/api.ts`: the plugin
- * inventory is not part of the app's own API surface, and the settings page is
- * the only caller.
+ * UI-1 (docs/plans/ui-malleability-arc.md §4.2 item 10, §8 amendment 6): the
+ * read is the daemon's `main` plugins catalog through item 1's adapter
+ * (`GET /v1/plugins/main`), folded into the inventory's own row shape by one
+ * function. The old gateway's writes — enable, reveal, rescan — have no `/v1`
+ * counterpart (the operator API writes config only, FINDINGS #37 / KG-1,
+ * PLA-348); the page renders their controls disabled, and a call refuses
+ * client-side and sends nothing.
  */
 
 export type PluginKind = "client" | "client+server"
 export type PluginStatus = "loaded" | "disabled" | "error"
 
-/** One inventory row, as `GET /api/plugins` returns it. Disabled and broken
+/** One inventory row, as the catalog's entry folds into it. Disabled and broken
  *  plugins are in it too: both are states, not absences. */
 export interface PluginInventoryRow {
   id: string
@@ -32,29 +35,46 @@ export interface PluginInventoryRow {
 
 export const PLUGIN_INVENTORY_KEY = ["plugin-inventory"] as const
 
-async function post(path: string, body?: unknown): Promise<void> {
-  const response = await authFetch(path, {
-    method: "POST",
-    ...(body === undefined
-      ? {}
-      : { headers: { "content-type": "application/json" }, body: JSON.stringify(body) }),
-  })
-  if (response.ok) return
-  // The gateway's own wording is the useful half of a 403 or a 500 here, and it
-  // is what the page shows the operator.
-  const detail = (await response.json().catch(() => null)) as { error?: string } | null
-  throw new Error(detail?.error ?? `the gateway answered ${response.status}`)
+const CATALOG = "main"
+
+const ERROR_STATES = new Set(["failed", "interrupted", "disposed", "unrecognised"])
+
+const WRITES_REFUSED = "the operator API writes config only (FINDINGS #37 / KG-1, PLA-348)"
+
+function statusOf(state: string): PluginStatus {
+  if (state === "active") return "loaded"
+  return ERROR_STATES.has(state) ? "error" : "disabled"
+}
+
+/** The reason a reading carries, spelled for the row; the kernel's own words. */
+function reasonOf(lifecycle: PluginCatalogEntryWire["lifecycle"]): string | undefined {
+  if (lifecycle["kernel-state"]) return `the kernel reported "${lifecycle["kernel-state"]}"`
+  if (lifecycle.reason === undefined) return undefined
+  return typeof lifecycle.reason === "string" ? lifecycle.reason : JSON.stringify(lifecycle.reason)
+}
+
+/** The one function: a catalog entry in the inventory's shape. */
+function inventoryRowOf(entry: PluginCatalogEntryWire): PluginInventoryRow {
+  const status = statusOf(entry.lifecycle.state)
+  return {
+    id: entry.id,
+    name: entry.id,
+    version: entry.incarnation === undefined ? "none" : String(entry.incarnation),
+    kind: "client+server",
+    status,
+    ...(status === "error" ? { error: reasonOf(entry.lifecycle) } : {}),
+  }
+}
+
+/** A write the daemon has no route for: refused here, nothing sent. */
+function refused(): Promise<void> {
+  return Promise.reject(new Error(WRITES_REFUSED))
 }
 
 export function usePluginInventory() {
   return useQuery({
     queryKey: PLUGIN_INVENTORY_KEY,
-    queryFn: async (): Promise<PluginInventoryRow[]> => {
-      const response = await authFetch("/api/plugins")
-      if (!response.ok) throw new Error(`the gateway answered ${response.status}`)
-      const body = (await response.json()) as { inventory?: PluginInventoryRow[] }
-      return body.inventory ?? []
-    },
+    queryFn: async (): Promise<PluginInventoryRow[]> => (await api.listPlugins(CATALOG)).entries.map(inventoryRowOf),
   })
 }
 
@@ -80,8 +100,7 @@ export function useInventoryFollowsDisk(): void {
 export function useTogglePlugin() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) =>
-      post(`/api/plugins/${encodeURIComponent(id)}/enabled`, { enabled }),
+    mutationFn: (_input: { id: string; enabled: boolean }) => refused(),
     onMutate: async ({ id, enabled }) => {
       await qc.cancelQueries({ queryKey: PLUGIN_INVENTORY_KEY })
       const previous = qc.getQueryData<PluginInventoryRow[]>(PLUGIN_INVENTORY_KEY)
@@ -105,14 +124,14 @@ export function useTogglePlugin() {
 
 export function useRevealPlugin() {
   return useMutation({
-    mutationFn: (id: string) => post(`/api/plugins/${encodeURIComponent(id)}/reveal`),
+    mutationFn: (_id: string) => refused(),
   })
 }
 
 export function useRescanPlugins() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: () => post("/api/plugins/rescan"),
+    mutationFn: () => refused(),
     onSettled: () => void qc.invalidateQueries({ queryKey: PLUGIN_INVENTORY_KEY }),
   })
 }
