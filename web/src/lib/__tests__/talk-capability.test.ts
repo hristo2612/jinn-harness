@@ -5,35 +5,16 @@ vi.mock("@/lib/auth", () => ({ authFetch: (...args: unknown[]) => authFetch(...a
 
 const { fetchTalkCapability } = await import("../talk-capability")
 
-function json(body: unknown, status = 200) {
-  return new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } })
-}
-
 beforeEach(() => {
   authFetch.mockReset()
 })
 
+// UI-1 §4.2 item 11 (§8 amendment 6): Talk is out of scope, so the capability
+// resolves ABSENT client-side and issues no request. The three tests of the
+// old gateway's talk probe went with the probe.
 describe("asking whether voice is set up", () => {
-  it("reads the capability without opening anything", async () => {
-    authFetch.mockResolvedValue(
-      json({ configured: true, provider: "openai", providers: ["openai"], voices: ["marin", "cedar"] }),
-    )
-
-    const capability = await fetchTalkCapability()
-
-    expect(capability).toEqual({
-      configured: true,
-      provider: "openai",
-      providers: ["openai"],
-      voices: ["marin", "cedar"],
-    })
-    const [url, init] = authFetch.mock.calls[0] as [string, RequestInit]
-    expect(url).toBe("/api/talk/config")
-    expect(init.method).toBe("GET")
-  })
-
-  it("reads a gateway that answers nothing as not configured, rather than as ready", async () => {
-    authFetch.mockResolvedValue(json({}))
+  it("resolves absent without asking the gateway", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch")
 
     expect(await fetchTalkCapability()).toEqual({
       configured: false,
@@ -41,11 +22,8 @@ describe("asking whether voice is set up", () => {
       providers: [],
       voices: [],
     })
-  })
 
-  it("refuses to call a refused probe an answer", async () => {
-    authFetch.mockResolvedValue(json({ error: "nope" }, 500))
-
-    await expect(fetchTalkCapability()).rejects.toThrow("500")
+    expect(authFetch).not.toHaveBeenCalled()
+    expect(fetchSpy).not.toHaveBeenCalled()
   })
 })

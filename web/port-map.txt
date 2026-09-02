@@ -11,6 +11,12 @@
 # gate fails in both directions. Item 8 is routes/client-providers.tsx minus its
 # two Talk mounts (§7 forbids porting Talk) — declared on the Todo before the
 # first edit and added to the card by COO ruling (§4.2 item 8, §8 amendment 3).
+# Items 10 and 11 (§8 amendment 6) are the two files the verifier's round-2
+# network transcript caught issuing old-gateway requests from the mounted
+# Settings surface; item 12 is `plugins/disk-plugins.ts`, the shell's client-plugin
+# loader, the ACTUAL source of that transcript's `GET /api/plugins` (declared on
+# the Todo in round 3 with the evidence). Each adapted test row carries its
+# module's item number, the item-9 precedent.
 #
 # --- the shell, Settings, the plugins page, components/ui (the import closure
 # --- of the trimmed route table, computed at the sha)
@@ -131,7 +137,7 @@ verbatim	packages/web/src/lib/search-api.ts	src/lib/search-api.ts
 verbatim	packages/web/src/lib/settings.ts	src/lib/settings.ts
 verbatim	packages/web/src/lib/shortcut-catalog.ts	src/lib/shortcut-catalog.ts
 verbatim	packages/web/src/lib/stale-chat.ts	src/lib/stale-chat.ts
-verbatim	packages/web/src/lib/talk-capability.ts	src/lib/talk-capability.ts
+adapted	packages/web/src/lib/talk-capability.ts	src/lib/talk-capability.ts	11
 verbatim	packages/web/src/lib/themes.ts	src/lib/themes.ts
 verbatim	packages/web/src/lib/todo-caches.ts	src/lib/todo-caches.ts
 verbatim	packages/web/src/lib/todo-id.ts	src/lib/todo-id.ts
@@ -160,7 +166,7 @@ verbatim	packages/web/src/platform/runtime.ts	src/platform/runtime.ts
 verbatim	packages/web/src/platform/sharing.ts	src/platform/sharing.ts
 verbatim	packages/web/src/platform/viewport.ts	src/platform/viewport.ts
 verbatim	packages/web/src/plugins/disk-plugins-bridge.tsx	src/plugins/disk-plugins-bridge.tsx
-verbatim	packages/web/src/plugins/disk-plugins.ts	src/plugins/disk-plugins.ts
+adapted	packages/web/src/plugins/disk-plugins.ts	src/plugins/disk-plugins.ts	12
 verbatim	packages/web/src/plugins/plugin-context.ts	src/plugins/plugin-context.ts
 verbatim	packages/web/src/plugins/runtime-loader.ts	src/plugins/runtime-loader.ts
 verbatim	packages/web/src/plugins/sdk/areas.ts	src/plugins/sdk/areas.ts
@@ -212,7 +218,8 @@ verbatim	packages/web/src/routes/settings/engines/use-chain-drag.ts	src/routes/s
 adapted	packages/web/src/routes/settings/page.tsx	src/routes/settings/page.tsx	1
 verbatim	packages/web/src/routes/settings/pairing-section.tsx	src/routes/settings/pairing-section.tsx
 verbatim	packages/web/src/routes/settings/plugins/entry.tsx	src/routes/settings/plugins/entry.tsx
-verbatim	packages/web/src/routes/settings/plugins/inventory.ts	src/routes/settings/plugins/inventory.ts
+adapted	packages/web/src/routes/settings/plugins/inventory.ts	src/routes/settings/plugins/inventory.ts	10
+new	-	src/routes/settings/plugins/__tests__/inventory.test.ts	10
 adapted	packages/web/src/routes/settings/plugins/page.tsx	src/routes/settings/plugins/page.tsx	4
 verbatim	packages/web/src/routes/settings/plugins/plugin-list.tsx	src/routes/settings/plugins/plugin-list.tsx
 adapted	packages/web/src/routes/settings/plugins/plugin-row.tsx	src/routes/settings/plugins/plugin-row.tsx	4
@@ -322,7 +329,7 @@ verbatim	packages/web/src/lib/__tests__/nav-contributions.test.ts	src/lib/__test
 verbatim	packages/web/src/lib/__tests__/nav.test.ts	src/lib/__tests__/nav.test.ts
 verbatim	packages/web/src/lib/__tests__/shortcut-catalog.test.ts	src/lib/__tests__/shortcut-catalog.test.ts
 verbatim	packages/web/src/lib/__tests__/stale-chat.test.ts	src/lib/__tests__/stale-chat.test.ts
-verbatim	packages/web/src/lib/__tests__/talk-capability.test.ts	src/lib/__tests__/talk-capability.test.ts
+adapted	packages/web/src/lib/__tests__/talk-capability.test.ts	src/lib/__tests__/talk-capability.test.ts	11
 verbatim	packages/web/src/lib/__tests__/todo-id.test.ts	src/lib/__tests__/todo-id.test.ts
 verbatim	packages/web/src/lib/__tests__/todos.test.ts	src/lib/__tests__/todos.test.ts
 verbatim	packages/web/src/lib/__tests__/view-mode.test.ts	src/lib/__tests__/view-mode.test.ts
@@ -332,7 +339,7 @@ verbatim	packages/web/src/platform/__tests__/viewport.test.ts	src/platform/__tes
 verbatim	packages/web/src/platform/__tests__/web-adapter.test.ts	src/platform/__tests__/web-adapter.test.ts
 verbatim	packages/web/src/plugins/__tests__/data-url-modules.ts	src/plugins/__tests__/data-url-modules.ts
 verbatim	packages/web/src/plugins/__tests__/disk-plugins-bridge.test.tsx	src/plugins/__tests__/disk-plugins-bridge.test.tsx
-verbatim	packages/web/src/plugins/__tests__/disk-plugins.test.ts	src/plugins/__tests__/disk-plugins.test.ts
+adapted	packages/web/src/plugins/__tests__/disk-plugins.test.ts	src/plugins/__tests__/disk-plugins.test.ts	12
 verbatim	packages/web/src/plugins/__tests__/plugin-context.test.ts	src/plugins/__tests__/plugin-context.test.ts
 verbatim	packages/web/src/plugins/__tests__/plugin-events.test.ts	src/plugins/__tests__/plugin-events.test.ts
 verbatim	packages/web/src/plugins/__tests__/runtime-loader-lifecycle.test.ts	src/plugins/__tests__/runtime-loader-lifecycle.test.ts
