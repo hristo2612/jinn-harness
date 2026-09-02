@@ -556,6 +556,13 @@ The ENUMERATED adaptations, and only these, are the diff:
    the onboarding state is synthesised complete client-side; the files
    themselves are not ported. A repo test asserts that no string `/api/`
    remains in `web/src` outside the adapter files item 1 names.
+10. `routes/settings/plugins/inventory.ts`: its `/api/plugins` read is
+   re-pointed to the `/v1/plugins` catalog through item 1's adapter (one
+   function, the same shape), because the mounted Settings surface issued
+   it live (§8 amendment 6; the verifier's network transcript, round 2).
+11. `lib/talk-capability.ts`: Talk is out of scope (§7); the capability
+   resolves ABSENT client-side and issues no request (its `/api/talk/config`
+   GET was live on the mounted Settings surface - amendment 6).
 
 Everything else is `git diff 43e8647 -- packages/web/<path>` empty, file by
 file, and the acceptance below asserts it.
@@ -641,7 +648,7 @@ transport that does not serve:
 6. `the_view_layer_is_verbatim` - not a daemon proof: a repo test that runs
    `git diff --stat 43e8647 -- packages/web/<f>` for every ported file
    against `web/<f>` through a pinned mapping and asserts an EMPTY diff for
-   every file not on the §4.2 adaptation list (items 1-9), and a non-empty one
+   every file not on the §4.2 adaptation list (items 1-11), and a non-empty one
    for every file on it (the gate has to be able to fail in both
    directions).
 7. Browser-level, driven by the INDEPENDENT VERIFIER with `agent-browser`
@@ -1107,6 +1114,16 @@ declared. Dispatch of UI-1 waits for the 2026-09-04 audit.
   to adapted and new files; verbatim files carrying dead `/api/` strings are
   listed as inventory, and proof 7's network transcript proves no such
   request is issued by the mounted pages.
+- **Amendment 6 (COO, 2026-09-03, UI-1 verify round 2: one Blocker).**
+  The verifier's browser transcript caught two live old-gateway requests
+  from the mounted Settings surface, both from files the diff gate held
+  verbatim: `routes/settings/plugins/inventory.ts` (`/api/plugins`) and
+  `lib/talk-capability.ts` (`/api/talk/config`). Ruled: both become
+  adaptations (items 10 and 11); proof 6's list is items 1-11. A THIRD
+  round is authorized by this ruling under the STOP RULE, scope-locked to
+  this one Blocker plus regressions in the lines it changes; the verifier
+  re-runs proof 7's network transcript and nothing else it already passed at
+  `94e028a` unless those lines touch it.
 
 
 
