@@ -29,7 +29,11 @@ the namespace's entry layer: `Declaration { namespace, entry, schema,
 defaults, hot-keys }`. `declare` is an idempotent upsert answering the
 resolved settings; the owner re-declares on every wake (a provider
 restart or swap heals within one wake), and never from `activate`
-(§Why the owner never calls from activate).
+(§Why the owner never calls from activate). `get` and `declare` answer
+`Resolved { namespace, entry, settings, layers, revision, hot-keys,
+schema }`: the owner's schema rides along (additive, R12) so a reader
+such as the Settings page renders and patches only what the namespace
+declares (UI-1, §8 amendment 4).
 
 ## The schema language
 

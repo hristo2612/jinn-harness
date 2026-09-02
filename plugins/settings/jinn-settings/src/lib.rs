@@ -740,6 +740,10 @@ pub struct Resolved {
     pub revision: u64,
     #[serde(default)]
     pub hot_keys: Vec<String>,
+    /// The owner's declared schema, so a reader renders and patches only
+    /// what the namespace declares (UI-1 §8 amendment 4). Additive (R12).
+    #[serde(default)]
+    pub schema: Schema,
     #[serde(flatten)]
     pub extra: Extensions,
 }
