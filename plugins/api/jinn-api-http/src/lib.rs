@@ -117,10 +117,8 @@ struct HttpConfig {
     #[serde(default)]
     catalogs: Vec<String>,
     /// The bundle entry this API serves, when the profile mounts one —
-    /// written by the profile beside this entry's `jinn:ui-bundle` and
-    /// `jinn:introspect` grants (the discipline of `engines`: the GRANT is
-    /// the authority, this is that fact told to the provider). Its id is
-    /// what the transport watches for on the kernel's transitions.
+    /// written beside this entry's `jinn:ui-bundle` and `jinn:introspect`
+    /// grants (the discipline of `engines`); watched for on transitions.
     #[serde(default)]
     ui_bundle_entry: Option<String>,
 }
@@ -775,9 +773,7 @@ impl Guest for Http {
         // Only the kernel's typed readiness wake of OUR sockets is a
         // reason to touch them; anything else here is a contract
         // violation, refused loudly.
-        // A witnessed transition: the bundle entry reaching Active is the
-        // read this incarnation could not complete at activation, or a
-        // swap (ui.rs). Any other transition costs nothing.
+        // A witnessed transition: the bundle entry reaching Active (ui.rs).
         if token == ui::TRANSITIONS_TOKEN && topic == jinn_plugins::TRANSITIONS_TOPIC {
             if ui::completes(&BUNDLE_ENTRY.lock().unwrap(), &payload) {
                 if let Some(bundle) = ui::read()? {

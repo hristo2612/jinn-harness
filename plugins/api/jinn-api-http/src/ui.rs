@@ -1,15 +1,9 @@
-//! THE BUNDLE (packet UI-1): read ONCE per incarnation — at `activate`
-//! when the provider is already live, otherwise on the kernel's own
-//! `jinn:introspect/transitions` publish the moment the bundle entry is
-//! witnessed Active (sibling order is unspecified, FINDINGS.md #7; a
-//! provider's own event cannot carry this, since a listener calling back
-//! into its emitter is the #4/#32 cycle) — verified fail-closed, held for
-//! the incarnation's life, and served on every non-`/v1` GET BEFORE the
-//! door with NO crossing: a byte is never a dispatch on the connection's
-//! behalf, and a bearer on a static path is never read. Never per request:
-//! a top-level navigation carries no bearer, and a read it caused would be
-//! the crossing the door forbids. A swap of the bundle entry is witnessed
-//! the same way and re-read. `docs/notes/2026-09-02-a-byte-is-not-a-dispatch.md`.
+//! THE BUNDLE (packet UI-1): read ONCE per incarnation — at `activate`,
+//! or on the kernel's `jinn:introspect/transitions` publish when the
+//! bundle entry is witnessed Active later (FINDINGS.md #45) — verified
+//! fail-closed, held, and served on every non-`/v1` GET before the door
+//! with no crossing; a bearer on a static path is never read. Rationale:
+//! `docs/notes/2026-09-02-a-byte-is-not-a-dispatch.md`.
 
 use jinn_api_http_wire::{framed, Request};
 use jinn_plugins::{Transition, TRANSITIONS_TOPIC};
@@ -31,8 +25,7 @@ pub(crate) struct Bundle {
     files: Files,
 }
 
-/// A refusal that means "not yet": the environment has not moved to
-/// where the provider answers, and the kernel will say when it has.
+/// A refusal that means "not yet": the kernel will say when it has moved.
 fn not_yet(error: &KernelError) -> bool {
     matches!(
         error,
@@ -44,10 +37,8 @@ fn not_yet(error: &KernelError) -> bool {
     )
 }
 
-/// One read: a `manifest` crossing, a `bundle` crossing, the check.
-/// `Ok(None)` when the provider is not live yet; any other refusal — a
-/// grant missing, a blob that does not verify — is this fiber's typed
-/// failure (R11: this entry, nothing else).
+/// One read: `manifest`, `bundle`, the check. `Ok(None)` when the provider
+/// is not live yet; any other refusal is this fiber's typed failure (R11).
 pub(crate) fn read() -> Result<Option<Bundle>, GuestFault> {
     let fault = |context: &str, error: &dyn std::fmt::Debug| {
         GuestFault::Failed(format!("{BUNDLE_CONTRACT}: {context}: {error:?}"))
@@ -66,8 +57,7 @@ pub(crate) fn read() -> Result<Option<Bundle>, GuestFault> {
 }
 
 /// At activation: read now, or subscribe to the kernel's transitions and
-/// read again — the second attempt closes the window between the first
-/// and the subscription, so an Active transition can never be missed.
+/// read again (the second attempt closes the window before the listen).
 pub(crate) fn load() -> Result<Option<Bundle>, GuestFault> {
     if let Some(bundle) = read()? {
         return Ok(Some(bundle));
@@ -77,8 +67,7 @@ pub(crate) fn load() -> Result<Option<Bundle>, GuestFault> {
     read()
 }
 
-/// Whether a witnessed transition is the bundle entry reaching Active —
-/// the moment to read (the first time) or re-read (a swap).
+/// Whether a witnessed transition is the bundle entry reaching Active.
 pub(crate) fn completes(entry: &str, payload: &[u8]) -> bool {
     serde_json::from_slice::<Transition>(payload)
         .is_ok_and(|seen| seen.entry == entry && seen.to.eq_ignore_ascii_case("active"))
@@ -90,8 +79,7 @@ pub(crate) fn is_static(request: &Request) -> bool {
     !is_api_path(&request.path)
 }
 
-/// The static answer. `None` for the bundle means this profile mounts no
-/// UI: `/v1` keeps serving and every page is a typed 503.
+/// The static answer; no bundle mounted is a typed 503 on every page.
 pub(crate) fn answer(bundle: Option<&Bundle>, request: &Request) -> Vec<u8> {
     let text = |status: u16, detail: &str| framed(status, MIME_TEXT, None, detail.as_bytes());
     if request.method != "GET" {
