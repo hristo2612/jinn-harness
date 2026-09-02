@@ -563,6 +563,15 @@ The ENUMERATED adaptations, and only these, are the diff:
 11. `lib/talk-capability.ts`: Talk is out of scope (§7); the capability
    resolves ABSENT client-side and issues no request (its `/api/talk/config`
    GET was live on the mounted Settings surface - amendment 6).
+12. `plugins/disk-plugins.ts` (and its test): the old gateway's
+   client-plugin loader, mounted on EVERY page by the `DiskPluginsBridge` in
+   `routes/client-providers.tsx` and re-run on each connection flip - the
+   actual source of the live `GET /api/plugins` the round-2 transcript
+   recorded (amendment 6 attributed it to `inventory.ts` by grep; the call
+   graph says otherwise). The disk door resolves EMPTY client-side (zero
+   plugins, `settled` still flips so `ContributedRoute` renders) and issues
+   no request; `/api/plugins/<id>/client` has no counterpart (#37 / KG-1).
+   Ruled in §8 amendment 7.
 
 Everything else is `git diff 43e8647 -- packages/web/<path>` empty, file by
 file, and the acceptance below asserts it.
@@ -648,7 +657,7 @@ transport that does not serve:
 6. `the_view_layer_is_verbatim` - not a daemon proof: a repo test that runs
    `git diff --stat 43e8647 -- packages/web/<f>` for every ported file
    against `web/<f>` through a pinned mapping and asserts an EMPTY diff for
-   every file not on the §4.2 adaptation list (items 1-11), and a non-empty one
+   every file not on the §4.2 adaptation list (items 1-12), and a non-empty one
    for every file on it (the gate has to be able to fail in both
    directions).
 7. Browser-level, driven by the INDEPENDENT VERIFIER with `agent-browser`
@@ -1124,6 +1133,15 @@ declared. Dispatch of UI-1 waits for the 2026-09-04 audit.
   this one Blocker plus regressions in the lines it changes; the verifier
   re-runs proof 7's network transcript and nothing else it already passed at
   `94e028a` unless those lines touch it.
+- **Amendment 7 (COO, 2026-09-03, UI-1 build round 3 declaration).** The
+  build showed with evidence that amendment 6's attribution of the live
+  `GET /api/plugins` to `inventory.ts:53` was wrong: that hook has no
+  callers; the request comes from `plugins/disk-plugins.ts`, mounted on
+  every page. Ruled: `disk-plugins.ts` is adaptation 12 (resolves empty,
+  no request; the bridge stays mounted because `ContributedRoute` waits on
+  its `settled`); items 10 and 11 stand as built; the `/api/` repo test's
+  adapted scope is items 10-12; proof 6's list is items 1-12. Rust delta 0;
+  the meter stays 843/800 MANDATED. Round 3's scope lock covers all three.
 
 
 
