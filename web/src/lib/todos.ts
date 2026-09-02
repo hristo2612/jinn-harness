@@ -1,0 +1,367 @@
+// The Todos display model (GRS-021d). Pure, framework-free view logic over the
+// work-item wire types: the status→group mapping, the "Needs you" derivation,
+// the attention derivation, filters, and the small provenance helpers.
+// The gateway owns the truth (status is derived server-side, spawn ≠ done); this
+// module only *arranges* what it returns — it never invents a status.
+
+import type {
+  WorkItemCompactWire,
+  WorkItemStatusWire,
+  WorkItemSourceWire,
+} from "./api"
+import { ApiError } from "./api"
+import { isParked } from "./parked"
+export { isPositiveTodoVersion } from "./api"
+
+/** Human label for a raw status (sheet, people queue, sub-lines). */
+export const STATUS_LABEL: Record<WorkItemStatusWire, string> = {
+  backlog: "Backlog",
+  assigned: "Assigned",
+  executing: "Executing",
+  in_review: "In review",
+  done: "Done",
+  blocked: "Blocked",
+  escalated: "Escalated",
+  cancelled: "Cancelled",
+}
+
+/** The glyph/colour key for a status circle. Distinct from the display group:
+ *  a blocked card sits in Executing but keeps its blocked glyph + colour. */
+export type StateKey =
+  | "backlog"
+  | "assigned"
+  | "executing"
+  | "review"
+  | "done"
+  | "blocked"
+  | "escalated"
+  | "cancelled"
+export function stateKeyOf(status: WorkItemStatusWire): StateKey {
+  return status === "in_review" ? "review" : status
+}
+
+// ── Terminal / open sets ────────────────────────────────────────────────────
+const TERMINAL: ReadonlySet<WorkItemStatusWire> = new Set<WorkItemStatusWire>(["done", "cancelled"])
+export function isOpen(status: WorkItemStatusWire): boolean {
+  return !TERMINAL.has(status)
+}
+
+const SAFE_TODO_ERROR_BY_CODE: Readonly<Record<string, string>> = {
+  WORK_ITEM_ESCALATED: "This Todo is escalated. Use the human operator surface for this transition.",
+  WORK_ITEM_APPROVAL_PENDING: "This Todo is awaiting approval. Resolve the approval before changing its status.",
+  WORK_ITEM_VERSION_CONFLICT: "This Todo changed elsewhere. Reload it before saving again.",
+  TODO_VERSION_CONFLICT: "This Todo changed elsewhere. Reload it before saving again.",
+  TODO_IDEMPOTENCY_CONFLICT: "This edit request conflicts with an earlier request. Reload remote to discard all local edits before starting a new edit.",
+  TODO_PRECONDITION_REQUIRED: "This Todo requires a current version before it can be saved. Reload it and try again.",
+  TODO_INVALID_VERSION: "This Todo version is invalid. Reload it and try again.",
+  TODO_INVALID_PATCH: "This Todo edit is invalid. Review the changed fields and try again.",
+  WORK_ITEM_NOT_FOUND: "This Todo no longer exists.",
+}
+
+function normalizedTodoErrorCode(error: ApiError): string | undefined {
+  return error.code?.trim().toUpperCase()
+}
+
+export function isTodoVersionConflictError(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false
+  return normalizedTodoErrorCode(error) === "TODO_VERSION_CONFLICT"
+    || normalizedTodoErrorCode(error) === "WORK_ITEM_VERSION_CONFLICT"
+}
+
+export function isTodoIdempotencyConflictError(error: unknown): boolean {
+  return error instanceof ApiError
+    && normalizedTodoErrorCode(error) === "TODO_IDEMPOTENCY_CONFLICT"
+}
+
+/** Closed safe-copy mapping. Raw backend diagnostics stay on ApiError for
+ * protected diagnostics, never in visible or accessible operator output. */
+export function operatorSafeTodoError(error: unknown, fallback: string): string {
+  if (!(error instanceof ApiError)) return fallback
+  const code = normalizedTodoErrorCode(error)
+  if (code && SAFE_TODO_ERROR_BY_CODE[code]) return SAFE_TODO_ERROR_BY_CODE[code]
+  if (isTodoVersionConflictError(error)) return SAFE_TODO_ERROR_BY_CODE.WORK_ITEM_VERSION_CONFLICT
+  if (error.status === 404) return SAFE_TODO_ERROR_BY_CODE.WORK_ITEM_NOT_FOUND
+  if (error.status === 403 && /\b(?:escalated|approval (?:is )?pending|sticky terminal)\b/i.test(error.message)) {
+    return "This transition needs explicit operator authority. Use the human operator surface if it is intentional."
+  }
+  return fallback
+}
+
+// ── Manual rank ordering (design-todos §4.5 / §7.3) ─────────────────────────
+// Default sort IS manual: rank ascending when present, then updatedAt desc for
+// never-ranked items. Ranked items always lead unranked ones.
+export function compareRank(a: WorkItemCompactWire, b: WorkItemCompactWire): number {
+  const ar = a.rank ?? null
+  const br = b.rank ?? null
+  if (ar != null && br != null && ar !== br) return ar - br
+  if (ar != null && br == null) return -1
+  if (ar == null && br != null) return 1
+  return (Date.parse(b.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0)
+}
+
+/** The rank value that lands an item between its new neighbours (midpoint;
+ *  open-ended steps of 1024 at either edge). Neighbours without a rank fall
+ *  back to their list position so a drop into an unranked list still resolves. */
+export function rankBetween(before: number | null | undefined, after: number | null | undefined): number {
+  if (before != null && after != null) return (before + after) / 2
+  if (before != null) return before + 1024
+  if (after != null) return after - 1024
+  return 0
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000
+
+// ── Needs-you inbox ─────────────────────────────────────────────────────────
+// The gateway owns attention routing (?needsAttentionFor=me); this keeps the rows that still visibly need it, since an older
+// gateway over-returns and a park runs out between refetches. An unexpired park leaves the set outright, gate included.
+export type NeedsYouSet = WorkItemCompactWire[]
+
+export function needsAttention(item: WorkItemCompactWire, now = Date.now()): boolean {
+  return item.attentionLane === "recovering" || item.attentionLane === "manager" || (!isParked(item.parkedUntil, now) && (item.approvalState === "pending" || item.status === "escalated" || item.status === "blocked"))
+}
+
+export function deriveNeedsYou(items: WorkItemCompactWire[], now = Date.now()): NeedsYouSet {
+  return items.filter((item) => needsAttention(item, now))
+}
+
+// ── Provenance whisper ──────────────────────────────────────────────────────
+const PROVENANCE_WORD: Record<WorkItemSourceWire, string> = {
+  human: "You",
+  delegation: "Delegation",
+  cron: "Cron",
+  workflow: "Workflow",
+  session: "Session",
+  connector: "Connector",
+  goal: "Goal",
+}
+
+/** The "· <name>" suffix parsed from a machine-minted sourceRef, when present.
+ *  `cron:<jobId>:<iso>` → jobId; `workflow:<defId>:<runId>` → defId. */
+export function provenanceSuffix(source: WorkItemSourceWire, sourceRef?: string | null): string | null {
+  const safeRef = publicWorkItemReference(sourceRef)
+  if (!safeRef) return null
+  if (source === "cron") {
+    const m = /^cron:([^:]+):/.exec(safeRef)
+    return m ? m[1] : null
+  }
+  if (source === "workflow") {
+    const m = /^workflow:([^:]+):/.exec(safeRef)
+    return m ? m[1] : null
+  }
+  return null
+}
+
+export function provenanceLabel(source: WorkItemSourceWire, sourceRef?: string | null): string {
+  const base = PROVENANCE_WORD[source]
+  const suffix = provenanceSuffix(source, sourceRef)
+  return suffix ? `${base} · ${suffix}` : base
+}
+
+// ── Verify policy + priority (mirror the gateway's provenance defaults so the
+// sheet shows the SAME effective tier the server will enforce) ───────────────
+export type VerifyMode = "trust" | "verify" | "thorough"
+export const DEFAULT_VERIFY_MODE_BY_SOURCE: Record<WorkItemSourceWire, VerifyMode> = {
+  cron: "trust",
+  workflow: "trust",
+  delegation: "verify",
+  human: "verify",
+  session: "verify",
+  connector: "verify",
+  goal: "verify",
+}
+export const DEFAULT_MAX_ROUNDS: Record<VerifyMode, number> = { trust: 2, verify: 2, thorough: 3 }
+
+interface VerifyShape {
+  source: WorkItemSourceWire
+  verifyPolicy: { mode: VerifyMode; maxRounds?: number } | null
+}
+export function effectiveVerifyMode(item: VerifyShape): VerifyMode {
+  return item.verifyPolicy?.mode ?? DEFAULT_VERIFY_MODE_BY_SOURCE[item.source]
+}
+export function effectiveMaxRounds(item: VerifyShape): number {
+  return item.verifyPolicy?.maxRounds ?? DEFAULT_MAX_ROUNDS[effectiveVerifyMode(item)]
+}
+
+/** Priority int (0–3) → label. Higher int = higher priority; 2 is the default. */
+export function priorityLabel(priority: number): string {
+  return priority >= 3 ? "High" : priority === 2 ? "Medium" : priority === 1 ? "Low" : "None"
+}
+
+// ── Filters (design-todos §4.3) ─────────────────────────────────────────────
+// The chips choose WHAT; the grouping adapts. Filters map 1:1 to server query
+// params and persist in the URL. `status: "open"` is the default lens (the 6
+// open statuses + the recent-done window); a closed status regroups by date.
+
+export type StatusFilter = "open" | "all" | WorkItemStatusWire
+export type DateFilter = "today" | "week" | "month"
+/** Due-WINDOW filter (slice 6, board filter row). Deliberately client-side
+ *  over the loaded columns — the wire has no due param and must not grow one
+ *  (stage-A review F1 disposition). */
+export type DueFilter = "overdue" | "today" | "week" | "month"
+
+export interface TodoFilters {
+  status: StatusFilter
+  assignee?: string
+  department?: string
+  source?: WorkItemSourceWire
+  date?: DateFilter
+  /** Label name (or id) — the gateway's `label` list param accepts either. */
+  label?: string
+  due?: DueFilter
+  q?: string
+}
+
+/** Transport-only work-item ids must never cross into user-facing metadata. */
+export function publicWorkItemReference(value: string | null | undefined): string | null {
+  const reference = value?.trim() ?? ""
+  if (!reference || /(?:^|[^a-z0-9])wi_[a-z0-9_-]+/i.test(reference)) return null
+  return reference
+}
+
+/** How many filter chips are set away from their default. Search is separate. */
+export function activeFilterCount(f: TodoFilters): number {
+  let n = 0
+  if (f.status !== "open") n++
+  if (f.assignee) n++
+  if (f.department) n++
+  if (f.source) n++
+  if (f.date) n++
+  if (f.label) n++
+  if (f.due) n++
+  return n
+}
+
+/** since/until ISO bounds for a date filter. `until` pins the window's upper
+ *  edge explicitly so date-filtered queries (list AND search) are bounded on
+ *  both sides server-side. */
+export function dateBounds(date: DateFilter | undefined, now: number): { since?: string; until?: string } {
+  if (!date) return {}
+  const d = new Date(now)
+  if (date === "today") {
+    d.setHours(0, 0, 0, 0)
+  } else if (date === "week") {
+    d.setHours(0, 0, 0, 0)
+    d.setDate(d.getDate() - 6)
+  } else {
+    d.setHours(0, 0, 0, 0)
+    d.setMonth(d.getMonth() - 1)
+  }
+  return { since: d.toISOString(), until: new Date(now).toISOString() }
+}
+
+// NOTE: there is deliberately NO client-side re-filter of server results for
+// dimensions the gateway owns. The gateway owns `q` (escaped-LIKE over
+// title+body), `since`/`until`, and `label` — a title-only client pass would
+// silently discard body-only matches (shipped bug, QA 2026-07-10). The ONE
+// sanctioned client-side dimension is the due WINDOW below: the wire has no
+// due param and must not grow one (stage-A review F1 disposition), so it
+// filters the loaded columns.
+
+/** Client-side due-window predicate. Windows run forward from the start of
+ *  today (a due date is a promise about the future); Overdue is strictly the
+ *  past. An item without a due date never matches a due filter. */
+export function matchesDueFilter(dueAt: string | null | undefined, due: DueFilter | undefined, now: number): boolean {
+  if (!due) return true
+  if (!dueAt) return false
+  const t = Date.parse(dueAt)
+  if (Number.isNaN(t)) return false
+  if (due === "overdue") return t < now
+  const start = new Date(now)
+  start.setHours(0, 0, 0, 0)
+  const end = new Date(start)
+  if (due === "today") end.setDate(end.getDate() + 1)
+  else if (due === "week") end.setDate(end.getDate() + 7)
+  else end.setMonth(end.getMonth() + 1)
+  return t >= start.getTime() && t < end.getTime()
+}
+
+/** URL ⇄ filter mapping, so a filtered view is shareable and survives refresh. */
+export function filtersToSearchParams(f: TodoFilters): URLSearchParams {
+  const p = new URLSearchParams()
+  if (f.status !== "open") p.set("status", f.status)
+  if (f.assignee) p.set("assignee", f.assignee)
+  if (f.department) p.set("department", f.department)
+  if (f.source) p.set("source", f.source)
+  if (f.date) p.set("date", f.date)
+  if (f.label) p.set("label", f.label)
+  if (f.due) p.set("due", f.due)
+  const safeQuery = publicWorkItemReference(f.q)
+  if (safeQuery) p.set("q", safeQuery)
+  return p
+}
+
+const STATUS_FILTER_VALUES: ReadonlySet<string> = new Set([
+  "all", "backlog", "assigned", "executing", "blocked", "in_review", "escalated", "done", "cancelled",
+])
+const SOURCE_VALUES: ReadonlySet<string> = new Set(["human", "delegation", "cron", "workflow", "session", "connector", "goal"])
+const DATE_VALUES: ReadonlySet<string> = new Set(["today", "week", "month"])
+const DUE_VALUES: ReadonlySet<string> = new Set(["overdue", "today", "week", "month"])
+
+export function filtersFromSearchParams(p: URLSearchParams): TodoFilters {
+  const f: TodoFilters = { status: "open" }
+  const status = p.get("status")
+  if (status && STATUS_FILTER_VALUES.has(status)) f.status = status as StatusFilter
+  const assignee = p.get("assignee")?.trim()
+  if (assignee) f.assignee = assignee
+  const department = p.get("department")?.trim()
+  if (department) f.department = department
+  const source = p.get("source")
+  if (source && SOURCE_VALUES.has(source)) f.source = source as WorkItemSourceWire
+  const date = p.get("date")
+  if (date && DATE_VALUES.has(date)) f.date = date as DateFilter
+  const label = p.get("label")?.trim()
+  if (label) f.label = label
+  const due = p.get("due")
+  if (due && DUE_VALUES.has(due)) f.due = due as DueFilter
+  const q = publicWorkItemReference(p.get("q"))
+  if (q) f.q = q
+  return f
+}
+
+// ── History grouping (closed-status filters regroup by date, §3) ────────────
+export type DateBucket = "today" | "yesterday" | "week" | "earlier"
+export const DATE_BUCKETS: readonly DateBucket[] = ["today", "yesterday", "week", "earlier"]
+export const DATE_BUCKET_LABEL: Record<DateBucket, string> = {
+  today: "Today",
+  yesterday: "Yesterday",
+  week: "This week",
+  earlier: "Earlier",
+}
+
+export function dateBucketOf(iso: string, now: number): DateBucket {
+  const t = Date.parse(iso)
+  if (Number.isNaN(t)) return "earlier"
+  const startOfToday = new Date(now)
+  startOfToday.setHours(0, 0, 0, 0)
+  if (t >= startOfToday.getTime()) return "today"
+  if (t >= startOfToday.getTime() - DAY_MS) return "yesterday"
+  if (t >= startOfToday.getTime() - 6 * DAY_MS) return "week"
+  return "earlier"
+}
+
+export interface HistoryGroup {
+  bucket: DateBucket
+  label: string
+  items: WorkItemCompactWire[]
+}
+
+/** Newest-first date grouping for history views. Empty buckets don't render. */
+export function groupHistory(items: WorkItemCompactWire[], now: number): HistoryGroup[] {
+  const buckets = new Map<DateBucket, WorkItemCompactWire[]>()
+  for (const b of DATE_BUCKETS) buckets.set(b, [])
+  for (const it of items) buckets.get(dateBucketOf(it.updatedAt, now))!.push(it)
+  return DATE_BUCKETS.map((b) => {
+    const list = buckets.get(b)!.slice()
+    list.sort((a, x) => (Date.parse(x.updatedAt) || 0) - (Date.parse(a.updatedAt) || 0))
+    return { bucket: b, label: DATE_BUCKET_LABEL[b], items: list }
+  }).filter((g) => g.items.length > 0)
+}
+
+/** Human label for a comment author. Employee identities resolve through the
+ *  caller's display-name map at the component layer; this covers the fixed
+ *  kinds and passes raw identities (slug or `session:<uuid>`) through. */
+export function commentAuthorLabel(author: string, authorKind: string): string {
+  if (authorKind === "operator") return "Operator"
+  if (authorKind === "system") return "System"
+  return author
+}

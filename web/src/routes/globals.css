@@ -1,0 +1,1557 @@
+@import "tailwindcss";
+
+/* Self-hosted so the shell has no third-party dependency and paints its own
+   type offline. Vite hashes these into /assets/, which the gateway serves
+   immutable — a public/ font would revalidate on every load instead. */
+/* Hanken Grotesk — variable wght 400..600, normal — SIL OFL 1.1 (see src/fonts/OFL-hanken-grotesk.txt) */
+
+/* latin-ext */
+@font-face {
+  font-family: 'Hanken Grotesk';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('../fonts/hanken-grotesk-latin-ext-var.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'Hanken Grotesk';
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url('../fonts/hanken-grotesk-latin-var.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* IBM Plex Mono — 400 / 500 / 600, normal — SIL OFL 1.1 (see src/fonts/OFL-ibm-plex-mono.txt) */
+
+/* latin-ext */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/ibm-plex-mono-latin-ext-400.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('../fonts/ibm-plex-mono-latin-400.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('../fonts/ibm-plex-mono-latin-ext-500.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('../fonts/ibm-plex-mono-latin-500.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../fonts/ibm-plex-mono-latin-ext-600.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url('../fonts/ibm-plex-mono-latin-600.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* :where() has zero specificity so shadcn's dark: utilities remain overridable.
+   data-theme is never "system" after JS hydration — ThemeProvider resolves it to dark/light. */
+@custom-variant dark (:where([data-theme="dark"]) &);
+
+@theme inline {
+  --color-background: var(--bg);
+  --color-foreground: var(--text-primary);
+  --color-card: var(--bg-secondary);
+  --color-card-foreground: var(--text-primary);
+  --color-popover: var(--material-thick);
+  --color-popover-foreground: var(--text-primary);
+  --color-primary: var(--accent);
+  --color-primary-foreground: var(--accent-contrast);
+  --color-secondary: var(--fill-secondary);
+  --color-secondary-foreground: var(--text-primary);
+  --color-muted: var(--fill-tertiary);
+  --color-muted-foreground: var(--text-tertiary);
+  --color-accent: var(--fill-secondary);
+  --color-accent-foreground: var(--text-primary);
+  --color-destructive: var(--system-red);
+  --color-destructive-foreground: #ffffff;
+  --color-border: var(--separator);
+  --color-input: var(--fill-tertiary);
+  --color-ring: var(--accent);
+  --radius-sm: var(--radius-sm);
+  --radius-md: var(--radius-md);
+  --radius-lg: var(--radius-lg);
+  --radius-xl: var(--radius-xl);
+}
+
+/* A delegation card gets one provenance-backed entrance only when its block
+   first arrives over the live WS put path. The grid track grows the real
+   layout so following threads stay visually anchored; the card itself uses
+   compositor-friendly detail motion. */
+.delegation-arrival {
+  display: grid;
+  min-width: 0;
+  grid-template-rows: 0fr;
+  animation: jinn-delegation-grow 220ms var(--ease-snappy) var(--delegation-arrival-delay, 0ms) both;
+}
+
+.delegation-arrival-inner {
+  min-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  filter: blur(3px);
+  transform: translateY(8px) scale(.985);
+  animation: jinn-delegation-card-in 180ms var(--ease-snappy) calc(var(--delegation-arrival-delay, 0ms) + 35ms) both;
+}
+
+@keyframes jinn-delegation-grow {
+  to { grid-template-rows: 1fr; }
+}
+
+@keyframes jinn-delegation-card-in {
+  to { opacity: 1; filter: blur(0); transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .delegation-arrival { grid-template-rows: 1fr; animation: none; }
+  .delegation-arrival-inner { opacity: 1; filter: none; transform: none; animation: none; }
+}
+
+/* ============================================
+   Tailwind v4 Theme Tokens
+   ============================================ */
+
+/* Typography Scale — Apple HIG. One definition per step, and the only place a
+   font size is authored.
+
+   Every step is fluid between a 390px phone and a 1024px desktop, and every step
+   is rem, so the OS/browser text-size preference moves the whole UI. The middle
+   clamp term keeps a rem component on purpose: a vw-only term ignores text-size
+   entirely, which is the exact failure this scale exists to fix. Small steps
+   travel ~1px; display steps travel up to 6px, because a caption that shrinks
+   stops being readable while a title that doesn't shrink stops fitting.
+
+   Leading and tracking are bound to each step rather than left as free families.
+   A size chosen without its matched leading is why the UI read unbalanced.
+   Tracking is em so it follows the fluid size instead of drifting tighter as the
+   step grows, and the values are Apple's own at each point size.
+
+   `static` because a scale is only one scale if it ships whole: Tailwind emits a
+   step's bound leading and tracking only where that step's utility appears in
+   source, which would silently leave `text-[length:var(--text-…)]` call sites
+   holding a size with no leading — the exact defect this replaces. */
+@theme static {
+  --text-caption2: calc(clamp(0.625rem, 0.5866rem + 0.1577vw, 0.6875rem) * var(--text-scale));
+  --text-caption2--line-height: 1.35;
+  --text-caption2--letter-spacing: 0.006em;
+
+  --text-caption1: calc(clamp(0.6875rem, 0.6491rem + 0.1577vw, 0.75rem) * var(--text-scale));
+  --text-caption1--line-height: 1.35;
+  --text-caption1--letter-spacing: 0em;
+
+  --text-footnote: calc(clamp(0.75rem, 0.7116rem + 0.1577vw, 0.8125rem) * var(--text-scale));
+  --text-footnote--line-height: 1.4;
+  --text-footnote--letter-spacing: -0.006em;
+
+  --text-subheadline: calc(clamp(0.875rem, 0.8366rem + 0.1577vw, 0.9375rem) * var(--text-scale));
+  --text-subheadline--line-height: 1.45;
+  --text-subheadline--letter-spacing: -0.016em;
+
+  --text-body: calc(clamp(1rem, 0.9616rem + 0.1577vw, 1.0625rem) * var(--text-scale));
+  --text-body--line-height: 1.47;
+  --text-body--letter-spacing: -0.024em;
+
+  /* Same size as body, per HIG — the difference is weight, which call sites set. */
+  --text-headline: calc(clamp(1rem, 0.9616rem + 0.1577vw, 1.0625rem) * var(--text-scale));
+  --text-headline--line-height: 1.4;
+  --text-headline--letter-spacing: -0.024em;
+
+  --text-title3: calc(clamp(1.125rem, 1.0481rem + 0.3155vw, 1.25rem) * var(--text-scale));
+  --text-title3--line-height: 1.3;
+  --text-title3--letter-spacing: -0.019em;
+
+  --text-title2: calc(clamp(1.1875rem, 1.0722rem + 0.4732vw, 1.375rem) * var(--text-scale));
+  --text-title2--line-height: 1.25;
+  --text-title2--letter-spacing: -0.019em;
+
+  --text-title1: calc(clamp(1.5rem, 1.3462rem + 0.6309vw, 1.75rem) * var(--text-scale));
+  --text-title1--line-height: 1.2;
+  --text-title1--letter-spacing: -0.021em;
+
+  --text-large-title: calc(clamp(1.75rem, 1.5193rem + 0.9464vw, 2.125rem) * var(--text-scale));
+  --text-large-title--line-height: 1.12;
+  --text-large-title--letter-spacing: -0.024em;
+
+  /* Tailwind's own steps, redeclared only to carry the same multiplier. A
+     handful of call sites still say `text-sm` / `text-xs` / `text-lg` /
+     `text-xl`, and without this they would be the one part of the UI the Text
+     size setting does not move. Their leading is a unitless ratio, so it
+     follows the scaled size untouched. Converting those call sites to the HIG
+     steps above is a separate cleanup. */
+  --text-xs: calc(0.75rem * var(--text-scale));
+  --text-sm: calc(0.875rem * var(--text-scale));
+  --text-base: calc(1rem * var(--text-scale));
+  --text-lg: calc(1.125rem * var(--text-scale));
+  --text-xl: calc(1.25rem * var(--text-scale));
+}
+
+@theme {
+  /* Theme-driven font stacks (overridden per [data-theme]; defaults below in :root) */
+  --font-sans: var(--font-ui);
+  --font-serif: var(--font-display);
+  --font-mono: var(--font-code);
+
+  /* Leading */
+  --leading-tight: 1.15;
+  --leading-snug: 1.3;
+  --leading-normal: 1.47;
+  --leading-relaxed: 1.65;
+
+  /* Tracking */
+  --tracking-tight: -0.41px;
+  --tracking-normal: -0.24px;
+  --tracking-wide: 0.07em;
+
+  /* Font Weights */
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* Spacing Scale — 4px grid */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* Tailwind animation tokens */
+  --animate-fade-in: fadeIn 0.2s ease-out;
+  --animate-slide-in: slideIn 0.2s ease-out;
+  --animate-pulse-red: pulse-red 1.5s ease-in-out infinite;
+  --animate-blink: blink-cursor 1s step-end infinite;
+  --animate-float-hint: float-hint 2s ease-in-out infinite;
+  --animate-sidebar-pulse: sidebar-pulse 2s ease-in-out infinite;
+
+  /* Duration scale — the single source for how long anything takes. Easing
+     stays in the [data-theme] blocks, where the sandboxed-surface law puts it;
+     a duration is theme-independent, so it belongs here with the other
+     build-time scales. Collapsed to --duration-instant under reduced motion. */
+  --duration-instant: 1ms;
+  --duration-fast: 120ms;
+  --duration-base: 180ms;
+  --duration-slow: 260ms;
+
+  /* Enter/exit pairs for every timed surface. CSS only, no motion library:
+     Radix keeps a node mounted until its animation ends, so data-state drives
+     the exit as well as the entrance, and --ease-spring already carries the
+     overshoot a spring config would buy — at zero bundle cost. Each exit is
+     quicker than its entrance; leaving should read as getting out of the way. */
+  --animate-overlay-in: jinn-overlay-in var(--duration-base) var(--ease-smooth) both;
+  --animate-overlay-out: jinn-overlay-out var(--duration-fast) var(--ease-smooth) both;
+  --animate-pop-in: jinn-pop-in var(--duration-base) var(--ease-spring) both;
+  --animate-pop-out: jinn-pop-out var(--duration-fast) var(--ease-smooth) both;
+  --animate-sheet-in: jinn-sheet-in var(--duration-slow) var(--ease-snappy) both;
+  --animate-sheet-out: jinn-sheet-out var(--duration-base) var(--ease-snappy) both;
+  --animate-rail-in: jinn-rail-in var(--duration-base) var(--ease-snappy) both;
+  --animate-rail-out: jinn-rail-out var(--duration-fast) var(--ease-snappy) both;
+  --animate-capture-step-in: jinn-capture-step-in var(--duration-base) var(--ease-snappy) both;
+}
+
+/* ============================================
+   Apple Material Design System — Themes
+   ============================================ */
+
+/* Theme-independent layout tokens (safe-area + chat reading measure).
+   Defined once on :root so they cascade to every theme block below. */
+:root {
+  /* iOS safe-area passthroughs (0 on non-notched devices). Compose at the call
+     site, e.g. top-[max(var(--safe-top),12px)] / pb-[max(var(--safe-bottom),var(--space-3))]. */
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  /* MobileTabBar's box ABOVE its own safe-area padding: a 0.5px top edge, 6px
+     of `py-1.5` and a 49px row (`components/chat/mobile-tab-bar.tsx`). Compose
+     the inset at the call site the same way everything else does, e.g.
+     bottom-[calc(var(--tab-bar-height)+max(var(--safe-bottom),6px))]. It was
+     written out twice before this token existed and the two copies disagreed;
+     one of them parked a third of the status bar's controls behind the bar. */
+  --tab-bar-height: 56px;
+  /* Height the on-screen keyboard obscures, published by the platform viewport
+     adapter. Declared here so the variable resolves before
+     that runs and in browsers without visualViewport; compose it the same way,
+     e.g. pb-[max(var(--keyboard-inset),var(--safe-bottom),var(--space-3))]. */
+  --keyboard-inset: 0px;
+  /* Max reading measure for the assistant text column. Scroller + composer stay
+     full-bleed; only the prose column caps. Single-line tune. */
+  --chat-measure: 64rem;
+  /* Clearance under the floating header pills. The pills now float in the
+     corners (not a solid header), so content only needs a small top gap +
+     safe-area inset — it then scrolls UNDER the translucent top scrim, which
+     fades it. The previous +52px reserved space for the removed solid header
+     and left a dead gap above the first message. */
+  --chat-top-clearance: max(var(--safe-top), 12px);
+  /* Multiplier on every type step, from the Text size setting. The blocking
+     bootstrap in index.html sets it on <html> before first paint and the
+     settings provider rewrites it on change; this is the unscaled fallback for
+     a device that has never picked one. Declared outside @theme because an
+     inline style on <html> only wins the cascade against a :root declaration. */
+  --text-scale: 1;
+}
+
+/* LEDGER DARK — warm charcoal + amber (default) */
+:root, [data-theme="dark"] {
+  --tab-bar-height: 56px;
+  --font-ui: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-display: "Hanken Grotesk", -apple-system, system-ui, sans-serif;
+  --font-code: "IBM Plex Mono", "SF Mono", Monaco, Menlo, monospace;
+  --bg: #14130F;
+  --bg-secondary: #1E1C16;
+  --bg-tertiary: #2A2720;
+  --material-regular: rgba(30,28,22,0.92);
+  --material-thick: rgba(20,18,15,0.96);
+  /* --material-thick composited over --bg at alpha 1, for the coarse-pointer
+     bars that drop the backdrop filter (see --pill-bg-opaque). */
+  --material-thick-opaque: #14120F;
+  --material-thin: rgba(255,255,255,0.05);
+  --material-ultra-thin: rgba(255,255,255,0.03);
+  --fill-primary: rgba(255,255,255,0.10);
+  --fill-secondary: rgba(255,255,255,0.07);
+  --fill-tertiary: rgba(255,255,255,0.05);
+  --fill-quaternary: rgba(255,255,255,0.035);
+  --separator: rgba(255,255,255,0.09);
+  --separator-opaque: #38342B;
+  --scrim: rgba(0,0,0,0.32);
+  --text-primary: #E8E4D8;
+  --text-secondary: rgba(232,228,216,0.62);
+  --text-tertiary: rgba(232,228,216,0.38);
+  --text-quaternary: rgba(232,228,216,0.22);
+  --accent: #E0A33C;
+  --accent-fill: rgba(224,163,60,0.14);
+  --danger-fill: rgba(224,103,90,0.14);
+  --accent-contrast: #14130F;
+  --talk-focus-ring: rgba(224,163,60,0.55);
+  --system-blue: #5B9BD5;
+  --system-indigo: #8586D8;
+  --system-green: #7DBE6A;
+  --system-red: #E0675A;
+  --system-orange: #E89B45;
+  --system-yellow: #E3C34C;
+  --system-purple: #B98AD6;
+  --inset-shine: inset 0 1px 0 rgba(255,255,255,0.06);
+  --shadow-subtle: 0 1px 2px rgba(0,0,0,0.30);
+  --shadow-ambient: 0 0 0 0.5px rgba(0,0,0,0.30);
+  --shadow-key: 0 4px 16px rgba(0,0,0,0.50);
+  --shadow-card: 0 0 0 0.5px rgba(0,0,0,0.30), 0 4px 16px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.05);
+  --shadow-overlay: 0 0 0 0.5px rgba(0,0,0,0.40), 0 16px 48px rgba(0,0,0,0.65), inset 0 1px 0 rgba(255,255,255,0.05);
+  /* Frosted header-pill material (theme-aware). Dark bumped for legibility — the
+     0.55/0.10 pill nearly vanished on the near-black bg. */
+  --pill-bg: rgba(34,31,24,0.64);
+  /* Same material with the blur baked out: --pill-bg composited over --bg at
+     alpha 1. Coarse pointers get this instead of the backdrop filter, so the
+     pill reads as the colour it already reads as over a plain page. */
+  --pill-bg-opaque: #1D1B15;
+  --pill-border: rgba(255,255,255,0.14);
+  --code-bg: rgba(255,255,255,0.05);
+  --code-border: rgba(255,255,255,0.09);
+  --code-text: #E8E4D8;
+  /* Tonal staircase (chrome recedes, content leads): Ribbon (lightest chrome)
+     > Chat List (mid) > Thread (--bg, deepest). Quiet ~8 L* steps; no rest
+     hairlines — the only line is the list's scroll-activated header separator. */
+  --ribbon-bg: #232019;
+  --sidebar-bg: #1C1A14;
+  --sidebar-backdrop: blur(40px) saturate(160%);
+  /* Talk orb material: a lit sphere, not a coloured shape. --orb-shadow is the
+     limb the light never reaches, --orb-specular the highlight where it lands,
+     --orb-rim the fresnel that brightens at the edge. All four theme blocks
+     carry the full set — light is a shipped state, not a fallback. */
+  --orb-core: rgba(255,206,132,0.78);
+  --orb-base: rgba(56,32,80,0.90);
+  --orb-bloom: rgba(172,84,138,0.64);
+  --orb-lobe-a: rgba(255,182,88,0.84);
+  --orb-lobe-b: rgba(198,110,204,0.62);
+  --orb-lobe-c: rgba(120,110,222,0.54);
+  --orb-shadow: rgba(14,7,26,0.95);
+  --orb-specular: rgba(255,250,236,0.88);
+  --orb-rim: rgba(222,188,255,0.64);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 24px;
+  --ease-spring: cubic-bezier(0.34,1.56,0.64,1);
+  --ease-smooth: cubic-bezier(0.4,0,0.2,1);
+  --ease-snappy: cubic-bezier(0.2,0,0,1);
+}
+
+/* LEDGER LIGHT — warm paper + ochre */
+[data-theme="light"] {
+  --tab-bar-height: 56px;
+  --font-ui: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --font-display: "Hanken Grotesk", -apple-system, system-ui, sans-serif;
+  --font-code: "IBM Plex Mono", "SF Mono", Monaco, Menlo, monospace;
+  --bg: #F4F1E8;
+  --bg-secondary: #FBF9F2;
+  --bg-tertiary: #ECE8DC;
+  --material-regular: rgba(251,249,242,0.94);
+  --material-thick: rgba(244,241,232,0.97);
+  --material-thick-opaque: #F4F1E8;
+  --material-thin: rgba(33,30,22,0.04);
+  --material-ultra-thin: rgba(33,30,22,0.02);
+  --fill-primary: rgba(33,30,22,0.08);
+  --fill-secondary: rgba(33,30,22,0.06);
+  --fill-tertiary: rgba(33,30,22,0.045);
+  --fill-quaternary: rgba(33,30,22,0.028);
+  --separator: rgba(33,30,22,0.14);
+  --separator-opaque: #DED8C7;
+  --scrim: rgba(40,34,20,0.18);
+  --text-primary: #211E16;
+  --text-secondary: rgba(33,30,22,0.66);
+  --text-tertiary: rgba(33,30,22,0.56);
+  --text-quaternary: rgba(33,30,22,0.30);
+  --accent: #926516;
+  --accent-fill: rgba(146,101,22,0.14);
+  --danger-fill: rgba(178,59,51,0.14);
+  --accent-contrast: #FBF9F2;
+  --talk-focus-ring: rgba(146,101,22,0.55);
+  --system-blue: #2D6CB5;
+  --system-indigo: #5155A6;
+  --system-green: #597648;
+  --system-red: #B23B33;
+  --system-orange: #B5701A;
+  --system-yellow: #9C7A10;
+  --system-purple: #7A5A9E;
+  --inset-shine: inset 0 1px 0 rgba(255,255,255,0.70);
+  --shadow-subtle: 0 1px 2px rgba(40,34,20,0.06);
+  --shadow-ambient: 0 0 0 0.5px rgba(40,34,20,0.10);
+  --shadow-key: 0 2px 8px rgba(40,34,20,0.10), 0 8px 24px rgba(40,34,20,0.08);
+  --shadow-card: 0 0 0 0.5px rgba(40,34,20,0.08), 0 1px 3px rgba(40,34,20,0.07), 0 4px 12px rgba(40,34,20,0.06), inset 0 1px 0 rgba(255,255,255,0.70);
+  --shadow-overlay: 0 0 0 0.5px rgba(40,34,20,0.10), 0 4px 16px rgba(40,34,20,0.10), 0 16px 48px rgba(40,34,20,0.14), inset 0 1px 0 rgba(255,255,255,0.80);
+  /* Frosted header-pill material (theme-aware) */
+  --pill-bg: rgba(251,249,242,0.72);
+  --pill-bg-opaque: #F9F7EF;
+  --pill-border: rgba(33,30,22,0.10);
+  --code-bg: rgba(33,30,22,0.05);
+  --code-border: rgba(33,30,22,0.10);
+  --code-text: #4A4030;
+  /* Tonal staircase (light): Ribbon (greyest chrome) > Chat List (mid) >
+     Thread (--bg, paper-white). Steps step DOWN from the content. */
+  --ribbon-bg: #E4DFD0;
+  --sidebar-bg: #ECE8DC;
+  --sidebar-backdrop: blur(20px) saturate(150%);
+  /* Talk orb, light: honey pearl pushed toward white, with enough ochre and
+     lavender weight for thin Ring/Pulse geometry to survive on paper. */
+  --orb-core: rgba(255,244,216,0.94);
+  --orb-base: rgba(184,132,61,0.85);
+  --orb-bloom: rgba(222,168,91,0.88);
+  --orb-lobe-a: rgba(255,232,174,0.78);
+  --orb-lobe-b: rgba(223,175,202,0.62);
+  --orb-lobe-c: rgba(177,167,221,0.55);
+  --orb-shadow: rgba(96,64,26,0.55);
+  --orb-specular: rgba(255,252,244,0.70);
+  --orb-rim: rgba(138,102,182,0.52);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 18px;
+  --radius-2xl: 24px;
+  --ease-spring: cubic-bezier(0.34,1.56,0.64,1);
+  --ease-smooth: cubic-bezier(0.4,0,0.2,1);
+  --ease-snappy: cubic-bezier(0.2,0,0,1);
+}
+
+/* SYSTEM: media-query fallback before JS hydration */
+@media (prefers-color-scheme: light) {
+  [data-theme="system"] {
+    --tab-bar-height: 56px;
+    --font-ui: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-display: "Hanken Grotesk", -apple-system, system-ui, sans-serif;
+    --font-code: "IBM Plex Mono", "SF Mono", Monaco, Menlo, monospace;
+    --bg: #F4F1E8;
+    --bg-secondary: #FBF9F2;
+    --bg-tertiary: #ECE8DC;
+    --material-regular: rgba(251,249,242,0.94);
+    --material-thick: rgba(244,241,232,0.97);
+    --material-thick-opaque: #F4F1E8;
+    --material-thin: rgba(33,30,22,0.04);
+    --material-ultra-thin: rgba(33,30,22,0.02);
+    --fill-primary: rgba(33,30,22,0.08);
+    --fill-secondary: rgba(33,30,22,0.06);
+    --fill-tertiary: rgba(33,30,22,0.045);
+    --fill-quaternary: rgba(33,30,22,0.028);
+    --separator: rgba(33,30,22,0.14);
+    --separator-opaque: #DED8C7;
+    --scrim: rgba(40,34,20,0.18);
+    --text-primary: #211E16;
+    --text-secondary: rgba(33,30,22,0.66);
+    --text-tertiary: rgba(33,30,22,0.56);
+    --text-quaternary: rgba(33,30,22,0.30);
+    --accent: #B07A1A;
+    --accent-fill: rgba(176,122,26,0.12);
+    --danger-fill: rgba(178,59,51,0.12);
+    --accent-contrast: #FBF9F2;
+    --talk-focus-ring: rgba(176,122,26,0.55);
+    --system-blue: #2D6CB5;
+    --system-indigo: #5155A6;
+    --system-green: #597648;
+    --system-red: #B23B33;
+    --system-orange: #B5701A;
+    --system-yellow: #9C7A10;
+    --system-purple: #7A5A9E;
+    --inset-shine: inset 0 1px 0 rgba(255,255,255,0.70);
+    --shadow-subtle: 0 1px 2px rgba(40,34,20,0.06);
+    --shadow-ambient: 0 0 0 0.5px rgba(40,34,20,0.10);
+    --shadow-key: 0 2px 8px rgba(40,34,20,0.10), 0 8px 24px rgba(40,34,20,0.08);
+    --shadow-card: 0 0 0 0.5px rgba(40,34,20,0.08), 0 1px 3px rgba(40,34,20,0.07), 0 4px 12px rgba(40,34,20,0.06), inset 0 1px 0 rgba(255,255,255,0.70);
+    --shadow-overlay: 0 0 0 0.5px rgba(40,34,20,0.10), 0 4px 16px rgba(40,34,20,0.10), 0 16px 48px rgba(40,34,20,0.14), inset 0 1px 0 rgba(255,255,255,0.80);
+    /* Frosted header-pill material (theme-aware) */
+    --pill-bg: rgba(251,249,242,0.72);
+    --pill-bg-opaque: #F9F7EF;
+    --pill-border: rgba(33,30,22,0.10);
+    --code-bg: rgba(33,30,22,0.05);
+    --code-border: rgba(33,30,22,0.10);
+    --code-text: #4A4030;
+    /* Tonal staircase (system → light): mirror [data-theme="light"]. */
+    --ribbon-bg: #E4DFD0;
+    --sidebar-bg: #ECE8DC;
+    --sidebar-backdrop: blur(20px) saturate(150%);
+    --orb-core: rgba(255,244,216,0.94);
+    --orb-base: rgba(184,132,61,0.85);
+    --orb-bloom: rgba(222,168,91,0.88);
+    --orb-lobe-a: rgba(255,232,174,0.78);
+    --orb-lobe-b: rgba(223,175,202,0.62);
+    --orb-lobe-c: rgba(177,167,221,0.55);
+    --orb-shadow: rgba(96,64,26,0.55);
+    --orb-specular: rgba(255,252,244,0.70);
+    --orb-rim: rgba(138,102,182,0.52);
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 18px;
+    --radius-2xl: 24px;
+    --ease-spring: cubic-bezier(0.34,1.56,0.64,1);
+    --ease-smooth: cubic-bezier(0.4,0,0.2,1);
+    --ease-snappy: cubic-bezier(0.2,0,0,1);
+  }
+}
+@media (prefers-color-scheme: dark) {
+  [data-theme="system"] {
+    --tab-bar-height: 56px;
+    --font-ui: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+    --font-display: "Hanken Grotesk", -apple-system, system-ui, sans-serif;
+    --font-code: "IBM Plex Mono", "SF Mono", Monaco, Menlo, monospace;
+    --bg: #14130F;
+    --bg-secondary: #1E1C16;
+    --bg-tertiary: #2A2720;
+    --material-regular: rgba(30,28,22,0.92);
+    --material-thick: rgba(20,18,15,0.96);
+    --material-thick-opaque: #14120F;
+    --material-thin: rgba(255,255,255,0.05);
+    --material-ultra-thin: rgba(255,255,255,0.03);
+    --fill-primary: rgba(255,255,255,0.10);
+    --fill-secondary: rgba(255,255,255,0.07);
+    --fill-tertiary: rgba(255,255,255,0.05);
+    --fill-quaternary: rgba(255,255,255,0.035);
+    --separator: rgba(255,255,255,0.09);
+    --separator-opaque: #38342B;
+    --scrim: rgba(0,0,0,0.32);
+    --text-primary: #E8E4D8;
+    --text-secondary: rgba(232,228,216,0.62);
+    --text-tertiary: rgba(232,228,216,0.38);
+    --text-quaternary: rgba(232,228,216,0.22);
+    --accent: #E0A33C;
+    --accent-fill: rgba(224,163,60,0.14);
+    --danger-fill: rgba(224,103,90,0.14);
+    --accent-contrast: #14130F;
+    --talk-focus-ring: rgba(224,163,60,0.55);
+    --system-blue: #5B9BD5;
+    --system-indigo: #8586D8;
+    --system-green: #7DBE6A;
+    --system-red: #E0675A;
+    --system-orange: #E89B45;
+    --system-yellow: #E3C34C;
+    --system-purple: #B98AD6;
+    --inset-shine: inset 0 1px 0 rgba(255,255,255,0.06);
+    --shadow-subtle: 0 1px 2px rgba(0,0,0,0.30);
+    --shadow-ambient: 0 0 0 0.5px rgba(0,0,0,0.30);
+    --shadow-key: 0 4px 16px rgba(0,0,0,0.50);
+    --shadow-card: 0 0 0 0.5px rgba(0,0,0,0.30), 0 4px 16px rgba(0,0,0,0.45), inset 0 1px 0 rgba(255,255,255,0.05);
+    --shadow-overlay: 0 0 0 0.5px rgba(0,0,0,0.40), 0 16px 48px rgba(0,0,0,0.65), inset 0 1px 0 rgba(255,255,255,0.05);
+    /* Frosted header-pill material (theme-aware). Dark bumped (see :root dark block). */
+    --pill-bg: rgba(34,31,24,0.64);
+    --pill-bg-opaque: #1D1B15;
+    --pill-border: rgba(255,255,255,0.14);
+    --code-bg: rgba(255,255,255,0.05);
+    --code-border: rgba(255,255,255,0.09);
+    --code-text: #E8E4D8;
+    /* Tonal staircase (system → dark): mirror [data-theme="dark"]. */
+    --ribbon-bg: #232019;
+    --sidebar-bg: #1C1A14;
+    --sidebar-backdrop: blur(40px) saturate(160%);
+    --orb-core: rgba(255,206,132,0.78);
+    --orb-base: rgba(56,32,80,0.90);
+    --orb-bloom: rgba(172,84,138,0.64);
+    --orb-lobe-a: rgba(255,182,88,0.84);
+    --orb-lobe-b: rgba(198,110,204,0.62);
+    --orb-lobe-c: rgba(120,110,222,0.54);
+    --orb-shadow: rgba(14,7,26,0.95);
+    --orb-specular: rgba(255,250,236,0.88);
+    --orb-rim: rgba(222,188,255,0.64);
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --radius-xl: 18px;
+    --radius-2xl: 24px;
+    --ease-spring: cubic-bezier(0.34,1.56,0.64,1);
+    --ease-smooth: cubic-bezier(0.4,0,0.2,1);
+    --ease-snappy: cubic-bezier(0.2,0,0,1);
+  }
+}
+
+/* ============================================
+   Base Styles
+   ============================================ */
+
+html, body {
+  /* Lock the page itself so iOS Safari uses inner containers as scroll
+     surfaces. Without this, swipes anywhere rubber-band the whole document
+     instead of scrolling the chat / sidebar internally. */
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+/* No `touch-action` here, deliberately. It read as free — the 350ms double-tap
+   delay it was there to kill is already gone, because the page ships
+   `user-scalable=no` (see the viewport meta in index.html) and there is no zoom
+   left to wait for. What it cost was momentum: a non-`auto` touch-action on an
+   ancestor takes inertial scrolling away from every scroller below it in WebKit,
+   so a flick anywhere in the app stopped dead on finger-lift. The two gestures
+   that genuinely need a declared value keep their own — the edge-back gutter
+   (`touch-pan-y` in edge-back-layer.tsx) and the terminal (`.xterm` below). */
+html {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Prevent iOS Safari zoom on input focus (requires font-size >= 16px). The body
+   step tracks the Text size setting and drops under 1rem at the smaller ones, so
+   the floor is taken here rather than assumed — the page ships user-scalable=no,
+   which makes a zoom on focus something the reader cannot undo. Above the floor
+   the size still follows the setting, which a flat 16px would not. */
+@media screen and (max-width: 768px) {
+  input, select, textarea, .apple-input {
+    font-size: max(1rem, var(--text-body)) !important;
+  }
+}
+
+body {
+  background: var(--bg);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  font-size: var(--text-body);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+/* Display typeface for headings (per-theme; default = same UI stack). */
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-display);
+}
+
+/* Apple-style scrollbar */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(120,120,128,0.36); border-radius: 4px; border: 2px solid transparent; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: rgba(120,120,128,0.60); border: 2px solid transparent; background-clip: content-box; }
+
+/* Selection */
+::selection { background: var(--accent-fill); color: var(--text-primary); }
+
+/* ============================================
+   Keyframe Animations
+   ============================================ */
+
+@keyframes scaleIn {
+  from { transform: scale(0.94); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* The shared live-work pulse (StateLine dots, activity pills). Global so any
+   surface can use animate-[jinn-pulse_1.4s_infinite] without a local <style>. */
+@keyframes jinn-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* Lens crossfade (Todos §2): opacity only — no translate, no chrome movement. */
+@keyframes lensFade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Board tree tray reveal (Todos v2 slice 6 §4): collapsed-hidden grow — the
+   expansion GROWS the card in one calm gesture; instant under reduced motion. */
+@keyframes treeGrow {
+  from { max-height: 0; opacity: 0.001; }
+  to { max-height: 480px; opacity: 1; }
+}
+
+/* Skeleton shimmer (Todos §4.8): opacity pulse on token-filled bars. */
+@keyframes skeletonPulse {
+  0%, 100% { opacity: 0.55; }
+  50% { opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(16px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes authReveal {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); filter: blur(4px); }
+  to { opacity: 1; transform: translateY(0) scale(1); filter: blur(0); }
+}
+
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes pulse-red {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes float-hint {
+  0%, 100% { transform: translate(0, 0); }
+  50% { transform: translate(-3px, -3px); }
+}
+
+@keyframes sidebar-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.55; transform: scale(0.85); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes slideDown {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scaleUp {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@keyframes fadeOut {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* Typing dots */
+@keyframes bounce-dot {
+  0%, 60%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-4px); }
+}
+
+/* ============================================
+   Motion system — overlay enter/exit + route transitions
+   Every surface below animates on `opacity` and on the INDEPENDENT `scale` /
+   `translate` properties rather than on `transform`, because the surfaces that
+   use these are centred with a Tailwind `transform` utility and a keyframe
+   writing `transform` would throw them into a corner mid-animation.
+   ============================================ */
+
+@keyframes jinn-overlay-in { from { opacity: 0; } }
+@keyframes jinn-overlay-out { to { opacity: 0; } }
+@keyframes jinn-pop-in { from { opacity: 0; scale: 0.96; } }
+@keyframes jinn-pop-out { to { opacity: 0; scale: 0.96; } }
+@keyframes jinn-sheet-in { from { translate: 0 100%; } }
+@keyframes jinn-sheet-out { to { translate: 0 100%; } }
+@keyframes jinn-rail-in { from { opacity: 0; translate: 16px 0; } }
+@keyframes jinn-rail-out { to { opacity: 0; translate: 16px 0; } }
+@keyframes jinn-capture-step-in { from { opacity: 0; translate: 0 4px; } }
+
+/* Route changes. React Router drives the native View Transition; all we own is
+   its timing, so the cross-fade is the same length as everything else. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--duration-base);
+  animation-timing-function: var(--ease-smooth);
+}
+
+/* The nav chrome is the one thing that must NOT cross-fade: it is present on
+   both sides of every navigation, so fading it out and back in would read as a
+   flash. Naming it lifts it out of the root snapshot, and an instant swap holds
+   it still while the content underneath transitions. */
+::view-transition-old(jinn-nav-rail),
+::view-transition-new(jinn-nav-rail),
+::view-transition-old(jinn-tab-bar),
+::view-transition-new(jinn-tab-bar) {
+  animation-duration: var(--duration-instant);
+}
+
+/* Reduced motion. The Radix surfaces opt out at the class level with
+   `motion-safe:`, so they carry no animation at all and Radix unmounts them on
+   the spot. Everything still driven by the scale collapses to the instant token
+   rather than switching off: a view transition with `animation: none` never
+   ends, and its snapshot stays frozen over the live page. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --duration-fast: var(--duration-instant);
+    --duration-base: var(--duration-instant);
+    --duration-slow: var(--duration-instant);
+  }
+}
+
+/* ============================================
+   Comms ledger arrival choreography
+   The thread makes room (max-height grows), the voice rises in, the chip
+   condenses from a blur, then a one-shot accent wash marks "new" and decays
+   over ~1.6s. Rows inside a burst stagger via --arrive-delay (+90ms each).
+   ============================================ */
+
+.comm-arrive { overflow: hidden; animation: jinn-comm-room 220ms var(--ease-snappy) backwards; animation-delay: var(--arrive-delay, 0ms); }
+.comm-arrive .comm-row { animation: jinn-comm-rise 240ms var(--ease-smooth) backwards; animation-delay: calc(var(--arrive-delay, 0ms) + 140ms); }
+.comm-arrive .comm-chip > span { animation: jinn-comm-chip 260ms var(--ease-snappy) backwards; animation-delay: calc(var(--arrive-delay, 0ms) + 160ms); }
+.comm-arrive .comm-row::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 8px;
+  background: var(--accent-fill);
+  pointer-events: none;
+  opacity: 0;
+  animation: jinn-comm-wash 1.6s var(--ease-smooth) both;
+  animation-delay: calc(var(--arrive-delay, 0ms) + 200ms);
+}
+@keyframes jinn-comm-room { from { max-height: 0; opacity: 0.001; } to { max-height: 48px; opacity: 1; } }
+@keyframes jinn-comm-rise { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes jinn-comm-chip { from { scale: 0.25; filter: blur(4px); opacity: 0; } to { scale: 1; filter: none; opacity: 1; } }
+@keyframes jinn-comm-wash { 0% { opacity: 0; } 12% { opacity: 0.55; } 100% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  .comm-arrive, .comm-arrive .comm-row, .comm-arrive .comm-chip > span { animation: none; }
+  .comm-arrive .comm-row::after { animation: jinn-comm-wash 0.8s linear both; }
+}
+
+/* ============================================
+   Message enter + send state
+   The reader's own bubble grows out of its bottom-right corner — the one
+   nearest the composer the text came from — so the scale reads as the message
+   leaving the send control rather than inflating in place. A reply rises
+   without scale: the assistant column is full-width prose with no bubble
+   chrome, and scaling a text block reads as a glitch. Both play once, on live
+   arrival only; `data-msg-enter` is absent for anything present at mount and
+   for the row that ends a stream, whose text is already on screen.
+   ============================================ */
+
+.user-msg-bubble[data-msg-enter] {
+  animation: jinn-msg-send-in var(--duration-base) var(--ease-smooth) backwards;
+  transform-origin: 100% 100%;
+}
+/* The bubble is the fallback target: a row that is all blocks — a
+   company-activity card, a task list — has no transcript to carry the mark. */
+.assistant-transcript[data-msg-enter],
+.assistant-msg-bubble[data-msg-enter] {
+  animation: jinn-msg-receive-in var(--duration-slow) var(--ease-smooth) backwards;
+}
+@keyframes jinn-msg-send-in { from { opacity: 0; transform: translateY(6px) scale(0.96); } to { opacity: 1; transform: none; } }
+@keyframes jinn-msg-receive-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+/* The three send states are token deltas on ONE geometry. Radius, padding,
+   weight and size are identical in all three: a size change would reflow the
+   row and move the transcript under the reader. `sent` adds nothing — the
+   absence of the pending delta is the signal. */
+.user-msg-bubble {
+  transition: opacity var(--duration-fast) var(--ease-smooth),
+              background-color var(--duration-base) var(--ease-smooth),
+              box-shadow var(--duration-base) var(--ease-smooth);
+}
+.user-msg-bubble[data-send-state="pending"] { opacity: 0.72; box-shadow: none; }
+.user-msg-bubble[data-send-state="failed"] { background: var(--danger-fill); box-shadow: none; }
+
+/* `Not delivered · Retry`. A transition, not an animation, so the reduced-motion
+   token block collapses it without a rule of its own; @starting-style is what
+   gives a just-inserted element something to transition from. */
+.send-failure-row { opacity: 1; transition: opacity var(--duration-base) var(--ease-smooth); }
+@starting-style { .send-failure-row { opacity: 0; } }
+@media (pointer: coarse) { .send-retry-btn { min-height: 34px; min-width: 34px; } }
+
+/* Both enter animations end on the resting state, so switching them off leaves
+   every bubble exactly where it belongs. The optimistic insert is not motion
+   and still happens. */
+@media (prefers-reduced-motion: reduce) {
+  .user-msg-bubble[data-msg-enter], .assistant-transcript[data-msg-enter] { animation: none; }
+}
+
+/* Opening a chat. Opacity and transform only, so nothing reflows and the frame
+   this plays over is already painted at the bottom — the open position is decided
+   before paint, not animated to. Deliberately no `both` fill: the end state is the
+   resting state, so the transform is gone once it finishes and the transcript's
+   ancestor is not left promoted underneath a scroll. */
+[data-chat-pane-session] { animation: jinn-chat-open var(--duration-base) var(--ease-smooth); }
+
+@keyframes jinn-mobile-chat-crossfade { from { opacity: 0; } }
+@keyframes jinn-mobile-preview-in { from { opacity: 0; } }
+
+/* The switch belongs to the wrapper in multi-chat-grid.tsx, which is keyed on
+   the committed pane and so replays once per switch. Leaving the pane's own
+   open animation underneath would fade the same pixels a second time, and
+   slide them while it did. */
+@media (max-width: 1023px) {
+  .mobile-working-set-thread [data-chat-pane-session] { animation: none; }
+}
+@keyframes jinn-chat-open { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  [data-chat-pane-session] { animation: none; }
+}
+
+/* The conversation title. It swaps whole chats under a fixed-height nav bar, so
+   opacity and a 2px rise are all it may touch: the back control and the compose
+   button share that row, and neither may move. Marked per change and never on
+   mount, so returning to a thread does not animate a title already on screen.
+   No fill, like the chat open above it — the end state is the resting state. */
+[data-title-enter] { animation: jinn-title-enter var(--duration-base) var(--ease-smooth); }
+@keyframes jinn-title-enter { from { opacity: 0; transform: translateY(2px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  [data-title-enter] { animation: none; }
+}
+
+/* ============================================
+   Jinn shell — the large title's collapse
+   Scroll-driven, so the header owes nothing to a scroll listener: the timeline
+   IS the scrollport (`scroll(nearest block)`), which is why the large title has
+   to live inside it. The range comes from the title's own measured height,
+   published inline per instance by PageScaffold — --text-large-title is a
+   clamp() times --text-scale, so one global distance would finish early at
+   large text sizes and never finish at small ones.
+   The keyframes change what the title LOOKS like on the way out, never what it
+   occupies: the box leaves by scrolling away, which is what keeps the header's
+   resting height the bar's rather than a tall empty cell.
+   ============================================ */
+
+/* One gutter serves the page margin and the content column both, so the large
+   title and the body it heads cannot drift apart: a route publishes its measure
+   as --jinn-content-width and the leftover width is split either side. Unset,
+   the column is the full width and the gutter is just the page margin. */
+.jinn-scrollport {
+  --jinn-gutter: max(var(--space-3), (100% - var(--jinn-content-width, 100%)) / 2);
+  /* Declared here because the sticky bar pins against it — see .jinn-title-bar. */
+  --jinn-scrollport-top: var(--space-5);
+  padding-inline: var(--jinn-gutter);
+  padding-top: var(--jinn-scrollport-top);
+}
+
+@media (min-width: 48rem) {
+  .jinn-scrollport {
+    --jinn-gutter: max(var(--space-10), (100% - var(--jinn-content-width, 100%)) / 2);
+  }
+}
+
+/* The bar's material spans the page rather than the column, so it takes the
+   gutter back off and re-applies it as padding. It rises the scrollport's top
+   padding too: a sticky inset counts from the content box, so `top: 0` pins the
+   bar BELOW that padding and leaves a band of unblurred content sliding past
+   above it. */
+.jinn-title-bar {
+  top: calc(var(--jinn-scrollport-top, 0px) * -1);
+  margin-inline: calc(var(--jinn-gutter) * -1);
+  padding-inline: var(--jinn-gutter);
+}
+
+@keyframes jinn-title-collapse {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to   { opacity: 0; transform: translateY(-6px) scale(0.92); }
+}
+
+.jinn-large-title {
+  animation: jinn-title-collapse linear both;
+  animation-timeline: scroll(nearest block);
+  animation-range: 0 var(--jinn-collapse-distance);
+}
+
+@keyframes jinn-title-reveal {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.jinn-inline-title {
+  opacity: 0;
+  animation: jinn-title-reveal linear both;
+  animation-timeline: scroll(nearest block);
+  animation-range: 0 var(--jinn-collapse-distance);
+}
+
+/* Where the timeline is unsupported the header is permanently inline: no large
+   title, the inline one always visible, the bar's material always applied. One
+   line shorter and entirely correct — nothing is animated badly. */
+@supports not (animation-timeline: scroll()) {
+  .jinn-large-title { display: none; }
+  .jinn-inline-title { opacity: 1; }
+}
+
+/* Same state under reduced motion, and it has to be said here: a scroll-driven
+   animation is not time-driven, so neither the --duration-* collapse nor the
+   global `animation-duration: 0.01ms` reset reaches it. */
+@media (prefers-reduced-motion: reduce) {
+  .jinn-large-title { display: none; }
+  .jinn-inline-title { opacity: 1; animation: none; }
+}
+
+@media (min-width: 64rem) {
+  .jinn-large-title { animation: none; display: block; opacity: 1; transform: none; }
+  .jinn-inline-title { display: none; animation: none; }
+}
+
+/* ============================================
+   Talk focus mark
+   The orb scrolls something into view and marks it for the length of the
+   gesture, so "that one" has a referent. Transient by design: it is an answer,
+   not chrome, and nothing about it survives. Drawn on an ::after overlay so the
+   target's own box is untouched — which is why a talk target has to be an
+   element that can host a positioning context.
+   ============================================ */
+
+.talk-focus { position: relative; }
+.talk-focus::after {
+  content: "";
+  position: absolute;
+  inset: -4px;
+  border-radius: var(--radius-lg);
+  background: var(--accent-fill);
+  box-shadow: 0 0 0 2px var(--talk-focus-ring);
+  pointer-events: none;
+  opacity: 0;
+  animation: jinn-talk-focus 1600ms var(--ease-smooth) both;
+}
+/* The undo strip's arrival. Transform and opacity only, so it never lands on
+   the compositor's slow path over a page that is still doing something. The
+   strip drops the animation outright under reduced motion, so there is nothing
+   to soften here. */
+@keyframes jinn-undo-rise {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes jinn-talk-focus {
+  0% { opacity: 0; transform: scale(0.985); }
+  10% { opacity: 1; transform: scale(1); }
+  72% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1); }
+}
+@media (prefers-reduced-motion: reduce) {
+  /* The global reset collapses every animation to 0.01ms, which would flash the
+     mark and lose it. It holds still for its whole life instead. */
+  .talk-focus::after { animation: none; opacity: 1; }
+}
+
+/* Outbound follow-ups reuse the comms arrival rhythm without borrowing the
+   callback wash or voice-row identity. Only provenance-backed live block puts
+   receive this class; max-height grows the real layout while the row and chip
+   settle with explicit compositor-friendly properties. */
+.dispatch-arrive {
+  min-width: 0;
+  overflow: hidden;
+  animation: jinn-comm-room 180ms var(--ease-snappy) backwards;
+  animation-delay: var(--arrive-delay, 0ms);
+}
+.dispatch-arrive .dispatch-arrive-inner {
+  animation: jinn-dispatch-rise 200ms var(--ease-smooth) backwards;
+  animation-delay: calc(var(--arrive-delay, 0ms) + 40ms);
+}
+.dispatch-arrive .dispatch-chip > span {
+  animation: jinn-comm-chip 220ms var(--ease-snappy) backwards;
+  animation-delay: calc(var(--arrive-delay, 0ms) + 55ms);
+}
+@keyframes jinn-dispatch-rise {
+  from { opacity: 0; filter: blur(2px); transform: translateY(4px); }
+  to { opacity: 1; filter: none; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .dispatch-arrive,
+  .dispatch-arrive .dispatch-arrive-inner,
+  .dispatch-arrive .dispatch-chip > span {
+    animation: none;
+  }
+}
+
+/* A tool call joining a live turn — the group's pill when the group is new, and
+   each chip appended inside an open one. Both rise the same way and both stagger
+   on the shared `--arrive-delay` rail: a tool landing beside a callback is one
+   burst to the reader, so it moves like one. The chip keyframe is deliberately
+   NOT used here — condensing from scale 0.25 suits a status badge and reads as a
+   pop on a row of text, which is the thing being fixed. The rise is the dispatch
+   one without its blur: transform and opacity composite, `filter` does not. */
+.tool-arrive {
+  animation: jinn-tool-rise var(--duration-base) var(--ease-smooth) backwards;
+  animation-delay: var(--arrive-delay, 0ms);
+}
+@keyframes jinn-tool-rise {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .tool-arrive { animation: none; }
+}
+
+/* The hover glance on a Todo mention. It is portalled over the page, so it can
+   animate on transform and opacity alone and nothing around it reflows. */
+.todo-glance[data-state="open"] { animation: jinn-glance-in 120ms var(--ease-snappy) both; }
+.todo-glance[data-state="closed"] { animation: jinn-glance-out 80ms var(--ease-snappy) both; }
+@keyframes jinn-glance-in { from { opacity: 0; transform: translateY(-3px); } }
+@keyframes jinn-glance-out { to { opacity: 0; transform: translateY(-3px); } }
+@media (prefers-reduced-motion: reduce) {
+  .todo-glance[data-state="open"], .todo-glance[data-state="closed"] { animation: none; }
+}
+
+/* ============================================
+   Utility Animation Classes
+   ============================================ */
+
+.animate-scale-in { animation: scaleIn 200ms var(--ease-spring); }
+.animate-slide-up { animation: slideUp 250ms var(--ease-spring); }
+.animate-slide-in-right { animation: slideInRight 300ms var(--ease-smooth); }
+.animate-fade-in { animation: fadeIn 200ms var(--ease-smooth); }
+.animate-auth-reveal { animation: authReveal 260ms var(--ease-smooth) both; }
+.animate-slide-in { animation: slideIn 200ms var(--ease-smooth); }
+.animate-error-pulse { animation: pulse-red 1.5s ease-in-out infinite; }
+.animate-blink { animation: blink-cursor 1s step-end infinite; }
+.animate-float-hint { animation: float-hint 2s ease-in-out infinite; }
+
+/* New animation utilities */
+.animate-shimmer { animation: shimmer 1.5s ease-in-out infinite; background-size: 200% 100%; }
+.animate-slide-down { animation: slideDown 250ms var(--ease-smooth) forwards; }
+.animate-slide-up-enter { animation: slideUp 250ms var(--ease-smooth) forwards; }
+.animate-scale-up { animation: scaleUp 200ms var(--ease-spring) forwards; }
+.animate-fade-out { animation: fadeOut 150ms ease forwards; }
+
+/* Panel slide-in from right edge */
+@keyframes panelSlideIn {
+  from { transform: translateX(100%); opacity: 0.8; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.panel-slide-in {
+  animation: panelSlideIn 350ms cubic-bezier(0.32, 0.72, 0, 1) both;
+}
+
+/* Backdrop fade (reuses fadeIn timing) */
+.backdrop-fade {
+  animation: fadeIn 200ms ease-out both;
+}
+
+/* ============================================
+   Interactive State Classes
+   ============================================ */
+
+/* Hover lift — card elevation on hover */
+.hover-lift {
+  transition: transform 200ms var(--ease-spring), box-shadow 200ms var(--ease-smooth);
+}
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-key);
+}
+.hover-lift:active {
+  transform: translateY(0) scale(0.98);
+  transition-duration: 100ms;
+}
+
+/* Hover background — subtle fill on hover */
+.hover-bg {
+  transition: background-color 150ms var(--ease-smooth);
+}
+.hover-bg:hover {
+  background-color: var(--fill-secondary);
+}
+.hover-bg:active {
+  background-color: var(--fill-tertiary);
+}
+
+/* Button scale — tactile press */
+.btn-scale {
+  transition: transform 150ms var(--ease-spring), box-shadow 150ms var(--ease-smooth);
+}
+.btn-scale:hover {
+  transform: scale(0.98);
+}
+.btn-scale:active {
+  transform: scale(0.96);
+}
+
+/* Primary CTA — gold glow */
+.btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: var(--weight-semibold);
+  border: none;
+  cursor: pointer;
+  transition: all 150ms var(--ease-spring);
+}
+.btn-primary:hover {
+  transform: scale(0.98);
+  box-shadow: 0 0 24px var(--accent-fill);
+}
+.btn-primary:active {
+  transform: scale(0.96);
+}
+.btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+}
+
+/* Ghost button */
+.btn-ghost {
+  background: transparent;
+  color: var(--text-secondary);
+  border: none;
+  cursor: pointer;
+  transition: all 150ms var(--ease-smooth);
+}
+.btn-ghost:hover {
+  background: var(--fill-secondary);
+  color: var(--text-primary);
+}
+
+/* Focus ring — keyboard only */
+.focus-ring:focus-visible {
+  outline: 2px solid var(--system-blue);
+  outline-offset: 2px;
+}
+
+/* Nav item */
+.nav-item {
+  transition: background-color 150ms var(--ease-smooth), color 150ms var(--ease-smooth);
+  border-radius: var(--radius-sm);
+}
+.nav-item:hover {
+  background: var(--fill-secondary);
+}
+.nav-item.active {
+  background: var(--fill-secondary);
+  color: var(--accent);
+}
+
+/* ============================================
+   React Flow Overrides (theme-aware)
+   ============================================ */
+
+.react-flow__background { background: var(--bg) !important; }
+/* No rest hairlines on RF chrome — --shadow-overlay carries the faint ring. */
+.react-flow__minimap { background: var(--material-regular) !important; border: none; border-radius: var(--radius-md); overflow: hidden; box-shadow: var(--shadow-overlay); }
+.react-flow__controls { background: var(--material-regular) !important; border: none !important; border-radius: var(--radius-md) !important; overflow: hidden; box-shadow: var(--shadow-overlay); }
+.react-flow__controls-button { background: var(--material-regular) !important; border: none !important; color: var(--text-secondary) !important; }
+.react-flow__controls-button:hover { background: var(--material-thin) !important; color: var(--text-primary) !important; }
+/* Edge stroke/width/opacity are set per-edge inline by the layout seam. */
+.react-flow__node { transition: transform 200ms var(--ease-spring); }
+/* GRS-019: React Flow stamps inline pointer-events:none on nodes that are not
+   selectable/draggable/connectable — which silently killed tap-to-inspect on
+   the read-only workflow canvas (selection is OURS, via the card button).
+   Re-enable hit-testing on the node wrapper; the pane still pans/zooms. */
+.react-flow__node { pointer-events: all !important; }
+/* A draggable workflow card owns the active finger until drop. Without this,
+   the global mobile pan gesture can cancel React Flow's touch drag before its
+   stop event persists geometry. Empty canvas space still pans and pinches. */
+.react-flow__node.draggable { touch-action: none; }
+/* Workflow canvas ports: a 24px touch hit-area around every 8px dot (inert
+   until connect-by-drag lands; the dot + halo are inline on the handle). */
+.jinn-port { position: absolute; }
+.jinn-port::after { content: ""; position: absolute; inset: -8px; border-radius: 999px; }
+/* Reduced motion on the canvas: no marching dash, no pulse/spin, instant tidy. */
+@media (prefers-reduced-motion: reduce) {
+  .react-flow__edge.animated .react-flow__edge-path { animation: none !important; stroke-dasharray: none !important; }
+  .react-flow .animate-spin, .react-flow .animate-pulse { animation: none !important; }
+  .react-flow__node { transition: none; }
+}
+
+/* Per-department hue (org map group containers). Hue comes from --dept-h set
+   inline on the node; S/L is fixed per theme so it stays low-saturation and
+   in-palette. Amber --accent is reserved for selection, never used here. */
+.org-dept-accent { background-color: hsl(var(--dept-h, 40) 38% 56%); }
+[data-theme="light"] .org-dept-accent { background-color: hsl(var(--dept-h, 40) 42% 40%); }
+
+/* ============================================
+   Apple Card
+   ============================================ */
+
+.apple-card {
+  background: var(--material-thin);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  border: 1px solid var(--separator);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+}
+
+/* ============================================
+   Apple Input
+   ============================================ */
+
+.apple-input {
+  background: var(--fill-tertiary);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 11px 16px;
+  font-size: var(--text-subheadline);
+  color: var(--text-primary);
+  outline: none;
+  transition: box-shadow 200ms var(--ease-smooth);
+}
+
+.apple-input::placeholder { color: var(--text-tertiary); }
+.apple-input:focus { box-shadow: 0 0 0 4px var(--accent-fill); }
+
+/* ============================================
+   Apple Buttons
+   ============================================ */
+
+.apple-btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 14px 20px;
+  font-size: var(--text-subheadline);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms var(--ease-spring);
+}
+
+.apple-btn-primary:hover { filter: brightness(1.05); transform: scale(0.98); }
+.apple-btn-primary:active { transform: scale(0.96); }
+
+.apple-btn-secondary {
+  background: var(--accent-fill);
+  color: var(--accent);
+  border: none;
+  border-radius: var(--radius-md);
+  padding: 14px 20px;
+  font-size: var(--text-subheadline);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 150ms var(--ease-spring);
+}
+
+.apple-btn-secondary:hover { filter: brightness(1.08); }
+
+/* ============================================
+   Ledger Theme Specifics
+   ============================================ */
+
+/* Org map (react-flow) edges follow the separator token */
+.react-flow__edge-path { stroke: var(--separator-opaque); }
+
+/* ============================================
+   Chat — Typing Dots
+   ============================================ */
+
+.typing-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+  animation: bounce-dot 1.2s ease-in-out infinite;
+}
+
+/* ============================================
+   Reduced Motion
+   ============================================ */
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* xterm.js: .xterm-screen snaps its width to whole cells (e.g. 853px in a
+   ~870px container), so by default the rounding leftover (5–20px) shows as
+   dead bg on the right only. Center the screen inside its parent so the
+   leftover splits evenly left/right and the inset looks symmetric. */
+.xterm-screen {
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+
+/* xterm.js: let the browser treat the terminal subtree as a vertical pan
+   surface. The actual mobile scroll plumbing lives in cli-terminal.tsx
+   (touchmove → term.scrollLines()), because iOS Safari can't natively scroll
+   xterm's absolutely-positioned overflow viewport. Desktop wheel works via
+   xterm's own wheel listener. */
+.xterm,
+.xterm-viewport {
+  touch-action: pan-y !important;
+}
+.xterm-viewport {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* xterm uses .xterm-helper-textarea as a hidden input proxy for keyboard
+   events. A click anywhere in the terminal focuses this textarea, stealing
+   focus from our sibling ChatInput. With pointer-events: none it can't
+   intercept clicks/taps — selection still works because xterm's selection
+   layer is on a different element. */
+.xterm-helper-textarea {
+  pointer-events: none !important;
+}
+
+/* Explicitly allow text selection in the terminal so users can drag-select on
+   desktop and long-press → Copy on iOS. xterm's defaults usually permit this
+   but inherited rules from our wrapper could break it. */
+.xterm,
+.xterm-screen,
+.xterm-rows {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+/* Any scrollable container in the app should NOT chain its scroll to the page
+   when it hits its top/bottom edge — iOS Safari's default behaviour creates
+   rubber-band on every flick. Use the data-scrollable hook plus the explicit
+   chat-messages-scroll class so existing components automatically benefit. */
+.chat-messages-scroll,
+[data-scrollable] {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Notes — grouped inset list separators (the iOS Notes idiom). Faint hairlines
+   INSIDE a grouped inset collection, inset from the row edge and suppressed
+   around a highlighted row. This is the one place separators are drawn at rest;
+   list rows elsewhere lean on fills + spacing. Desktop note lists are
+   full-bleed and carry no separators at all. */
+.notes-inset-row {
+  position: relative;
+}
+.notes-inset-row + .notes-inset-row::before {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  top: 0;
+  height: 1px;
+  background: var(--separator);
+}
+.notes-inset-row[aria-pressed="true"]::before,
+.notes-inset-row[aria-pressed="true"] + .notes-inset-row::before {
+  display: none;
+}
+
+/* Notes — keep the note title at display size even on mobile, where the global
+   iOS zoom-guard pushes inputs up to the body step. The title is not a zoom risk
+   (well over 16px), so it opts out with a higher-specificity !important. The
+   step is fluid, so no desktop-width override is needed on top. */
+.notes-title {
+  font-size: var(--text-title1) !important;
+}
+
+/* Rendered GFM task lists (shared markdown-view — notes, files, skills). The
+   default disabled <input> + a leading bullet reads as browser chrome; render
+   an Apple-style rounded checkbox instead and drop the list marker. */
+.jinn-markdown ul.contains-task-list {
+  list-style: none;
+  margin-left: 0;
+  padding-left: 2px;
+}
+/* The shared custom <ul> renderer drops remark-gfm's `contains-task-list`
+   class, so suppress the disc on the task-list <li> itself. */
+.jinn-markdown li.task-list-item {
+  padding-left: 0;
+  list-style: none;
+}
+.jinn-markdown li.task-list-item::marker {
+  content: "";
+}
+.jinn-markdown li.task-list-item input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 20px;
+  height: 20px;
+  margin: 0 10px 0 0;
+  vertical-align: -4px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--separator-opaque);
+  cursor: default;
+}
+.jinn-markdown li.task-list-item input[type="checkbox"]:checked {
+  background: var(--accent);
+  box-shadow: none;
+}
+.jinn-markdown li.task-list-item input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 6px;
+  top: 3px;
+  width: 5px;
+  height: 9px;
+  border: solid var(--accent-contrast);
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.jinn-markdown li.task-list-item.done,
+.jinn-markdown li.task-list-item:has(input:checked) {
+  color: var(--text-tertiary);
+}
