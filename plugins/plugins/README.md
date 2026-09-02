@@ -108,6 +108,11 @@ authority.
   `jinn:introspect` grant and `transitions(id)` answers what was
   witnessed. The seam still emits no event of its own: a sighting is the
   kernel's record, delivered, never a poller's diff of two snapshots.
+  Since pin `85d36b4` (`jinn:introspect@0.5.0`, the first edition that
+  parses as WIT) this seam's hand-mirrored copies of the `transition`
+  record, the `unserved` enum and the `entry` keys are asserted against
+  the PARSED vendored contract (`tests/introspect_mirror.rs`), not read
+  by eye.
 - **A fiber BETWEEN two rests is invisible TO A POLL** (`FINDINGS.md`
   #41, corrected at pin `901d207`). The `mounted`, `activating` and
   `interrupted` readings are real and no pull reaches one: 190

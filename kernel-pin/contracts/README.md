@@ -14,7 +14,7 @@ Bundles: `jinn-fs` (0.2.0; atomic commits M2-K8), `jinn-clock` (0.1.0),
 `jinn-process` (0.1.0), `jinn-net` (0.1.0, readiness wake M2-K7),
 `jinn-ledger` (0.1.0, finalized M2-K7), `jinn-introspect` (0.1.0),
 `jinn-profile` (0.2.0; non-blocking patch and reads M2-K8), `jinn-keystore`
-(0.1.0, M2-K8).
+(0.1.0, M2-K8), `jinn-auth` (0.1.0, M2-K21).
 
 ## Operation-class attenuation (M2-K8)
 
@@ -36,7 +36,7 @@ applied by the loader, no fiber inverse) are kernel-supplied providers
 reached over the string-keyed handle lane (`services.resolve` +
 `services.call`), granted like any contract and ledgered per call.
 
-## Lifecycle classification (jinn:plugin@0.3.0, M2-K4)
+## Lifecycle classification (world 0.3.0, M2-K4)
 
 A contribution belongs to the profile ENTRY, not to a fiber incarnation or a
 process lifetime. Every revertible operation in a bundle is one of two classes,

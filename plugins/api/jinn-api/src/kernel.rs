@@ -82,7 +82,11 @@ pub struct Registrations {
     pub processes: u32,
 }
 
-/// The daemon's readiness as `jinn:introspect` reports it.
+/// The daemon's readiness as `jinn:introspect` reports it: the answer of
+/// the wire operation `readiness`, whose record is `readiness-report`
+/// since 0.5.0 (pin `85d36b4`; the 0.4.0 record shared the operation's
+/// name and never parsed). Every mirror in this file is asserted against
+/// the PARSED vendored contract by `tests/introspect_mirror.rs`.
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Readiness {

@@ -7,6 +7,9 @@ description = "Kernel pin gate: verifies the vendored contract surface and the p
 
 [dependencies]
 sha2 = "0.10"
+# The vendored bundles are READ BY A PARSER (src/contract.rs): a mirror of a
+# bundle's shapes is checked against the parsed contract, never by eye.
+wit-parser = "0.233"
 
 [dev-dependencies]
 tempfile = "3"

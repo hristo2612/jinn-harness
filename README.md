@@ -13,6 +13,29 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
+Phase 1.13 — kernel pin `85d36b4` (M2-K18). A MIGRATION again, by the
+same shape as 1.12: the plugin world moved 0.8.0 → 0.10.0 (M2-K14/K15:
+outbound `jinn:net` is PROVIDED, `https://` over verified TLS with no off
+switch, `net-error` gains `untrusted`), and every guest here is rebuilt by
+its kit and boots on the new world. Nothing in the distribution begins
+using outbound at this pin — that is the next packet's business, behind
+the profile allowlist. `jinn:auth` 0.1.0 (M2-K21) arrives vendored and
+CONSUMED BY NOTHING here yet: one `verify`, deny by default, a
+launcher-owned token beside the data root, every decision a ledger row.
+`jinn:introspect` 0.5.0 (M2-K16) is the bundle's FIRST PARSEABLE edition
+— 0.4.0 never parsed as WIT and nobody noticed, because nothing but a
+reader's eye compared the daemon's hand-mirrored shapes with the file.
+The harness had the same two-copies hazard, so this pin adds the
+comparison: `harness-pin` parses the vendored bundle and each crate that
+mirrors an introspect shape asserts its keys against the parsed record
+(`plugins/api/jinn-api/tests/introspect_mirror.rs`,
+`plugins/plugins/jinn-plugins/tests/introspect_mirror.rs`;
+`docs/notes/2026-09-02-a-mirror-is-checked-by-a-parser.md`). The
+readiness record is now `readiness-report`; the wire operation
+`readiness` and its answer are unchanged, and that sentence is one of the
+things the check asserts. `FINDINGS.md` #43 is corrected at this pin and
+#44 is the same class one file over.
+
 Phase 1.12 — kernel pin `901d207` (M2-K13). The pin bump is a MIGRATION,
 not a version edit: the plugin world moved 0.6.0 → 0.8.0, and against
 that kernel every artifact built on the old world is refused with
@@ -284,7 +307,7 @@ iteration channel — kernel changes are never made here).
 | `AGENTS.md` | Standing orders for agents working in this repo |
 | `KERNEL-PIN.md` | The kernel pin: jinnd commit + contract hashes + bump procedure |
 | `kernel-pin/` | Vendored copy of the pinned contract surface (`wit/`, `contracts/`) — integrity-gated against `KERNEL-PIN.md` by `harness-pin` |
-| `tools/harness-pin` | The pin gate: computes/verifies contract hashes (`cargo test -p harness-pin`) |
+| `tools/harness-pin` | The pin gate: computes/verifies contract hashes (`cargo test -p harness-pin`); also parses a vendored bundle's WIT for the consumers' mirror checks |
 | `tools/harness-docs` | The docs gate: the README limitations map against `FINDINGS.md` grades, and every `docs/notes/` citation against the tree (`cargo test -p harness-docs`) |
 | `tools/cron-kit` | Builds the cron seam's components + pinned profile; its library is the kit machinery every seam kit shares |
 | `tools/api-kit` | Builds the operator-API profile: the api trio beside the cron seam |
@@ -342,14 +365,21 @@ per-seam "could NOT prove" sections.
 
 ### 2.1 — Operator API
 
-- **There is no authentication or authorization. (named here)** Loopback
-  plus the port the `jinn:net` grant scopes is the ENTIRE boundary. No
-  token, no bearer, no per-route authority. Anything on the machine that
-  can reach the port is an operator.
-- **No outbound HTTP exists at any pin so far.** `jinn:net` v0.1 has no
-  `request`, no TLS, no non-loopback listen. **Connectors — Slack,
-  Telegram, webhooks, any vendor API — are therefore structurally
-  impossible in this repo today. (named here)**
+- **There is no authentication or authorization IN THIS REPO. (named
+  here)** Loopback plus the port the `jinn:net` grant scopes is still the
+  ENTIRE boundary of the operator API: no token, no bearer, no per-route
+  authority, and anything on the machine that can reach the port is an
+  operator. Since pin `85d36b4` the kernel SUPPLIES the authority —
+  `jinn:auth` 0.1.0, one `verify`, deny by default — and it is vendored
+  here and consumed by nothing; the limit is now the distribution's to
+  close, not the kernel's.
+- **No plugin here makes an outbound request.** Since pin `85d36b4`
+  `jinn:net` 0.3.0 PROVIDES `request`/`send-request` behind the grant's
+  `outbound` allowlist, `https://` over verified TLS; before it, no
+  outbound existed at any pin. **Connectors — Slack, Telegram, webhooks,
+  any vendor API — are therefore no longer structurally impossible, and
+  still do not exist in this repo. (named here)** Non-loopback LISTEN
+  remains unprovided.
 - **The swap proof for this seam swaps a second entry of the SAME
   artifact,** because no second transport shape can exist.
 - **`patch-entry`'s `idempotency-key` is accepted and unused.**

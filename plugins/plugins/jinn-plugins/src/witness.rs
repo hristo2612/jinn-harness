@@ -67,9 +67,12 @@ pub const WITNESS_QUALIFIER: &str =
      `jinn:ledger` for it";
 
 /// One transition the kernel committed, exactly as it publishes it. The
-/// field names are the contract's (`jinn:introspect@0.4.0`), and there
-/// is no `cause`: the kernel withholds it because nothing in that
-/// contract's pull answers WHY, so delivering it would widen the grant.
+/// field names are the contract's `transition` record (`jinn:introspect`
+/// 0.4.0 onward; asserted against the PARSED 0.5.0 file by
+/// `tests/introspect_mirror.rs`, where `%from` is the wire field `from`),
+/// and there is no `cause`: the kernel withholds it because nothing in
+/// that contract's pull answers WHY, so delivering it would widen the
+/// grant.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Transition {

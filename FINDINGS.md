@@ -52,7 +52,14 @@ to cut short: it gives entry 4's nested-dispatch deadlock its first real
 transcripts, shows that `Emit` blocks the emitter exactly as serial does,
 and adds the half entry 4 never named — whether the fiber that loses the
 deadlock ever comes back is incidental, and when it does not, its alarm
-writes two ledger rows per period forever.
+writes two ledger rows per period forever. Entry 43 is **corrected** at
+the `85d36b4` pin bump (jinnd M2-K18; harness pin-bump 6, plugin world
+0.8.0 → 0.10.0) — the mismatch, not the class: entry **44**, hit on the
+same adoption, is the same class in the contract index. That bump is
+also the first at which `jinn:introspect` PARSES as WIT (0.5.0), so the
+harness's hand-mirrored copies of its shapes are now checked against the
+parsed file rather than by eye
+(`docs/notes/2026-09-02-a-mirror-is-checked-by-a-parser.md`).
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -2546,8 +2553,25 @@ does not start.
 
 ## 43. The plugin world's own title line names a version the file does not declare
 
-**Grade: reproducible, cosmetic-with-teeth — found by reading, not by a
-gate.** Hit adopting M2-K13 in harness pin-bump 5 (`901d207`).
+**Grade: CORRECTED at pin `85d36b4` (M2-K18 adoption, harness pin-bump
+6). Reproducible, cosmetic-with-teeth when raised — found by reading, not
+by a gate; and it is a reading, not a gate, that closes it.** Hit
+adopting M2-K13 in harness pin-bump 5 (`901d207`).
+
+**CORRECTED — what changed, and what did not.** At `85d36b4` the two
+lines agree again:
+
+```
+$ sed -n '1p;65p' kernel-pin/wit/plugin.wit
+/// jinn:plugin@0.10.0 — the Tier A plugin world (M1-P8; constitution 01, R7, R12).
+package jinn:plugin@0.10.0;
+```
+
+The M2-K14/K15 bumps to 0.9.0 and 0.10.0 moved the title with the
+package, and `wit/README.md`'s own title moved too. What did NOT change
+is the mechanism: no gate in the kernel tree parses the title against
+the package, so this is the mismatch corrected, not the class retired —
+and entry 44, hit on the same adoption, is the same class one file over.
 
 `wit/plugin.wit` is the product under R12: a file designed to outlive any
 kernel implementation, and the first line a reader sees is its title. At
@@ -2576,3 +2600,52 @@ is the shape where the two readers of a contract stop agreeing.
 parses both and refuses a mismatch — the versions are two strings in one
 file, so the check is cheap and mechanical, exactly the class that should
 never be left to review attention.
+
+## 44. The contract index and a bundle's cross-reference name versions the files do not declare
+
+**Grade: reproducible, cosmetic-with-teeth — found by reading, the same
+class as #43, one file over.** Hit adopting M2-K18 in harness pin-bump 6
+(`85d36b4`).
+
+`contracts/README.md` is the index of the contract surface — the one
+paragraph that tells a reader which bundles exist and at what version.
+At `85d36b4` it names two bundles at versions they left several minors
+ago, in the same sentence that correctly adds the newest one:
+
+```
+$ sed -n '13,17p' kernel-pin/contracts/README.md
+Bundles: `jinn-fs` (0.2.0; atomic commits M2-K8), `jinn-clock` (0.1.0),
+`jinn-process` (0.1.0), `jinn-net` (0.1.0, readiness wake M2-K7),
+`jinn-ledger` (0.1.0, finalized M2-K7), `jinn-introspect` (0.1.0),
+`jinn-profile` (0.2.0; non-blocking patch and reads M2-K8), `jinn-keystore`
+(0.1.0, M2-K8), `jinn-auth` (0.1.0, M2-K21).
+$ grep -h '^package' kernel-pin/contracts/jinn-net/contract.wit kernel-pin/contracts/jinn-introspect/contract.wit
+package jinn:net@0.3.0;
+package jinn:introspect@0.5.0;
+```
+
+`jinn-net` is two minors past what the index says (0.2.0 M2-K14, 0.3.0
+M2-K15 — the outbound provision and TLS, the largest change the bundle
+has had), and `jinn-introspect` is four (0.2.0 M2-K9 through 0.5.0
+M2-K16). The bundle's own header carries a smaller instance of the same
+drift: `jinn-net/contract.wit:9` says the plugin world's `net` import
+"(wit/plugin.wit, 0.9.0) carries this interface verbatim" — at 0.9.0 the
+world's `net-error` had no `untrusted`, so the sentence was true of a
+world that no longer exists and is true again, by accident, of 0.10.0.
+
+Nothing breaks: no consumer reads the index or the header. What it
+costs is exactly what #43 cost — a reader pinning by eye pins wrong, and
+here the reader is more likely to exist, because the index is the file a
+newcomer opens first. The kernel's own M2-K16 contract lens now PARSES
+every bundle, which is what makes the fix cheap.
+
+**The capability shape that would retire it (and #43's class with it).**
+A gate in jinnd over the strings the lens does not already check: each
+bundle's `metadata.toml` version equals its `package` declaration (this
+already holds at `85d36b4`, by inspection), the index names each bundle
+at that version, and a bundle's cross-reference to the world names the
+world's current package version or none. Three string comparisons; a
+reader should never be the gate. The harness does not check the index
+(it vendors it verbatim, hashed), and this entry is why it should not
+have to.
+

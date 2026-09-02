@@ -5,8 +5,12 @@
 //! in `KERNEL-PIN.md` and implemented exactly once, here, so the computing
 //! tool and the verifying gate cannot drift.
 
+pub mod contract;
+
 use std::io;
 use std::path::Path;
+
+pub use contract::{vendored_contract_path, ContractWit};
 
 /// One parsed `KERNEL-PIN.md`.
 #[derive(Debug, PartialEq, Eq)]

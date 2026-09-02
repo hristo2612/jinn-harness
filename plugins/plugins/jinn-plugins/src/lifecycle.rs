@@ -151,8 +151,8 @@ impl Reason {
 /// What a [`Reason::CauseNotDelivered`] means, travelling in the answer
 /// itself. Its one home.
 pub const CAUSE_NOT_DELIVERED_QUALIFIER: &str =
-    "the kernel committed this transition and does not publish why: `jinn:introspect@0.4.0` \
-     delivers `from` and `to` and withholds `cause`, because nothing in that contract's own \
+    "the kernel committed this transition and does not publish why: `jinn:introspect` (0.4.0 \
+     onward) delivers `from` and `to` and withholds `cause`, because nothing in that contract's own \
      reads answers WHY and delivering it would widen the grant. The cause is not unknown and \
      is not correlated here; a consumer that needs it holds `jinn:ledger`, whose \
      `FiberTransition` row carries it verbatim";
