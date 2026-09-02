@@ -28,6 +28,9 @@ jinn-engine = { path = "../../engines/jinn-engine" }
 jinn-plugins = { path = "../../plugins/jinn-plugins" }
 jinn-session = { path = "../../sessions/jinn-session" }
 jinn-todo = { path = "../../todos/jinn-todo" }
+# The UI bundle seam's contract names, wire shapes, verification and the
+# serving law, from their one home.
+jinn-ui = { path = "../../ui/jinn-ui" }
 # The workflows seam's operation and contract names, from their one home.
 jinn-workflow = { path = "../../workflows/jinn-workflow" }
 serde = { version = "1.0", features = ["derive"] }

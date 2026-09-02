@@ -19,11 +19,20 @@
 //! cached — and only a `principal` reaches `dispatch`. A refusal is the
 //! seam's own `unauthenticated` class on the wire.
 //!
+//! THE BUNDLE (packet UI-1): when its profile mounts one, this transport
+//! also serves the web UI — the document and its assets — from memory it
+//! filled ONCE at `activate` from the injected `jinn:ui-bundle`, verified
+//! against the manifest fail-closed (`ui.rs`). A GET on any non-`/v1`
+//! path is answered before the door and with no crossing: a byte is never
+//! a dispatch on the connection's behalf, and a bearer on a static path is
+//! ignored. Every `/v1/*` request keeps the door as 2.8 left it.
+//!
 //! World `jinn:plugin@0.4.0`: the listener and its connections are kernel
 //! registrations — released on suspend, re-listened by the next
 //! `activate`.
 
 mod door;
+mod ui;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -107,6 +116,13 @@ struct HttpConfig {
     /// is this seam's own and may never stand in for another seam's.
     #[serde(default)]
     catalogs: Vec<String>,
+    /// Whether the profile mounts a `jinn:ui-bundle` this API serves,
+    /// written by the profile from the SAME source as this entry's
+    /// `jinn:ui-bundle` grant — the same discipline as `engines`: the
+    /// GRANT is the authority, this is that fact told to the provider so a
+    /// profile without a UI never spends a resolve to learn it.
+    #[serde(default)]
+    ui_bundle: bool,
 }
 
 fn default_host() -> String {
@@ -126,6 +142,8 @@ static STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static TODO_STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static WORKFLOW_STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static CATALOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+/// The verified bundle this incarnation serves, `None` without one.
+static BUNDLE: Mutex<Option<ui::Bundle>> = Mutex::new(None);
 
 fn fault(context: &str, error: impl std::fmt::Debug) -> GuestFault {
     GuestFault::Failed(format!("{context}: {error:?}"))
@@ -671,6 +689,12 @@ fn serve(conns: &mut Vec<Conn>, handle: u64) -> Result<(), GuestFault> {
         }
     }
     let outcome = match parse(&conns[index].buffer) {
+        // A static path first: bytes from memory, no door, no crossing
+        // (UI-1; proven in tests/composition/tests/ui.rs). The credential
+        // the connection may have presented is never read here.
+        Parse::Request(request) if ui::is_static(&request) => {
+            Some(ui::answer(BUNDLE.lock().unwrap().as_ref(), &request))
+        }
         // The door first, the dispatch only through it: `admit` answers
         // `Err(wire)` — the complete refusal to write — for anything the
         // kernel did not grant a principal, and NO dispatch happens on
@@ -711,6 +735,14 @@ impl Guest for Http {
             .map_err(|error| GuestFault::Failed(format!("malformed config: {error}")))?;
         effects::register("jinn-api-http on duty", EFFECT_TOKEN)
             .map_err(|error| fault("effect", error))?;
+        // The bundle BEFORE the bind: read once, verified, held for this
+        // incarnation; a bundle that does not verify fails this fiber
+        // here, with no listener ever opened (R11, UI-1 card §4.3 item 5).
+        *BUNDLE.lock().unwrap() = if config.ui_bundle {
+            Some(ui::load()?)
+        } else {
+            None
+        };
         // The bind: a refusal (port outside the grant, non-loopback host,
         // no grant) is the broker's, on the record; this fiber then fails
         // its activation — contained to this entry (R11), never a crash.

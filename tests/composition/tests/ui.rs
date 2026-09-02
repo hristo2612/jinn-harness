@@ -160,7 +160,7 @@ fn lifecycle(port: u16, id: &str) -> (String, u64) {
             .as_str()
             .unwrap_or_else(|| panic!("{id}: a state: {}", read.raw))
             .to_owned(),
-        lifecycle["incarnation"]
+        read.body["incarnation"]
             .as_u64()
             .unwrap_or_else(|| panic!("{id}: an incarnation: {}", read.raw)),
     )
