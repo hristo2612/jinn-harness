@@ -1,9 +1,6 @@
-//! THE BUNDLE (packet UI-1): read ONCE per incarnation — at `activate`,
-//! or on the kernel's `jinn:introspect/transitions` publish when the
-//! bundle entry is witnessed Active later (FINDINGS.md #45) — verified
-//! fail-closed, held, and served on every non-`/v1` GET before the door
-//! with no crossing; a bearer on a static path is never read. Rationale:
-//! `docs/notes/2026-09-02-a-byte-is-not-a-dispatch.md`.
+//! THE BUNDLE (packet UI-1): read once per incarnation — at `activate`, or
+//! on the kernel's witnessed Active transition (FINDINGS.md #45) — served
+//! before the door, no crossing. `docs/notes/2026-09-02-a-byte-is-not-a-dispatch.md`.
 
 use jinn_api_http_wire::{framed, Request};
 use jinn_plugins::{Transition, TRANSITIONS_TOPIC};
@@ -27,6 +24,8 @@ pub(crate) struct Bundle {
 
 
 /// A refusal that means "not yet": the kernel will say when it has moved.
+/// A handle gone stale between resolve and call is one (the provider's
+/// generation landed in between); the next read resolves afresh.
 fn not_yet(error: &KernelError) -> bool {
     matches!(
         error,
@@ -35,7 +34,7 @@ fn not_yet(error: &KernelError) -> bool {
             | KernelError::Gone(_)
             | KernelError::Suspended(_)
             | KernelError::Stalled(_)
-    )
+    ) || format!("{error:?}").contains("stale handle")
 }
 
 /// One read: `manifest`, `bundle`, the check. `Ok(None)` when the provider
