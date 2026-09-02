@@ -25,7 +25,14 @@ pub(crate) struct Bundle {
 
 /// A refusal that means "not yet": the kernel will say when it has moved.
 /// A handle gone stale between resolve and call is one (the provider's
-/// generation landed in between); the next read resolves afresh.
+/// generation landed in between); the next read resolves afresh. So is a
+/// provider whose seat is sealed or closing (`inactive-context`: a swap in
+/// flight) and a provider that failed while answering (`provider-failed`:
+/// its instance trapped, hung or is gone — contained to ITS fiber per R11,
+/// which the kernel fails or restarts; this transport rests active
+/// without a bundle and reads on the witnessed Active transition rather
+/// than dying of a sibling's fault). What stays a fault is this entry's
+/// own: a grant refused, a cycle, a malformed answer, a verify mismatch.
 fn not_yet(error: &KernelError) -> bool {
     matches!(
         error,
@@ -34,6 +41,8 @@ fn not_yet(error: &KernelError) -> bool {
             | KernelError::Gone(_)
             | KernelError::Suspended(_)
             | KernelError::Stalled(_)
+            | KernelError::InactiveContext
+            | KernelError::ProviderFailed(_)
     ) || format!("{error:?}").contains("stale handle")
 }
 

@@ -40,12 +40,12 @@ use std::sync::Mutex;
 use jinn_api::{
     decode_engine_answer, decode_session_answer, decode_todo_answer, decode_workflow_answer,
     engine_list, engine_routable, engine_route, is_engines_path, is_sessions_path, is_todos_path,
-    is_workflows_path, plugin_catalog_list, plugin_catalog_routable, plugin_payload,
-    plugin_route, route, run_id_payload, run_payload, session_payload, session_route,
-    store_list, store_routable, todo_payload, todo_route, todo_store_list, todo_store_routable,
-    workflow_payload, workflow_route, workflow_store_list, workflow_store_routable, Answer,
-    ApiError, EngineRoute, ErrorCode, Outcome, PluginRoute, SessionRoute, TodoRoute, WorkflowRoute,
-    ENGINE_METHODS, PLUGIN_METHODS, SESSION_METHODS, TODO_METHODS, WORKFLOW_METHODS,
+    is_workflows_path, plugin_catalog_list, plugin_catalog_routable, plugin_payload, plugin_route,
+    route, run_id_payload, run_payload, session_payload, session_route, store_list, store_routable,
+    todo_payload, todo_route, todo_store_list, todo_store_routable, workflow_payload,
+    workflow_route, workflow_store_list, workflow_store_routable, Answer, ApiError, EngineRoute,
+    ErrorCode, Outcome, PluginRoute, SessionRoute, TodoRoute, WorkflowRoute, ENGINE_METHODS,
+    PLUGIN_METHODS, SESSION_METHODS, TODO_METHODS, WORKFLOW_METHODS,
 };
 use jinn_api::{decode_plugin_answer, is_plugins_path, OP_CATALOG_DESCRIBE};
 use jinn_api_http_wire::{error_answer_response, error_response, parse, response, Parse};
@@ -66,6 +66,10 @@ use exports::jinn::plugin::lifecycle::{Guest, GuestFault};
 use jinn::plugin::{effects, net, services};
 
 const EFFECT_TOKEN: u64 = 1;
+/// The label under which an activation that is about to fail names its
+/// reason on the ledger (a guest's failure records its state and never
+/// its reason at this pin, FINDINGS.md #38; the row outlives the fiber).
+const FAULT_TOKEN: u64 = 3;
 /// Where the kernel delivers socket readiness (the token IS the handle).
 const READABLE_TOPIC: &str = "jinn:net/readable";
 /// One read's size; a request head or body larger than the wire caps is
@@ -289,12 +293,7 @@ fn store_call(
 /// session's life in one of them. Every route is exactly one granted
 /// contract call per store addressed — the store list is one per
 /// configured store.
-fn dispatch_sessions(
-    method: &str,
-    path: &str,
-    query: serde_json::Value,
-    body: &[u8],
-) -> Vec<u8> {
+fn dispatch_sessions(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> Vec<u8> {
     let Some(sessions_route) = session_route(method, path) else {
         return route_miss(
             SESSION_METHODS
@@ -727,38 +726,51 @@ fn serve(conns: &mut Vec<Conn>, handle: u64) -> Result<(), GuestFault> {
     Ok(())
 }
 
+/// The activation proper; `Guest::activate` puts its refusal on the record.
+fn activate(config: Vec<u8>) -> Result<(), GuestFault> {
+    let config: HttpConfig = serde_json::from_slice(&config)
+        .map_err(|error| GuestFault::Failed(format!("malformed config: {error}")))?;
+    effects::register("jinn-api-http on duty", EFFECT_TOKEN)
+        .map_err(|error| fault("effect", error))?;
+    // The bundle BEFORE the bind: read once, verified, held for this
+    // incarnation; a bundle that does not verify fails this fiber
+    // here, with no listener ever opened (R11, UI-1 card §4.3 item 5).
+    *BUNDLE.lock().unwrap() = match &config.ui_bundle_entry {
+        Some(entry) => {
+            *BUNDLE_ENTRY.lock().unwrap() = entry.clone();
+            ui::load()?
+        }
+        None => None,
+    };
+    // The bind: a refusal (port outside the grant, non-loopback host,
+    // no grant) is the broker's, on the record; this fiber then fails
+    // its activation — contained to this entry (R11), never a crash.
+    let addr = format!("{}:{}", config.host, config.port);
+    let listener = net::listen(&addr).map_err(|error| fault(&format!("listen {addr}"), error))?;
+    LISTENER.store(listener, Ordering::SeqCst);
+    CONNS.lock().unwrap().clear();
+    *ENGINES.lock().unwrap() = config.engines;
+    *STORES.lock().unwrap() = config.stores;
+    *TODO_STORES.lock().unwrap() = config.todo_stores;
+    *WORKFLOW_STORES.lock().unwrap() = config.workflow_stores;
+    *CATALOGS.lock().unwrap() = config.catalogs;
+    Ok(())
+}
+
 struct Http;
 
 impl Guest for Http {
     fn activate(config: Vec<u8>) -> Result<(), GuestFault> {
-        let config: HttpConfig = serde_json::from_slice(&config)
-            .map_err(|error| GuestFault::Failed(format!("malformed config: {error}")))?;
-        effects::register("jinn-api-http on duty", EFFECT_TOKEN)
-            .map_err(|error| fault("effect", error))?;
-        // The bundle BEFORE the bind: read once, verified, held for this
-        // incarnation; a bundle that does not verify fails this fiber
-        // here, with no listener ever opened (R11, UI-1 card §4.3 item 5).
-        *BUNDLE.lock().unwrap() = match &config.ui_bundle_entry {
-            Some(entry) => {
-                *BUNDLE_ENTRY.lock().unwrap() = entry.clone();
-                ui::load()?
-            }
-            None => None,
-        };
-        // The bind: a refusal (port outside the grant, non-loopback host,
-        // no grant) is the broker's, on the record; this fiber then fails
-        // its activation — contained to this entry (R11), never a crash.
-        let addr = format!("{}:{}", config.host, config.port);
-        let listener =
-            net::listen(&addr).map_err(|error| fault(&format!("listen {addr}"), error))?;
-        LISTENER.store(listener, Ordering::SeqCst);
-        CONNS.lock().unwrap().clear();
-        *ENGINES.lock().unwrap() = config.engines;
-        *STORES.lock().unwrap() = config.stores;
-        *TODO_STORES.lock().unwrap() = config.todo_stores;
-        *WORKFLOW_STORES.lock().unwrap() = config.workflow_stores;
-        *CATALOGS.lock().unwrap() = config.catalogs;
-        Ok(())
+        activate(config).inspect_err(|reason| {
+            // On the record before the fiber is gone (#38): the row stays,
+            // the registration is withdrawn with everything else.
+            let label = format!("jinn-api-http activation failed: {reason:?}");
+            let cut = label
+                .char_indices()
+                .nth(400)
+                .map_or(label.len(), |(at, _)| at);
+            let _ = effects::register(&label[..cut], FAULT_TOKEN);
+        })
     }
 
     fn check(_consumer: u64) -> bool {

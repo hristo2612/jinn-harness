@@ -446,17 +446,23 @@ fn swapping_the_ui_is_a_profile_edit_of_one_entry() {
     let landed = first_marked.expect("marked") - edited;
 
     // Exactly one more bundle crossing — the re-read on the witnessed
-    // transition — and no consumer moved. The transport's incarnation is
-    // recorded: the card expected +1 through the kernel's epoch gating,
-    // which the pinned kernel does not extend to a wasm entry resolving
-    // on the string lane (FINDINGS.md #7's neighbour, recorded in this
-    // packet's FINDINGS entry); the swap is instead the re-read, on the
-    // record, never a silent replacement.
+    // transition — and no consumer moved. AT THE PINNED KERNEL the
+    // transport's incarnation is ASSERTED UNCHANGED (card §4.3 item 4 as
+    // amended, §8 amendment 4): epoch gating does not reach a wasm entry
+    // resolving on the string lane (FINDINGS.md #46), so the swap is the
+    // re-read on the record, never a restart and never a silent
+    // replacement. When jinnd M2-K24 lands through pin-bump 7 this line
+    // flips to `transport_before + 1` and the transitions subscription
+    // goes.
     daemon.eventually("the re-read to land on the ledger", || {
         bundle_reads(&daemon) == reads_before + 1
     });
     let (state, transport_after) = lifecycle(port, TRANSPORT);
     assert_eq!(state, "active");
+    assert_eq!(
+        transport_after, transport_before,
+        "the transport did not restart on the swap at pin 85d36b4 (#46)"
+    );
     println!(
         "proof 4: swap served {landed:?} after the edit; refused connects while it landed: {refused}; transport incarnation {transport_before} -> {transport_after}; bundle crossings {reads_before} -> {}",
         bundle_reads(&daemon)
@@ -481,59 +487,47 @@ fn swapping_the_ui_is_a_profile_edit_of_one_entry() {
     daemon.interrupt();
 }
 
-#[test]
-fn a_bundle_whose_bytes_do_not_match_its_manifest_fails_the_transport_and_nothing_else() {
-    let Some(binary) = gate() else {
-        return;
-    };
-    // The ui root, its bundle entry pointed at the CORRUPTED variant
-    // before boot: the transport must refuse to serve and fail its own
-    // activation, and every sibling must reach Active regardless.
-    let (root, port) = fresh_ui_root("ui-corrupt");
-    let corrupt = artifact_hash(&root, UI_CORRUPT);
+/// Points the root's bundle entry at the CORRUPTED variant; answers the
+/// entry as it now stands so a caller can add it back later.
+fn corrupt_bundle_entry(root: &std::path::Path) -> serde_json::Value {
+    let corrupt = artifact_hash(root, UI_CORRUPT);
     let path = root.join("profile.json");
     let mut document: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&path).expect("profile")).expect("parses");
-    {
+    let entry = {
         let entry = entry_mut(&mut document, BUNDLE_ID);
         entry["package"] = serde_json::json!(format!("ui/{UI_CORRUPT}"));
         entry["hash"] = serde_json::json!(corrupt);
-    }
+        entry.clone()
+    };
     std::fs::write(
         &path,
         serde_json::to_vec_pretty(&document).expect("encodes"),
     )
     .expect("profile");
-    let daemon = Daemon::boot_operator(binary, &root);
-    daemon.await_ready();
-    // Two orders, both fail-closed and both on the record (FINDINGS.md
-    // #45): the provider live at the transport's activation — verify fails
-    // the ACTIVATION and the fiber reads `Failed`, the port never opens;
-    // the provider landing later — verify fails inside the transitions
-    // DELIVERY, which the kernel contains (R9: a failing listener is
-    // recorded, `failures: 1`) and the transport stays Active with no
-    // bundle, answering every page a typed 503. Neither serves a byte.
-    let transport_failed = |daemon: &Daemon| {
-        daemon.ledger_rows().iter().any(|row| {
-            row.entry.as_deref() == Some(TRANSPORT) && row.kind.contains(r#""to":"Failed""#)
-        })
-    };
-    let delivery_failed = |daemon: &Daemon| {
-        daemon.ledger_kinds().iter().any(|kind| {
-            kind.contains("DispatchTrace")
-                && kind.contains("jinn:introspect/transitions")
-                && !kind.contains(r#""failures":0"#)
-        })
-    };
-    daemon.eventually("the corrupt bundle to be refused on the record", || {
-        transport_failed(&daemon) || delivery_failed(&daemon)
-    });
-    let order = if transport_failed(&daemon) {
-        "activation: the transport's fiber failed, the port never opened"
-    } else {
-        "delivery: the transitions handler's failure recorded, the transport serves a typed 503"
-    };
-    println!("proof 5: corrupt bundle refused at {order}");
+    entry
+}
+
+/// Whether the transport's fiber ever read `Failed`.
+fn transport_failed(daemon: &Daemon) -> bool {
+    daemon
+        .ledger_rows()
+        .iter()
+        .any(|row| row.entry.as_deref() == Some(TRANSPORT) && row.kind.contains(r#""to":"Failed""#))
+}
+
+/// Whether a transitions delivery to a listener failed on the record
+/// (the kernel contains a failing listener, R9: `failures: 1`).
+fn delivery_failed(daemon: &Daemon) -> bool {
+    daemon.ledger_kinds().iter().any(|kind| {
+        kind.contains("DispatchTrace")
+            && kind.contains("jinn:introspect/transitions")
+            && !kind.contains(r#""failures":0"#)
+    })
+}
+
+/// Every sibling of the transport reached Active and none failed.
+fn siblings_active(daemon: &Daemon) {
     for sibling in [
         SETTINGS,
         PLUGINS,
@@ -555,20 +549,129 @@ fn a_bundle_whose_bytes_do_not_match_its_manifest_fails_the_transport_and_nothin
             "{sibling} did not fail"
         );
     }
-    if listening(port) {
+}
+
+#[test]
+fn a_bundle_that_does_not_match_its_manifest_never_serves_a_byte() {
+    let Some(binary) = gate() else {
+        return;
+    };
+    // The ui root, its bundle entry pointed at the CORRUPTED variant
+    // before boot: the transport must refuse to serve and fail its own
+    // activation, and every sibling must reach Active regardless.
+    // ORDER (i): the provider present at boot. At the pinned kernel the
+    // transport meets it in one of two orders (FINDINGS.md #45), both
+    // fail-closed and both on the record: live at the transport's
+    // activation — verify fails the ACTIVATION, the fiber reads `Failed`
+    // and the port never opens; landing later — verify fails inside the
+    // transitions DELIVERY, which the kernel contains (R9: a failing
+    // listener is recorded, `failures: 1`) and the transport stays Active
+    // with no bundle, answering every page a typed 503. The proof asserts
+    // WHICH occurred, and that no byte was served either way.
+    let (root, port) = fresh_ui_root("ui-corrupt");
+    corrupt_bundle_entry(&root);
+    let daemon = Daemon::boot_operator(binary, &root);
+    daemon.await_ready();
+    daemon.eventually("the corrupt bundle to be refused on the record", || {
+        transport_failed(&daemon) || delivery_failed(&daemon)
+    });
+    let at_activation = transport_failed(&daemon);
+    let order = if at_activation {
+        "activation: the transport's fiber failed, the port never opened"
+    } else {
+        "delivery: the transitions handler's failure recorded, the transport serves a typed 503"
+    };
+    println!("proof 5 (i): corrupt bundle refused at {order}");
+    siblings_active(&daemon);
+    if at_activation {
+        assert!(!listening(port), "a failed transport holds no listener");
+    } else {
+        daemon.eventually("the transport to listen", || listening(port));
         let (status, ..) = fetch_bytes(port, "/", None);
         assert_eq!(
             status, 503,
             "a transport holding no verified bundle serves no page"
         );
+        assert_eq!(get(port, "/v1/health").status, 200, "/v1 keeps serving");
     }
     // The REASON — the verify mismatch this transport named in its typed
     // fault — is on neither the ledger nor the log at this pin: a guest's
     // activation failure records its state and never its reason
     // (FINDINGS.md #38, KG-5). Recorded here rather than asserted around.
-    let reason_recorded =
-        daemon.log().contains("verify") || daemon.ledger_kinds().join("\n").contains("verify");
-    println!("proof 5: the transport failed; its reason on the record: {reason_recorded} (#38)");
+    let reason_recorded = daemon
+        .ledger_kinds()
+        .iter()
+        .any(|kind| kind.contains("activation failed") && kind.contains("verify"));
+    println!(
+        "proof 5 (i): the refusal's reason on the record: {reason_recorded} (the transport's own label; #38)"
+    );
+    daemon.interrupt();
+
+    // ORDER (ii), FORCED: the bundle entry lands by a profile edit AFTER
+    // the transport is Active. Boot with the entry ABSENT (the transport
+    // keeps its `ui-bundle-entry` config and grants: a mounted-but-absent
+    // bundle is the no-bundle 503, not a failure), then add the corrupt
+    // entry: the transport witnesses its Active transition, re-reads,
+    // verify refuses inside the delivery — contained (`failures: 1`) —
+    // and the transport stays Active, its incarnation unchanged, serving
+    // the typed 503 and `/v1` as before. No byte, no restart.
+    let (root, port) = fresh_ui_root("ui-corrupt-late");
+    // The corrupt entry, held back: written into the profile, then cut
+    // out of it before the boot, added back by the edit.
+    let corrupt = corrupt_bundle_entry(&root);
+    let path = root.join("profile.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("profile")).expect("parses");
+    let entries = document["entries"].as_array_mut().expect("entries");
+    let absent = entries
+        .iter()
+        .position(|entry| entry["id"] == BUNDLE_ID)
+        .expect("the bundle entry");
+    entries.remove(absent);
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&document).expect("encodes"),
+    )
+    .expect("profile");
+    let daemon = Daemon::boot_operator(binary, &root);
+    daemon.await_ready();
+    daemon.eventually("the transport to listen without a bundle", || {
+        listening(port)
+    });
+    let (status, ..) = fetch_bytes(port, "/", None);
+    assert_eq!(status, 503, "no bundle mounted yet: the typed 503");
+    let (state, incarnation_before) = lifecycle(port, TRANSPORT);
+    assert_eq!(state, "active");
+    let seq_before = last_seq(&daemon);
+    daemon.edit_profile(|document| {
+        document["entries"]
+            .as_array_mut()
+            .expect("entries")
+            .push(corrupt.clone());
+    });
+    daemon.eventually("the late corrupt bundle entry to be Active", || {
+        daemon.ledger_rows().iter().any(|row| {
+            row.seq > seq_before
+                && row.entry.as_deref() == Some(BUNDLE_ID)
+                && row.kind.contains(r#""to":"Active""#)
+        })
+    });
+    daemon.eventually("the delivery-time refusal on the record", || {
+        delivery_failed(&daemon)
+    });
+    assert!(
+        !transport_failed(&daemon),
+        "the late order never fails the transport's fiber (#45)"
+    );
+    let (state, incarnation_after) = lifecycle(port, TRANSPORT);
+    assert_eq!(state, "active");
+    assert_eq!(incarnation_after, incarnation_before, "no restart");
+    let (status, headers, _) = fetch_bytes(port, "/", None);
+    assert_eq!(status, 503, "still no verified bundle: no byte served");
+    assert!(header(&headers, "content-type").is_some_and(|mime| mime.starts_with("text/plain")));
+    assert_eq!(get(port, "/v1/health").status, 200, "/v1 keeps serving");
+    siblings_active(&daemon);
+    println!("proof 5 (ii): the late corrupt bundle refused at delivery; transport incarnation {incarnation_before} -> {incarnation_after}, no byte served");
     daemon.interrupt();
 
     // The operator-api profile mounts no bundle: /v1 keeps serving and a
@@ -582,4 +685,73 @@ fn a_bundle_whose_bytes_do_not_match_its_manifest_fails_the_transport_and_nothin
     assert_eq!(status, 503);
     assert!(header(&headers, "content-type").is_some_and(|mime| mime.starts_with("text/plain")));
     daemon.interrupt();
+}
+
+/// 5b (§8 amendment 4): TEN consecutive boots of the `ui` profile, each on
+/// a fresh root through the pinned daemon, every one reaching the
+/// transport `Active` AND listening with `GET /` answering the document.
+/// The verifier reproduced the coin toss by hand (transport `Failed`,
+/// bundle `Active`, port never opened); a boot that fails here prints the
+/// transport's rows and the reason it named on the record (#38) before
+/// the assertion, so the toss is a transcript and not a rumour.
+#[test]
+fn a_fresh_boot_is_deterministic() {
+    let Some(binary) = gate() else {
+        return;
+    };
+    const BOOTS: usize = 10;
+    let mut timings = Vec::with_capacity(BOOTS);
+    for boot in 1..=BOOTS {
+        let (root, port) = fresh_ui_root(&format!("ui-boot-{boot}"));
+        let started = Instant::now();
+        let daemon = Daemon::boot_operator(binary, &root);
+        daemon.await_ready();
+        let settled = |daemon: &Daemon| {
+            daemon.ledger_rows().iter().any(|row| {
+                row.entry.as_deref() == Some(TRANSPORT)
+                    && (row.kind.contains(r#""to":"Active""#)
+                        || row.kind.contains(r#""to":"Failed""#))
+            })
+        };
+        daemon.eventually("the transport to settle", || settled(&daemon));
+        let transport_rows: Vec<String> = daemon
+            .ledger_rows()
+            .iter()
+            .filter(|row| row.entry.as_deref() == Some(TRANSPORT))
+            .map(|row| format!("{:>4} {}", row.seq, row.kind))
+            .collect();
+        let named: Vec<String> = daemon
+            .ledger_kinds()
+            .into_iter()
+            .filter(|kind| kind.contains("activation failed"))
+            .collect();
+        let failed = daemon.ledger_rows().iter().any(|row| {
+            row.entry.as_deref() == Some(TRANSPORT) && row.kind.contains(r#""to":"Failed""#)
+        });
+        assert!(
+            !failed,
+            "boot {boot}/{BOOTS}: the transport FAILED its activation\nreason on the record: {named:#?}\ntransport rows:\n{}\n--- daemon log ---\n{}",
+            transport_rows.join("\n"),
+            daemon.log()
+        );
+        daemon.eventually("the transport to listen", || listening(port));
+        let (status, _, document) = fetch_bytes(port, "/", None);
+        assert_eq!(status, 200, "boot {boot}: the document");
+        assert_eq!(
+            hex_sha256(&document),
+            manifest(&daemon)
+                .files
+                .iter()
+                .find(|file| file.path == "index.html")
+                .expect("the document")
+                .sha256,
+            "boot {boot}: the pinned document"
+        );
+        timings.push(started.elapsed());
+        daemon.interrupt();
+    }
+    println!(
+        "proof 5b: {BOOTS}/{BOOTS} fresh boots reached transport active + listening + document served; boot-to-served {:?}",
+        timings
+    );
 }
