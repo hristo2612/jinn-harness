@@ -506,11 +506,34 @@ fn a_bundle_whose_bytes_do_not_match_its_manifest_fails_the_transport_and_nothin
     .expect("profile");
     let daemon = Daemon::boot_operator(binary, &root);
     daemon.await_ready();
-    daemon.eventually("the transport to fail its activation on the record", || {
+    // Two orders, both fail-closed and both on the record (FINDINGS.md
+    // #45): the provider live at the transport's activation — verify fails
+    // the ACTIVATION and the fiber reads `Failed`, the port never opens;
+    // the provider landing later — verify fails inside the transitions
+    // DELIVERY, which the kernel contains (R9: a failing listener is
+    // recorded, `failures: 1`) and the transport stays Active with no
+    // bundle, answering every page a typed 503. Neither serves a byte.
+    let transport_failed = |daemon: &Daemon| {
         daemon.ledger_rows().iter().any(|row| {
             row.entry.as_deref() == Some(TRANSPORT) && row.kind.contains(r#""to":"Failed""#)
         })
+    };
+    let delivery_failed = |daemon: &Daemon| {
+        daemon.ledger_kinds().iter().any(|kind| {
+            kind.contains("DispatchTrace")
+                && kind.contains("jinn:introspect/transitions")
+                && !kind.contains(r#""failures":0"#)
+        })
+    };
+    daemon.eventually("the corrupt bundle to be refused on the record", || {
+        transport_failed(&daemon) || delivery_failed(&daemon)
     });
+    let order = if transport_failed(&daemon) {
+        "activation: the transport's fiber failed, the port never opened"
+    } else {
+        "delivery: the transitions handler's failure recorded, the transport serves a typed 503"
+    };
+    println!("proof 5: corrupt bundle refused at {order}");
     for sibling in [
         SETTINGS,
         PLUGINS,
@@ -532,10 +555,13 @@ fn a_bundle_whose_bytes_do_not_match_its_manifest_fails_the_transport_and_nothin
             "{sibling} did not fail"
         );
     }
-    assert!(
-        !listening(port),
-        "a transport that cannot verify does not listen"
-    );
+    if listening(port) {
+        let (status, ..) = fetch_bytes(port, "/", None);
+        assert_eq!(
+            status, 503,
+            "a transport holding no verified bundle serves no page"
+        );
+    }
     // The REASON — the verify mismatch this transport named in its typed
     // fault — is on neither the ledger nor the log at this pin: a guest's
     // activation failure records its state and never its reason

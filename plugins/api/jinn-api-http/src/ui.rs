@@ -21,9 +21,10 @@ pub(crate) const TRANSITIONS_TOKEN: u64 = 2;
 
 /// The verified bundle this incarnation serves.
 pub(crate) struct Bundle {
-    manifest: Manifest,
+    pub(crate) manifest: Manifest,
     files: Files,
 }
+
 
 /// A refusal that means "not yet": the kernel will say when it has moved.
 fn not_yet(error: &KernelError) -> bool {
@@ -38,8 +39,8 @@ fn not_yet(error: &KernelError) -> bool {
 }
 
 /// One read: `manifest`, `bundle`, the check. `Ok(None)` when the provider
-/// is not live yet; any other refusal is this fiber's typed failure (R11).
-pub(crate) fn read() -> Result<Option<Bundle>, GuestFault> {
+/// is not live yet or answers the `held` hash; any other refusal is R11's.
+pub(crate) fn read(held: Option<&str>) -> Result<Option<Bundle>, GuestFault> {
     let fault = |context: &str, error: &dyn std::fmt::Debug| {
         GuestFault::Failed(format!("{BUNDLE_CONTRACT}: {context}: {error:?}"))
     };
@@ -51,6 +52,9 @@ pub(crate) fn read() -> Result<Option<Bundle>, GuestFault> {
     };
     let manifest: Manifest =
         serde_json::from_slice(&manifest).map_err(|error| fault("manifest decode", &error))?;
+    if held == Some(manifest.bundle_sha256.as_str()) {
+        return Ok(None);
+    }
     let blob = services::call(handle, OP_BUNDLE, &[]).map_err(|error| fault(OP_BUNDLE, &error))?;
     let files = verify(&manifest, &blob).map_err(|error| fault("verify", &error))?;
     Ok(Some(Bundle { manifest, files }))
@@ -59,12 +63,12 @@ pub(crate) fn read() -> Result<Option<Bundle>, GuestFault> {
 /// At activation: read now, or subscribe to the kernel's transitions and
 /// read again (the second attempt closes the window before the listen).
 pub(crate) fn load() -> Result<Option<Bundle>, GuestFault> {
-    if let Some(bundle) = read()? {
+    if let Some(bundle) = read(None)? {
         return Ok(Some(bundle));
     }
     events::listen(TRANSITIONS_TOPIC, TRANSITIONS_TOKEN)
         .map_err(|error| GuestFault::Failed(format!("{TRANSITIONS_TOPIC}: listen: {error:?}")))?;
-    read()
+    read(None)
 }
 
 /// Whether a witnessed transition is the bundle entry reaching Active.

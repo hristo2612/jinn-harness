@@ -776,7 +776,12 @@ impl Guest for Http {
         // A witnessed transition: the bundle entry reaching Active (ui.rs).
         if token == ui::TRANSITIONS_TOKEN && topic == jinn_plugins::TRANSITIONS_TOPIC {
             if ui::completes(&BUNDLE_ENTRY.lock().unwrap(), &payload) {
-                if let Some(bundle) = ui::read()? {
+                let held = BUNDLE
+                    .lock()
+                    .unwrap()
+                    .as_ref()
+                    .map(|bundle| bundle.manifest.bundle_sha256.clone());
+                if let Some(bundle) = ui::read(held.as_deref())? {
                     *BUNDLE.lock().unwrap() = Some(bundle);
                 }
             }

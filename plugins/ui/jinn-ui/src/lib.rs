@@ -21,7 +21,7 @@ pub const OP_MANIFEST: &str = "manifest";
 pub const OP_BUNDLE: &str = "bundle";
 /// The document every non-asset, non-API path answers (inventory §2.15).
 pub const DOCUMENT: &str = "index.html";
-/// Files under this prefix are hashed by the build and served immutable.
+/// Hashed by the build, served immutable.
 pub const ASSETS_PREFIX: &str = "assets/";
 /// `Cache-Control` for a hashed asset (inventory §2.16).
 pub const CACHE_IMMUTABLE: &str = "public, max-age=31536000, immutable";
@@ -30,21 +30,18 @@ pub const CACHE_NO_STORE_REVALIDATE: &str = "no-cache";
 /// The MIME of a typed refusal on a static path (inventory §2.15).
 pub const MIME_TEXT: &str = "text/plain; charset=utf-8";
 
-/// Unknown sibling fields, preserved across a decode → encode round trip
-/// (the distribution's additivity law, `plugins/settings/jinn-settings/src/wire.rs`).
+/// Unknown sibling fields, preserved across a round trip (the additivity law).
 pub type Extensions = serde_json::Map<String, serde_json::Value>;
 
 /// One file of the bundle as the manifest names it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct ManifestFile {
-    /// `/`-separated, relative to the bundle root, no leading slash.
+    /// `/`-separated, no leading slash; the hash of its bytes; its
+    /// `Content-Type`; whether it is served [`CACHE_IMMUTABLE`].
     pub path: String,
-    /// Lowercase hex SHA-256 of the file's bytes.
     pub sha256: String,
-    /// The `Content-Type` it is served with ([`mime_of`]).
     pub mime: String,
-    /// Served [`CACHE_IMMUTABLE`] when true, [`CACHE_NO_STORE_REVALIDATE`] otherwise.
     pub immutable: bool,
     #[serde(flatten)]
     pub extra: Extensions,
@@ -56,9 +53,8 @@ pub struct ManifestFile {
 pub struct Manifest {
     pub api_version: String,
     pub files: Vec<ManifestFile>,
-    /// The path answered on `/` and on the SPA fallback.
+    /// The path answered on `/` and the fallback; the whole blob's hash.
     pub document: String,
-    /// Lowercase hex SHA-256 of the whole `bundle` blob.
     pub bundle_sha256: String,
     #[serde(flatten)]
     pub extra: Extensions,
@@ -95,8 +91,7 @@ pub fn mime_of(path: &str) -> &'static str {
     }
 }
 
-/// The `bundle` blob: u32-LE count, then per file u32-LE path length,
-/// the path, u32-LE byte length, the bytes.
+/// The `bundle` blob (the README's shape).
 #[must_use]
 pub fn encode_bundle(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     let mut blob = Vec::new();
@@ -110,7 +105,7 @@ pub fn encode_bundle(files: &[(String, Vec<u8>)]) -> Vec<u8> {
     blob
 }
 
-/// The inverse of [`encode_bundle`], refused typed on any malformed shape.
+/// The inverse of [`encode_bundle`].
 ///
 /// # Errors
 ///
@@ -140,8 +135,7 @@ pub fn decode_bundle(blob: &[u8]) -> Result<Vec<(String, Vec<u8>)>, String> {
     Ok(files)
 }
 
-/// The manifest of an archive: every file with its hash, MIME and cache
-/// class, and the blob's own hash. The kit's half of the truth.
+/// The manifest of an archive — the kit's half of the truth.
 #[must_use]
 pub fn manifest_for(files: &[(String, Vec<u8>)], bundle: &[u8]) -> Manifest {
     Manifest {
@@ -221,8 +215,7 @@ pub enum Static<'a> {
         cache: &'static str,
         body: &'a [u8],
     },
-    /// 404 `text/plain`: an unknown asset, a malformed path, or the API
-    /// namespace spelled in another case — never the document.
+    /// 404 `text/plain` — never the document.
     NotFound,
 }
 
