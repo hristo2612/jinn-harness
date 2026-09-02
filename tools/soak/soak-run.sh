@@ -432,11 +432,14 @@ exec >>"$SOAK/logs/jinnd.log" 2>&1
 
 # The launcher's half of the door (packet 2.8): the `jinn:auth` credential
 # of record beside the data root, provisioned if absent, its mode checked
-# if present. The script beside this one is the one home of that rule
-# (`provision-token.sh`); it prints the path and never the value. A
-# refusal here is a refusal to start: a daemon whose door cannot open is
-# not on duty, and saying so in ops.log beats a ledger of refusals.
-if ! "$SOAK/bin/provision-token.sh"; then
+# if present. The script BESIDE THIS ONE is the one home of that rule
+# (`provision-token.sh`, installed next to the wrapper by
+# install-launchd.sh and sitting next to it in the repo, so the gate that
+# drives this wrapper from the tree finds it too); it prints the path and
+# never the value. A refusal here is a refusal to start: a daemon whose
+# door cannot open is not on duty, and saying so in ops.log beats a
+# ledger of refusals.
+if ! "$(cd "$(dirname "$0")" && pwd)/provision-token.sh"; then
     printf '%s start REFUSED: the operator token could not be provisioned (see jinnd.log)\n' \
         "$(date -u +%FT%TZ)" >>"$SOAK/logs/ops.log"
     exit 1

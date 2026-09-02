@@ -118,6 +118,31 @@ fn is_call(row: &LedgerRow, contract: &str, operation: &str) -> bool {
     name == "ContractCall" && fields["contract"] == contract && fields["operation"] == operation
 }
 
+/// A row that is the CONNECTION's own: its accept, readiness wakes and
+/// close, and the provider's `jinn:net` host calls (accept, read, write,
+/// close) that serve it — bytes moving, never a dispatch on the
+/// connection's behalf.
+fn is_transport(row: &LedgerRow) -> bool {
+    let (name, fields) = kind_of(row);
+    match name.as_str() {
+        "NetAccepted" | "NetReadable" | "NetClosed" => true,
+        "ContractCall" => fields["contract"] == "jinn:net",
+        _ => false,
+    }
+}
+
+/// A row that is the DOOR's own: the `jinn:auth` resolve, the one
+/// `verify` crossing, and the kernel's decision.
+fn is_door(row: &LedgerRow) -> bool {
+    let (name, fields) = kind_of(row);
+    match name.as_str() {
+        "AuthDecided" => true,
+        "ContractResolved" => fields["contract"] == AUTH_CONTRACT,
+        "ContractCall" => fields["contract"] == AUTH_CONTRACT && fields["operation"] == OP_VERIFY,
+        _ => false,
+    }
+}
+
 fn rows_after(daemon: &Daemon, seq: u64) -> Vec<LedgerRow> {
     daemon
         .ledger_rows()
@@ -131,19 +156,28 @@ fn last_seq(daemon: &Daemon) -> u64 {
 }
 
 /// The rows the PROVIDER's entry is charged with, after `baseline`,
-/// split into one segment per accepted connection (the guest is
-/// single-threaded: one request's rows are contiguous among its own).
+/// split into one segment per accepted connection: from its
+/// `NetAccepted { handle }` to the `NetClosed` of that same handle (the
+/// guest is single-threaded, so one request's rows are contiguous among
+/// its own; the listener's own wake and accept between two connections
+/// belong to no request and are left out).
 fn provider_segments(rows: &[LedgerRow]) -> Vec<Vec<&LedgerRow>> {
     let mut segments: Vec<Vec<&LedgerRow>> = Vec::new();
+    let mut open: Option<u64> = None;
     for row in rows
         .iter()
         .filter(|row| row.entry.as_deref() == Some(PROVIDER))
     {
-        if kind_of(row).0 == "NetAccepted" {
-            segments.push(Vec::new());
+        let (name, fields) = kind_of(row);
+        if name == "NetAccepted" {
+            open = fields["handle"].as_u64();
+            segments.push(vec![row]);
+            continue;
         }
-        if let Some(segment) = segments.last_mut() {
-            segment.push(row);
+        let Some(handle) = open else { continue };
+        segments.last_mut().expect("an open segment").push(row);
+        if name == "NetClosed" && fields["handle"].as_u64() == Some(handle) {
+            open = None;
         }
     }
     segments
@@ -247,34 +281,38 @@ fn no_credential_and_a_wrong_credential_are_refused_typed_with_zero_effects_and_
 
     // ZERO effects attributable to the requests: among everything the
     // provider's entry is charged with, each connection is exactly its
-    // accept, its readiness wakes, ONE `verify` crossing, its decision,
-    // and its close. No consumer crossing, no effect, no fs, no process.
+    // transport (accept, wakes, the `jinn:net` reads/writes/close) and
+    // its door (the `jinn:auth` resolve, ONE `verify` crossing, ONE
+    // decision). No consumer crossing, no other resolve, no effect, no
+    // fs, no process — every row is one or the other, and nothing else.
     let segments = provider_segments(&after);
     assert_eq!(segments.len(), 3, "one segment per connection: {after:?}");
     for segment in &segments {
-        let names: Vec<String> = segment.iter().map(|row| kind_of(row).0).collect();
-        let allowed = [
-            "NetAccepted",
-            "NetReadable",
-            "ContractCall",
-            "AuthDecided",
-            "NetClosed",
-        ];
+        let kinds: Vec<&str> = segment.iter().map(|row| row.kind.as_str()).collect();
         assert!(
-            names.iter().all(|name| allowed.contains(&name.as_str())),
-            "nothing but the connection and the decision: {names:?}"
+            segment.iter().all(|row| is_transport(row) || is_door(row)),
+            "nothing but the connection and the door: {kinds:#?}"
         );
-        let calls: Vec<&&LedgerRow> = segment
+        let crossings: Vec<&&LedgerRow> = segment
             .iter()
-            .filter(|row| kind_of(row).0 == "ContractCall")
+            .filter(|row| kind_of(row).0 == "ContractCall" && !is_transport(row))
             .collect();
-        assert_eq!(calls.len(), 1, "exactly one crossing: {names:?}");
+        assert_eq!(crossings.len(), 1, "exactly one crossing: {kinds:#?}");
         assert!(
-            is_call(calls[0], AUTH_CONTRACT, OP_VERIFY),
+            is_call(crossings[0], AUTH_CONTRACT, OP_VERIFY),
             "and it is the verify: {}",
-            calls[0].kind
+            crossings[0].kind
         );
-        assert_eq!(names.last().map(String::as_str), Some("NetClosed"));
+        assert_eq!(
+            segment.iter().filter(|row| decision(row).is_some()).count(),
+            1,
+            "exactly one decision: {kinds:#?}"
+        );
+        assert_eq!(
+            kind_of(segment.last().expect("a row")).0,
+            "NetClosed",
+            "the connection closed on the refusal: {kinds:#?}"
+        );
     }
     assert!(
         !after.iter().any(|row| {
@@ -426,13 +464,14 @@ fn rotation_and_revocation_take_effect_on_the_next_request_without_a_restart() {
 
     // No restart was involved: no fiber transitioned after the baseline,
     // the provider's incarnation is the boot's, and the reconcile never
-    // ran (the credential is not the profile).
+    // ran (the credential is not the profile). Five requests since the
+    // baseline: stale, fresh, revoked, anything, restored.
     daemon.eventually("the last connection to close on the ledger", || {
         rows_after(&daemon, baseline)
             .iter()
             .filter(|row| kind_of(row).0 == "NetClosed")
             .count()
-            >= 6
+            >= 5
     });
     let after = rows_after(&daemon, baseline);
     assert!(
@@ -443,7 +482,12 @@ fn rotation_and_revocation_take_effect_on_the_next_request_without_a_restart() {
         "no fiber cycled: {after:?}"
     );
     assert_eq!(daemon.restart_count(PROVIDER), 0);
-    assert_eq!(daemon.log_count("reconciled"), 0, "{}", daemon.log());
+    assert_eq!(
+        daemon.log_count("reconciled"),
+        1,
+        "only the boot reconcile ever ran: {}",
+        daemon.log()
+    );
     let decisions: Vec<Decision> = after.iter().filter_map(decision).collect();
     assert_eq!(
         decisions.iter().map(|d| d.granted).collect::<Vec<_>>(),

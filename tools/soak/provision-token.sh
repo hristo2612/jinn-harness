@@ -34,13 +34,14 @@ token="$SOAK/data.operator-token"
 fail() { echo "provision-token: $1" >&2; exit 1; }
 
 # The mode as the kernel will judge it: any of the group/other bits set
-# and the file is not a credential.
+# and the file is not a credential. Read from `ls -ld`'s mode string
+# (columns 5-10 are the group and other bits) rather than `stat`, whose
+# flags differ between macOS and Linux and which the supervisor gate stubs
+# to a fixed epoch — a reading that must be right on every host the
+# wrapper runs on cannot depend on either.
 mode_is_private() {
-    perms=$(stat -f %Lp "$1" 2>/dev/null || stat -c %a "$1" 2>/dev/null) || return 1
-    case "$perms" in
-        *[!0-7]* | '') return 1 ;;
-    esac
-    [ $((0$perms & 077)) -eq 0 ]
+    perms=$(ls -ld "$1" 2>/dev/null | cut -c5-10) || return 1
+    [ "$perms" = "------" ]
 }
 
 if [ -e "$token" ]; then
