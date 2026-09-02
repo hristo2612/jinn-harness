@@ -19,8 +19,10 @@ jobs:
           # The zero-personal-data bound, made mechanical: no target/ tree
           # is ever tracked, and no tracked text contains a machine home
           # path. This file excludes itself (it must name the pattern).
-          if git ls-files | grep -E '(^|/)target/'; then
-            echo "FAIL: tracked build state (target/) in the tree"; exit 1
+          # Widened for the TypeScript tree (inventory §6.4 item 1): an
+          # install tree or a build output in history is the same class.
+          if git ls-files | grep -E '(^|/)(target|node_modules|out|dist)/'; then
+            echo "FAIL: tracked build state (target/, node_modules/, out/, dist/) in the tree"; exit 1
           fi
           if git grep -I -n -E '/(Users|home)/[A-Za-z]' -- ':(exclude).github/workflows/ci.yml'; then
             echo "FAIL: machine path in tracked content"; exit 1

@@ -2,3 +2,15 @@
 # their metadata, and this repo's privacy bound is zero personal data. The
 # CI privacy-firewall gate enforces the same mechanically.
 target/
+# The TypeScript client under web/ brings the same class of hazard in more
+# forms (docs/notes/web-ui-port-inventory.md §6.3): the install tree, the
+# vite build output (`out/`, not `dist/`), coverage, and the incremental
+# typecheck's `tsconfig.tsbuildinfo`, which lands beside the source on the
+# first local run and carries absolute paths. Widened BEFORE the first
+# TypeScript file landed (the UI-1 card, §4.2).
+node_modules/
+web/out/
+dist/
+coverage/
+*.tsbuildinfo
+test-results/
