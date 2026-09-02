@@ -579,9 +579,12 @@ Its own README carries these in full; the load-bearing ones:
   re-arm** (#45), and **a provider swap does not restart its wasm
   consumer** (#46): the transport completes and refreshes its one read
   on `jinn:introspect/transitions`, a read-only kernel grant it has no
-  other use for; a provider's contained failure is "not yet" to it, and
-  its own activation fault is named on the ledger before it fails (#38's
-  workaround). Proof 4 asserts the incarnation unchanged until M2-K24.
+  other use for, plus ONE post-commit probe on a one-shot clock alarm
+  (a listen made inside `activate` is not live until the activation
+  commits — the coin toss's third face, transcript in #45); a provider's
+  contained failure is "not yet" to it, and its own activation fault is
+  named on the ledger before it fails (#38's workaround). Proof 4
+  asserts the incarnation unchanged until M2-K24.
 - **The Settings page shows only what a profile's settings seam
   declares** — in the `ui` profile that is `cron` (`jobs`, `tick-ms`,
   `entry-id`; the secret reference is read-only); the config.yaml-shaped

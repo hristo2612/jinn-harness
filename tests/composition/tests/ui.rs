@@ -368,11 +368,12 @@ fn the_bundle_crosses_once_per_transport_activation_and_its_size_is_recorded() {
         "exactly one bundle crossing per activation"
     );
     // The manifest is asked once when the provider was live at the
-    // transport's activation; up to three times otherwise (FINDINGS.md
-    // #7): two probes that answered not-yet around the subscription, then
-    // the read on the witnessed Active transition.
+    // transport's activation; up to four times otherwise (FINDINGS.md
+    // #45): two probes that answered not-yet around the subscription, the
+    // one post-commit probe on the clock, then the read on the witnessed
+    // Active transition.
     assert!(
-        (1..=3).contains(&manifest_calls),
+        (1..=4).contains(&manifest_calls),
         "manifest crossings: {manifest_calls}"
     );
     let bytes = std::fs::read(daemon.root.join(BUNDLE_DIR).join("bundle.bin"))
@@ -735,8 +736,36 @@ fn a_fresh_boot_is_deterministic() {
             daemon.log()
         );
         daemon.eventually("the transport to listen", || listening(port));
-        let (status, _, document) = fetch_bytes(port, "/", None);
-        assert_eq!(status, 200, "boot {boot}: the document");
+        // The document, within the ready budget: an Active transport that
+        // still answers 503 rested without its bundle — the third face of
+        // #45 — and the rows say which probe missed and which delivery
+        // never came.
+        let mut served = fetch_bytes(port, "/", None);
+        let budget = Instant::now() + Duration::from_secs(10);
+        while served.0 != 200 && Instant::now() < budget {
+            std::thread::sleep(Duration::from_millis(100));
+            served = fetch_bytes(port, "/", None);
+        }
+        let (status, _, document) = served;
+        assert_eq!(
+            status,
+            200,
+            "boot {boot}/{BOOTS}: the document not served by an Active transport\ntransport rows:\n{}\ndeliveries:\n{}",
+            daemon
+                .ledger_rows()
+                .iter()
+                .filter(|row| row.entry.as_deref() == Some(TRANSPORT))
+                .map(|row| format!("{:>4} {}", row.seq, row.kind))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            daemon
+                .ledger_kinds()
+                .iter()
+                .filter(|kind| kind.contains("DispatchTrace"))
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
         assert_eq!(
             hex_sha256(&document),
             manifest(&daemon)

@@ -33,8 +33,9 @@ pub fn bundle_entry(package: &str, hash: &str) -> serde_json::Value {
 }
 
 /// Tells the transport's entry a bundle is mounted: the `jinn:ui-bundle`
-/// grant and `jinn:introspect` (its transitions publish is what says the
-/// bundle entry is Active — the authority the kernel enforces), and the
+/// grant, `jinn:introspect` (its transitions publish is what says the
+/// bundle entry is Active — the authority the kernel enforces), a bare
+/// `jinn:clock` (the ONE post-activation probe, FINDINGS.md #45), and the
 /// entry's id (that fact told to the provider).
 pub fn mount_bundle_on(transport: &mut serde_json::Value) {
     let grants = transport["config"]["grants"]
@@ -42,6 +43,7 @@ pub fn mount_bundle_on(transport: &mut serde_json::Value) {
         .expect("grants");
     grants.push(serde_json::json!(BUNDLE_CONTRACT));
     grants.push(serde_json::json!(jinn_api::INTROSPECT_CONTRACT));
+    grants.push(serde_json::json!(jinn_cron::CLOCK_CONTRACT));
     transport["config"]["data"]["ui-bundle-entry"] = serde_json::json!(BUNDLE_ID);
 }
 

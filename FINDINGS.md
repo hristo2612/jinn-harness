@@ -2764,36 +2764,67 @@ see #46), and is re-armed rather than left `Failed` when a provider it
 needed lands after it. Until then every activation-time injection in
 the distribution needs the transitions subscription this packet added.
 
-**Round 2 (2026-09-02): the verifier's coin toss, diagnosed.** Verify
-round 1 reproduced a boot with the transport `Failed`, the bundle entry
-`Active` and the port never opened, over a fresh root, on the same kit
-this suite boots; the second boot over the same root came up. The reason
-was not on the record (#38) and the checkout is gone, so the diagnosis is
-by enumeration from the pinned broker (`jinnd-wasm/src/broker/calls.rs`,
-`instance.rs`, `lane.rs` at `85d36b4`). The transport's activation has
-exactly three ways to fail: (1) a refusal from its one read that is not
-"not yet" — the broker answers `grant-refused` (its own grant),
-`invalid` (a cycle, a duplicate), `provider-failed` (the provider's
-instance trapped, hung or gone, `PluginFailed`), or `inactive-context`
-(the provider's seat sealed or closing for a swap); (2) `net.listen`
-refused — the port held by another process, or outside the grant; (3)
-the 5 s guest deadline (`lane::DEADLINE`) or a trap killing the
-activation outright. Measured on ten fresh boots (proof 5b, this round):
-the activation is ~50 ms from `ContractResolved` to `NetListening`
-(boot 1: seq 26 at t+0 to seq 72 at t+55 ms, with the 1.46 MB read and
-its verify inside), two orders observed across the ten (provider live at
-the first probe in some, landing after both probes and read on the
-witnessed transition in others), 10/10 active, listening and serving.
-Class (2) and class (1) now name themselves on the ledger (#38's
-workaround); class (3) is the one that leaves no label. Within Law this
-round ALSO reclassifies `provider-failed` and `inactive-context` as
-"not yet": both are the PROVIDER's contained state (R11) which the
-kernel will fail or restart, and a transport that dies of a sibling's
-fault instead of resting active without a bundle and reading on its next
-Active transition is the coin toss with a different face. What remains
-kernel-shaped is unchanged: only a dependency declaration on the string
-lane (M2-K24) makes "activate once the provider is Active" a kernel
-guarantee instead of a subscription and a classification.
+**Round 2 (2026-09-02): the verifier's coin toss, reproduced and
+diagnosed — a THIRD face.** Verify round 1 reproduced a boot with the
+transport `Failed`, the bundle entry `Active` and the port never opened;
+the reason was not on the record (#38). This round first made the
+activation name its fault (#38's workaround) and enumerated, from the
+pinned broker (`jinnd-wasm/src/broker/calls.rs`, `instance.rs`,
+`lane.rs` at `85d36b4`), every way the activation can fail: (1) a refusal
+from its one read outside the not-yet set — `grant-refused`, `invalid`,
+`provider-failed` (the provider's instance trapped, hung or gone),
+`inactive-context` (the provider's seat sealed for a swap); (2)
+`net.listen` refused (port held, or outside the grant); (3) the 5 s guest
+deadline (`lane::DEADLINE`) or a trap. Measured over ten fresh boots
+(proof 5b): the activation is ~50 ms from `ContractResolved` to
+`NetListening`, the 1.46 MB read and its verify inside.
+
+Then proof 5b's second run caught the toss itself, at boot 5 of 10, with
+the transport ACTIVE and answering `/` a 503 for the daemon's life —
+neither of #45's two orders, and not a failure at all:
+
+```
+seq entry           kind
+ 27 jinn-api-http   ContractCall { contract: "jinn:ui-bundle", operation: "manifest" }   → missing-dependency
+ 30 jinn-api-http   ContractCall { contract: "jinn:ui-bundle", operation: "manifest" }   → missing-dependency
+ 32 jinn-api-http   ContractCall { contract: "jinn:net", operation: "listen" }
+ 44 jinn-api-http   NetListening { handle: 1, port: … }
+ 47 jinn-ui-bundle  ServiceProvided { service: "jinn:ui-bundle" }
+ 51 jinn-api-http   EffectRegistered { label: "listen jinn:introspect/transitions" }
+ 77 jinn-ui-bundle  FiberTransition { from: "Loading", to: "Active", cause: "InitialLoad" }
+ 79 jinn-api-http   FiberTransition { from: "Loading", to: "Active", cause: "InitialLoad" }
+     (no DispatchTrace for jinn:introspect/transitions; no third manifest call, ever)
+```
+
+The bundle entry provided (47) after the transport's second probe (30)
+and reached Active (77) before the transport's own activation committed
+(79). The transitions listen was registered at 51, inside `activate` —
+and a registration made inside an activation lands in the seat's journal
+when the activation COMMITS (`ActivationOutcome`, `commit_late`), so at
+77 the kernel's publish found no listener on this fiber. Nothing was
+lost by the kernel and nothing was refused: the subscription was simply
+not live yet, and the second probe "closing the window before the
+listen" closes nothing after it. The verifier's face (transport `Failed`)
+and this one (transport `Active`, no bundle) are the same window seen
+from two sides; which side depends on whether the read that missed was
+answered `missing-dependency` or something outside the not-yet set.
+
+**Fixed harness-side, within Law, three ways.** (a) The activation names
+its fault on the record before failing (#38). (b) `provider-failed` and
+`inactive-context` are "not yet": the PROVIDER's contained state (R11),
+which the kernel fails or restarts; the transport rests active without a
+bundle and reads on the witnessed transition instead of dying of a
+sibling's fault. (c) ONE post-commit probe: when both activation probes
+miss, the transport arms `jinn:clock.alarm-at` at an instant already
+past under a bare clock grant the kit now gives it; the wake is
+delivered only after the activation commits, so that one read sees any
+provider that landed before the commit, and a provider landing after it
+is the subscription's, now live. One extra crossing at most per boot,
+never a poll (`docs/notes/2026-09-01-a-witness-is-not-a-poller.md`).
+Proof 3's manifest bound is 1..=4 for it. What remains kernel-shaped is
+unchanged: only a dependency declaration on the string lane (M2-K24)
+makes "activate once the provider is Active" a kernel guarantee instead
+of a subscription, a classification and an alarm.
 
 ## 46. A provider swap does not restart a wasm consumer that injected it: epoch gating stops at the string lane, so "a bundle swap is a restart" is not available at this pin
 

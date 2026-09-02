@@ -106,13 +106,18 @@ Verify round 1 (four Blockers, §8 amendment 4) moved four things.
   edit; the transport witnesses its Active transition, verify refuses
   inside the delivery, the kernel contains it (`failures: 1`), and the
   transport's incarnation is unchanged with no byte served.
-- Proof 5b boots ten fresh roots in a row; every one reaches the
+- Proof 5b boots ten fresh roots in a row; every one must reach the
   transport active, listening and serving the document (~27 s from
   spawn to served, of which the transport's own activation is ~50 ms on
-  the ledger). The verifier's failed boot is diagnosed by enumeration in
-  FINDINGS #45 (round-2 addendum): the activation names its fault on the
-  record now, and the two contained provider classes (`provider-failed`,
-  `inactive-context`) are "not yet" rather than death.
+  the ledger). Its second run caught the verifier's coin toss from the
+  other side — the transport ACTIVE and serving 503 for the daemon's
+  life, because the bundle entry reached Active between the transport's
+  second probe and its activation's commit, and a listen registered
+  inside `activate` is not live until the commit. FINDINGS #45's round-2
+  addendum carries the transcript; the fix is one post-commit probe on a
+  one-shot clock alarm (never a poll), beside the fault label (#38) and
+  the two contained provider classes (`provider-failed`,
+  `inactive-context`) read as "not yet" rather than death.
 - The Settings page renders ONLY what the namespace's schema declares:
   the settings seam's `Resolved` now carries `schema` (additive, R12),
   `api-config.ts` reads it, filters every patch to declared keys and

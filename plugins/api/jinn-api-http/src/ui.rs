@@ -11,17 +11,26 @@ use jinn_ui::{
 
 use crate::exports::jinn::plugin::lifecycle::GuestFault;
 use crate::jinn::plugin::types::KernelError;
-use crate::jinn::plugin::{events, services};
+use crate::jinn::plugin::{clock, events, services};
 
 /// The listen token of the kernel's transitions publish.
 pub(crate) const TRANSITIONS_TOKEN: u64 = 2;
+/// The token of the ONE post-activation probe: a registration made inside
+/// `activate` (the transitions listen above) is not live until the
+/// activation commits, so a provider reaching Active between the second
+/// probe and the commit is witnessed by nobody (FINDINGS.md #45, round 2,
+/// the third face). An alarm at an instant already past wakes once,
+/// after the commit, and that one read closes the window; a bundle that
+/// lands later still is the subscription's, now live. Never a poll.
+pub(crate) const PROBE_TOKEN: u64 = 4;
+/// Where the kernel delivers that wake.
+pub(crate) const ALARM_TOPIC: &str = "jinn:clock/alarm";
 
 /// The verified bundle this incarnation serves.
 pub(crate) struct Bundle {
     pub(crate) manifest: Manifest,
     files: Files,
 }
-
 
 /// A refusal that means "not yet": the kernel will say when it has moved.
 /// A handle gone stale between resolve and call is one (the provider's
@@ -68,15 +77,21 @@ pub(crate) fn read(held: Option<&str>) -> Result<Option<Bundle>, GuestFault> {
     Ok(Some(Bundle { manifest, files }))
 }
 
-/// At activation: read now, or subscribe to the kernel's transitions and
-/// read again (the second attempt closes the window before the listen).
+/// At activation: read now, or subscribe to the kernel's transitions, read
+/// again (the second attempt closes the window before the listen), and
+/// arm the one post-commit probe (which closes the window after it).
 pub(crate) fn load() -> Result<Option<Bundle>, GuestFault> {
     if let Some(bundle) = read(None)? {
         return Ok(Some(bundle));
     }
     events::listen(TRANSITIONS_TOPIC, TRANSITIONS_TOKEN)
         .map_err(|error| GuestFault::Failed(format!("{TRANSITIONS_TOPIC}: listen: {error:?}")))?;
-    read(None)
+    if let Some(bundle) = read(None)? {
+        return Ok(Some(bundle));
+    }
+    clock::alarm_at(0, PROBE_TOKEN)
+        .map_err(|error| GuestFault::Failed(format!("{ALARM_TOPIC}: arm: {error:?}")))?;
+    Ok(None)
 }
 
 /// Whether a witnessed transition is the bundle entry reaching Active.

@@ -785,9 +785,15 @@ impl Guest for Http {
         // Only the kernel's typed readiness wake of OUR sockets is a
         // reason to touch them; anything else here is a contract
         // violation, refused loudly.
-        // A witnessed transition: the bundle entry reaching Active (ui.rs).
-        if token == ui::TRANSITIONS_TOKEN && topic == jinn_plugins::TRANSITIONS_TOPIC {
-            if ui::completes(&BUNDLE_ENTRY.lock().unwrap(), &payload) {
+        // A witnessed transition: the bundle entry reaching Active (ui.rs);
+        // or the one post-commit probe, which reads only while nothing is
+        // held (a bundle already read is the transition's to refresh).
+        let probe = token == ui::PROBE_TOKEN && topic == ui::ALARM_TOPIC;
+        if probe || (token == ui::TRANSITIONS_TOKEN && topic == jinn_plugins::TRANSITIONS_TOPIC) {
+            if probe && BUNDLE.lock().unwrap().is_some() {
+                return Ok(Vec::new());
+            }
+            if probe || ui::completes(&BUNDLE_ENTRY.lock().unwrap(), &payload) {
                 let held = BUNDLE
                     .lock()
                     .unwrap()
