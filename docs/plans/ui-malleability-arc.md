@@ -1,6 +1,6 @@
 # The UI malleability arc - plan
 
-**Status:** PLAN, docs only (PLA-347). Nothing in this document is implemented.
+**Status:** PLAN, docs only (PLA-347), APPROVED by the COO on 2026-09-02 with the rulings recorded in §8. Nothing in this document is implemented.
 The first packet (§4) is carded to dispatch the day the 2026-09-04 §7(b) soak
 audit closes; the later phases (§3) are cards with one decision each and are
 re-priced when their turn comes. Every number marked *estimate* is one.
@@ -168,7 +168,7 @@ Three seam triples, named per `AGENTS.md` standing order 4:
 |---|---|---|---|
 | The bundle | `jinn-ui` - contract `jinn:ui-bundle`: `manifest` (paths, sha256, mime, immutable?) and `bundle` (the whole archive as one blob) | `jinn-ui-bundle-embedded` (the built `web/out` embedded at kit time; the artifact hash pins the UI) | `jinn-api-http` (injects the definition, serves the bytes) |
 | Moments | `jinn-ui` again - the `jinn:ui/*` topic vocabulary, each topic's payload schema, and the fail-closed law | none: a moment is a walk, not a service | `jinn-api-http` (emits), every extension (listens) |
-| The extension tier | `jinn-ext` - the extension entry's config schema (`topics`, `source`, `budget`) | `jinn-ext-js-boa` first; `jinn-ext-js-quickjs` if and when §5's gap closes | none: an extension is a listener |
+| The JS-in-WASM extension tier | `jinn-ext` - the extension entry's config schema (`topics`, `source`, `origin: agent \| human`, `budget`) and the activation law: the guest registers the source's sha256 as a breadcrumb (Law 2) | `jinn-ext-js-boa` first; `jinn-ext-js-quickjs` if and when §5's gap closes | none: an extension is a listener |
 
 Why the transport serves the bundle rather than the bundle plugin holding its
 own `jinn:net` grant: the client requires `/api/*` and the app on one origin
@@ -204,7 +204,7 @@ one deliberate inversion, stated at UI-2.
 | Phase | Packet | The one decision | Depends on | Estimate |
 |---|---|---|---|---|
 | UI-1 | UI-as-profile | The bundle is a plugin's artifact; the transport serves it same-origin from memory filled at activation | 2.8 | 2 rounds, ~4 agent-days *(estimate)* |
-| UI-2 | Moments and the extension tier | A moment is a `jinn:ui/<topic>` waterfall the transport dispatches for `POST /v1/moments/<topic>`, fail-closed | UI-1 | 2 rounds, ~4 agent-days *(estimate)* |
+| UI-2 | Moments and the JS-in-WASM extension tier | A moment is a `jinn:ui/<topic>` waterfall the transport dispatches for `POST /v1/moments/<topic>`, fail-closed | UI-1 | 2 rounds, ~4 agent-days *(estimate)* |
 | UI-3 | The live half | Server-sent events over held loopback connections, fed by cursor reads on one alarm; the client's vocabulary becomes the harness's | UI-1 | 2 rounds, ~5 agent-days *(estimate)* |
 | UI-4 | Todos | One status vocabulary: the harness's six-status terminal law wins; the client's edge table is GENERATED from the definition | UI-3 | 3 rounds, ~6 agent-days *(estimate)* |
 | UI-5 | Workflows | The editor compiles against a PUBLISHED wire package generated from `jinn-workflow`, never a path alias into a source tree | UI-4 | 2 rounds, ~5 agent-days *(estimate)* |
@@ -218,7 +218,7 @@ with a direct seam fit - Settings (inventory §4.2, the only `direct` row) and
 the plugins page (read-only, three ops) - ported verbatim, served from a
 profile, behind the door.
 
-### UI-2 - Moments and the extension tier
+### UI-2 - Moments and the JS-in-WASM extension tier
 
 **Decision.** A moment is a waterfall on a `jinn:ui/<topic>` topic that the
 transport dispatches when an authenticated client calls
@@ -243,7 +243,12 @@ be demonstrated end to end.
 topics; the client's `sendText` choke point (inventory §4.3 moment 1) calls
 the moment from the re-seated data layer BEFORE the optimistic bubble is
 built, so inventory §2.7 G1's identity key matches the server twin (§6).
-`jinn-ext` definition, `jinn-ext-js-boa` provider, `ext-kit`.
+`jinn-ext` definition, `jinn-ext-js-boa` provider, `ext-kit`. Two rules from
+the §8 ruling on source-as-config: the entry's data carries `origin: agent |
+human` (constitution 05's attestation, restated for data) and the plugins
+page shows it; and the guest records the source's sha256 as an activation
+breadcrumb (`effects.register("source sha256:<hex>")`) so WHAT CODE RAN is on
+the record (Law 2).
 
 **Acceptance (composition proofs, `tests/composition/tests/moments.rs`).**
 
@@ -272,7 +277,9 @@ built, so inventory §2.7 G1's identity key matches the server twin (§6).
 
 **Kernel gaps this phase will surface (candidate jinnd cards).**
 
-- **KG-1 `jinn:profile-admin`.** Installing an extension is adding an ENTRY
+- **KG-1 `jinn:profile-admin` - CARDED as jinnd M2-K23 (PLA-348, backlog,
+  sequenced after the 2026-09-04 audit on the kernel lane; UI-1 does not
+  wait for it).** Installing an extension is adding an ENTRY
   with GRANTS; `patch-entry` writes `config` only (#37). Until the capability
   constitution 04 names exists, "install an extension from the UI" is a file
   edit, and the card says so. Scope: add, remove, `disabled` toggle, grants,
@@ -414,7 +421,7 @@ registry's provenance stamping, boundary and namespacing survive unchanged
 §1.3 route semantics, carried); `hiding_a_surface_is_a_profile_edit_and_the_nav_says_so`;
 `a_failed_plugin_shows_failed_and_names_where_its_reason_would_be` (#38).
 
-**Kernel gaps.** KG-1 (enable/disable from the page); #38 (a reason).
+**Kernel gaps.** KG-1 (enable/disable from the page; M2-K23 / PLA-348); #38 (a reason).
 
 **Dependencies.** UI-2, UI-1.
 
@@ -424,16 +431,25 @@ registry's provenance stamping, boundary and namespacing survive unchanged
 
 **Milestone:** M3 preparation (the arc's first packet; the web UI running
 against the kernel API is M3's own acceptance line, SOURCE-OF-TRUTH §7) ·
-**Owner:** kernel-dev, or `jinn-dev` for the TypeScript half under
-kernel-dev's card · **Status:** ready to dispatch after the 2026-09-04
+**Owner:** kernel-dev - ONE build node; sub-agents allowed for the
+verbatim TypeScript port because the diff gate (proof 6) is what makes a
+mechanical port safe to parallelize; the seam and the proofs stay with the
+card owner (§8 ruling 6) · **Status:** ready to dispatch after the 2026-09-04
 §7(b) audit closes · **Binding rules:** `AGENTS.md` standing orders 1
 through 5; jinnd R1 (no blocking in a guest), R3 (typed wire), R9 (no
 silent replacement: a bundle swap is a restart), R11 (a bad bundle fails the
 transport's activation, nothing else), R12 (additive contract, 0.x minor),
-Laws 1, 2, 5 · **LOC ceiling:** production Rust net delta **≤ 800** across
-`plugins/ui/`, `plugins/api/jinn-api-http/src`, `tools/ui-kit` (tests and
-the composition suite excluded); the TypeScript tree carries NO line ceiling
-because its acceptance is a DIFF against the pinned sha, not a size ·
+Laws 1, 2, 5 · **LOC ceiling (card-authoritative, binding):** production Rust net delta
+**≤ 800** across `plugins/ui/`, `plugins/api/jinn-api-http/src`,
+`tools/ui-kit`. The harness has no loc-meter, so the meter is declared here:
+`git diff --numstat main -- 'plugins/ui/**/*.rs' 'plugins/api/jinn-api-http/src/*.rs' 'tools/ui-kit/**/*.rs'`,
+added minus deleted, summed over every file that is not under a `tests/`
+directory and not named `tests.rs`; a `#[cfg(test)]` module inside a
+production file is a declared category - the PR lists each such module with
+its line count and that count is subtracted, so the ceiling binds
+production code and never incentivizes golfing a test. The composition
+suite is excluded. The TypeScript tree carries NO line ceiling because its
+acceptance is a DIFF against the pinned sha, not a size ·
 **Standing gates:** `cargo fmt --check && cargo clippy --workspace
 --all-targets -- -D warnings && cargo test --workspace`, plus the node lane
 of §4.4, plus `cargo test -p composition`.
@@ -508,7 +524,7 @@ The ENUMERATED adaptations, and only these, are the diff:
    5 s `GET /v1/health` poll until UI-3. `use-query-invalidation.ts` is
    carried whole and receives no frames.
 4. `routes/settings/plugins/*`: enable, disable, rescan and reveal are
-   rendered disabled with the finding (#37 class, KG-1); the row's
+   rendered disabled with the finding (#37 class, KG-1 / PLA-348); the row's
    lifecycle reading and `history` come from the catalog.
 5. `src/main.tsx`, `lib/app-routes.ts`: the route table lists Settings,
    Plugins, the plugin splat and the two redirects; every other route is
@@ -584,9 +600,11 @@ transport that does not serve:
    every file not on the seven-item adaptation list, and a non-empty one
    for every file on it (the gate has to be able to fail in both
    directions).
-7. Browser-level, recorded not automated: a person opens `/`, is shown the
-   pairing screen, pastes the credential, sees Settings and Plugins, patches
-   a namespace and reads it back. The transcript goes on the Todo.
+7. Browser-level, driven by the INDEPENDENT VERIFIER with `agent-browser`
+   against a throwaway root (§8 amendment): open `/`, be shown the pairing
+   screen, paste the credential, see Settings and Plugins, patch a namespace
+   and read it back. The verifier posts the transcript on the Todo; no
+   person is in the acceptance loop.
 
 Plus: node lane green; `cargo test -p harness-docs` green; the privacy
 firewall green with the widened check; every quirk carried is named on the
@@ -600,7 +618,8 @@ restarting (must refuse, never serve a mixed set - inventory §2.24, "404 not
 SPA fallback"); a 16 KiB+ request head on a static path (413, close); a
 `/v1` path spelled `/V1` or with a `..` segment (404, no dispatch); a bearer
 on a static path (ignored, no verify - and the proof that it is IGNORED,
-not consumed, since the door is not on that path); a second bundle entry
+not consumed, since the door is not on that path; MANDATORY by the §8
+ruling, not a probe the verifier may skip); a second bundle entry
 claiming `jinn:ui-bundle` (`DuplicateProvision`, the second fails, the first
 keeps serving).
 
@@ -612,9 +631,9 @@ instance (the cutover rule).
 
 ### 4.6 Kernel findings this packet is likely to file
 
-- **KG-1** (`jinn:profile-admin`) - the plugins page cannot enable or
-  disable, and a UI swap is a file edit. Expected to be filed with the
-  transcript of a person trying.
+- **KG-1** (`jinn:profile-admin`, carded M2-K23 / PLA-348) - the plugins
+  page cannot enable or disable, and a UI swap is a file edit. The card
+  exists; this packet adds the transcript of the surface trying.
 - **KG-5** (#38) - a broken bundle shows `failed` with no reason on the
   page it was meant to show reasons on.
 - A payload-size observation: one ~4 MB crossing per activation is measured
@@ -623,7 +642,7 @@ instance (the cutover rule).
 
 ---
 
-## 5. The extension tier: QuickJS-as-WASM, measured
+## 5. The JS-in-WASM extension tier, measured
 
 The question the Todo asks: does a QuickJS component build for plugin world
 0.10.0 today, how big is it, and what host imports does it need. A throwaway
@@ -804,13 +823,14 @@ hour and would cost the packet the same:
 The example: "i want my chat to be extended to parse my input before
 sending and append emoji 🟢". Through the seams as UI-1 and UI-2 leave them.
 
-**Install (a profile edit; KG-1 is why it is not a click yet).**
+**Install (a profile edit; KG-1, carded as M2-K23 `jinn:profile-admin`, PLA-348, is why it is not a click yet).**
 
 ```json
 { "id": "ext-green", "package": "ext/jinn-ext-js-boa", "hash": "<the provider's component sha256>",
   "config": { "grants": ["jinn:ui/before-send"],
               "data": { "topics": ["jinn:ui/before-send"],
-                        "source": "(p) => ({ ...p, text: p.text + ' 🟢' })" } } }
+                        "source": "(p) => ({ ...p, text: p.text + ' 🟢' })",
+                        "origin": "human" } } }
 ```
 
 The grant is the topic's own name (`plugin.wit`, `events.listen`). The
@@ -925,7 +945,27 @@ This arc will NOT:
 
 ---
 
-## 8. Open questions for the COO
+## 8. Decisions taken (COO, 2026-09-02)
+
+The seven questions this plan put to the COO, each with its ruling in one
+line; the reasoning that was put with each question follows, kept as the
+record of why.
+
+| # | Question | Ruling |
+|---|---|---|
+| 1 | Is the operator's JS allowed to be config? | ACCEPTED for UI-2; entry data carries `origin: agent \| human` (shown on the plugins page); the guest records the source's sha256 as an activation breadcrumb; revisit with KG-1 |
+| 2 | Public bytes with no door? | ACCEPTED as carded; proof 2 is the boundary; the "bearer on a static path is IGNORED" probe is a mandatory acceptance line |
+| 3 | UI-2 before UI-3? | ACCEPTED |
+| 4 | Service worker dropped in UI-1? | ACCEPTED; returns only in a card owning both the artifact pin and the client cache |
+| 5 | Boa first? | ACCEPTED; the tier is "the JS-in-WASM extension tier"; QuickJS is a later provider packet (libc shim) or KG-4, prerequisite of nothing |
+| 6 | Who implements the TypeScript half? | One card, ONE build node (kernel-dev); sub-agents allowed for the verbatim port; proof 6 makes that safe |
+| 7 | Card KG-1 now? | Carded as jinnd M2-K23 `jinn:profile-admin` (PLA-348); UI-1 does not wait for it |
+
+Two amendments beyond the questions: §4.3 proof 7 is the independent
+verifier's over `agent-browser`; §4's LOC ceiling binds, with its meter
+declared. Dispatch of UI-1 waits for the 2026-09-04 audit.
+
+### The questions as put, with their reasoning
 
 1. **Is the operator's JS allowed to be config?** In §6 the source is data
    inside a signed first-party plugin whose only authority is topic grants.
@@ -935,6 +975,9 @@ This arc will NOT:
    "type it in Settings" a build step. Recommendation: config for UI-2, with
    the origin attested as `agent | human` in the entry's data and shown on
    the plugins page; revisit with KG-1.
+   **Ruled: ACCEPTED for UI-2**, with two additions now in UI-2's scope: the
+   `origin` field on the entry and on the plugins page, and the source's
+   sha256 recorded as an activation breadcrumb (Law 2).
 2. **Public bytes with no door.** §4.1 serves the document and assets to any
    loopback peer without `verify`, on the reading that the door's contract
    forbids a DISPATCH on an unauthenticated connection's behalf and a byte
@@ -943,20 +986,37 @@ This arc will NOT:
    reads the contract as every REQUEST, the alternative is a bearer in the
    URL fragment consumed by the pairing screen - which the 2.8 note rejected
    for the API. Recommendation: as carded, with proof 2 as the boundary.
+   **Ruled: ACCEPTED as carded.** Proof 2 is the boundary; the §4.4 probe
+   "a bearer on a static path is IGNORED, not consumed" is mandatory.
 3. **The order of UI-2 and UI-3.** This plan puts moments before the live
    half, against inventory §4.5, because the arc exists for malleability.
    The cost is that chat is two packets further out.
+   **Ruled: ACCEPTED.**
 4. **The service worker.** Dropped in UI-1. It returns, if at all, in a
    card that owns both the artifact pin and the client cache.
-5. **Boa as the first engine under a tier named "QuickJS-as-WASM".** §5 is
+   **Ruled: ACCEPTED.**
+5. **Boa as the first engine of the JS-in-WASM extension tier.** §5 is
    the evidence; the name describes the shape (JS inside WASM), the engine
    is a provider. If the COO wants QuickJS first, KG-4 or the shim is a
    prerequisite packet and UI-2 slips by its estimate.
+   **Ruled: ACCEPTED - Boa first.** The tier is named "the JS-in-WASM
+   extension tier" throughout; the engine is a provider (`jinn-ext-js-boa`,
+   later `jinn-ext-js-quickjs` via a libc-shim packet or KG-4). Neither is a
+   prerequisite of anything.
 6. **Who implements the TypeScript half of UI-1.** The card is kernel-dev's;
    the verbatim port and the node lane are `jinn-dev`'s craft. Recommendation:
    one card, two sessions, kernel-dev owns the seam and the proofs.
+   **Ruled: one card, ONE build node (kernel-dev), sub-agents allowed for
+   the verbatim port** - the diff gate (proof 6) is what makes the
+   mechanical port safe to parallelize; the seam and the proofs stay with the
+   card owner. §4's owner line says so.
 7. **Whether a PLA card for KG-1 is opened now.** Every phase from UI-2 on
    names it; UI-7 is blocked on it for its headline feature.
+   **Ruled: carded NOW as jinnd M2-K23 `jinn:profile-admin` (PLA-348,
+   backlog)**, sequenced after the 2026-09-04 audit on the kernel lane; UI-1
+   does not wait for it.
+
+
 
 ---
 
