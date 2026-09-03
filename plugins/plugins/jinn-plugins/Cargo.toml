@@ -18,6 +18,10 @@ publish = false
 # seam's closed surfaces refuse an unknown content the same way every
 # other seam's do.
 jinn-settings = { path = "../../settings/jinn-settings" }
+# The extension tier's source digest has one home (`jinn_ext::source_digest`):
+# the catalog's `attestation.source` is that digest, the same one the guest
+# writes on the ledger as its breadcrumb (UI-2 §9.7 amendment 8(d)).
+jinn-ext = { path = "../../ext/jinn-ext" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 

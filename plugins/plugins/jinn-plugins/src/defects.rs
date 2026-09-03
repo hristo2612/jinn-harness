@@ -35,6 +35,7 @@ pub fn a_failure_with_an_unrelated_refusal_in_its_window() -> Inputs {
             }],
             disabled: false,
             origin: None,
+            source: None,
         },
         snapshot: Some(Snapshot {
             state: Some("failed".to_owned()),
@@ -82,6 +83,7 @@ pub fn a_loading_incarnation_that_already_owes_a_change() -> Inputs {
             }],
             disabled: false,
             origin: None,
+            source: None,
         },
         snapshot: Some(Snapshot {
             state: Some("loading".to_owned()),

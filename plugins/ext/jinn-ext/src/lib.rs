@@ -88,13 +88,20 @@ pub fn parse_config(bytes: &[u8]) -> Result<ExtConfig, String> {
     Ok(config)
 }
 
-/// `source sha256:<hex>` for the source as configured.
+/// `sha256:<hex>` of the source as configured: the attestation the
+/// plugins catalog carries for the entry (`attestation.source`), so the
+/// page renders WHAT CODE RAN from a stable reading and never from a
+/// sliding history window (§9.7 amendment 8(d)).
+#[must_use]
+pub fn source_digest(source: &str) -> String {
+    format!("sha256:{:x}", Sha256::digest(source.as_bytes()))
+}
+
+/// `source sha256:<hex>` for the source as configured: the fifth
+/// breadcrumb, the same digest on the ledger.
 #[must_use]
 pub fn source_breadcrumb(source: &str) -> String {
-    format!(
-        "{SOURCE_BREADCRUMB_PREFIX}{:x}",
-        Sha256::digest(source.as_bytes())
-    )
+    format!("source {}", source_digest(source))
 }
 
 /// The activation self-test: evaluates the source ONCE and answers

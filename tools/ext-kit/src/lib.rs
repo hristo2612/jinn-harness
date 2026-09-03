@@ -1,6 +1,9 @@
-//! The extension tier's profile ENTRY shape, the sources the suite and
-//! the `ui` profile mount, and the component-imports reading (one home
-//! per fact); `main.rs` builds the provider.
+//! The extension tier's profile ENTRY shape, the one source the `ui`
+//! profile mounts, and the component-imports reading (one home per
+//! fact); `main.rs` builds the provider. The proof-only variants (a
+//! throwing source, a looping one, …) are the composition suite's own
+//! fixtures, spelled there so the proofs stand without this crate
+//! (§9.7 amendment 8(e)).
 
 use std::path::Path;
 
@@ -12,28 +15,6 @@ pub const BOA_GUEST: &str = "jinn-ext-js-boa";
 pub const GREEN_ID: &str = "ext-green";
 /// See [`GREEN_ID`]: `hello` becomes `hello 🟢`.
 pub const GREEN_SOURCE: &str = "(p) => ({ ...p, text: p.text + ' 🟢' })";
-/// A second extension appending a different marker (proof 3).
-pub const BLUE_ID: &str = "ext-blue";
-/// See [`BLUE_ID`].
-pub const BLUE_SOURCE: &str = "(p) => ({ ...p, text: p.text + ' 🔵' })";
-/// A source that throws on every delivery (proof 4).
-pub const THROWING_ID: &str = "ext-throwing";
-/// See [`THROWING_ID`].
-pub const THROWING_SOURCE: &str = "(p) => { throw new Error('the throwing extension'); }";
-/// A source that returns `undefined`: the pass-through case (proof 4).
-pub const UNDEFINED_SOURCE: &str = "(p) => undefined";
-/// A source that does not parse: a failed fiber on the record (proof 8).
-pub const BROKEN_SOURCE: &str = "(p) => { this is not javascript";
-/// A source that loops forever on delivery (proof 7).
-pub const LOOPING_SOURCE: &str = "(p) => { while (true) {} }";
-
-/// A source whose ACTIVATION is slow by construction: a bounded counting
-/// loop under fuel, run when the source expression is evaluated, then
-/// the fold — never `while(true)` (proof 5's restart window).
-#[must_use]
-pub fn slow_source(iterations: u64, marker: &str) -> String {
-    format!("(function () {{ var i = 0; while (i < {iterations}) i++; return (p) => ({{ ...p, text: p.text + ' {marker}' }}); }})()")
-}
 
 /// The extension entry in §6's "Install" shape: `config.data` carries
 /// the topics, the source and the origin; `config.grants` is the topics

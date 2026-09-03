@@ -354,6 +354,7 @@ name = "jinn-plugins"
 version = "0.1.0"
 dependencies = [
  "harness-pin",
+ "jinn-ext",
  "jinn-settings",
  "serde",
  "serde_json",

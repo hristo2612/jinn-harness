@@ -163,11 +163,16 @@ pub struct Entry {
     pub extra: Extensions,
 }
 
-/// See [`Entry::attestation`].
+/// See [`Entry::attestation`]. `source` is the digest of the entry's
+/// `config.data.source` (`sha256:<hex>`, the guest's own breadcrumb): the
+/// page's source breadcrumb comes from HERE, a stable reading, never from
+/// a sliding history window (§9.7 amendment 8(d)).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct Attestation {
     pub origin: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// The read a catalog actually performed to answer. It travels with
