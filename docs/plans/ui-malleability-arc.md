@@ -1616,6 +1616,30 @@ enumerated adaptations.
   determinism budget (§4.3 proof 5b's bound), it is a finding and not a
   workaround.
 
+### 9.7 Amendments after dispatch
+
+- **Amendment 8 (COO, 2026-09-03, round 1 verify).** Rulings on PLA-353,
+  binding for round 2: (a) the ceiling is re-priced ONCE on the first
+  meter reading, 718, to **800 production Rust net**, binding; lines a
+  ruling or a verifier finding mandates are MANDATED with traceability,
+  never a Blocker. (b) Proof 4's clause "the throwing extension's failure
+  is in ITS history" is restated to the pinned kernel (`a53a352`): a
+  contained delivery failure is a count on the EMITTER's `DispatchTrace`
+  and writes nothing on the listener's history (FINDINGS #51); the proof
+  ASSERTS `failures: 1` on the trace and carries a NAMED NOT-YET assertion
+  for the listener-history row citing #51, never a bare print. jinnd
+  M2-K25 closes only #51's fatal half; the non-fatal row is a later card.
+  (c) Proof 5 lands NOT-YET on FINDINGS #47 (jinnd M2-K26) once the
+  verifier reproduces it at the pin; proof 7 lands NOT-YET on #48 (jinnd
+  M2-K25) per §8 ruling 4. (d) Proof 11 is a harness Blocker as found:
+  the page shows the FOLDED value after a moment, and the extension's
+  source breadcrumb renders from the entry's catalog attestation, never
+  from a sliding history window. (e) Red-first evidence: the proofs
+  commit precedes the implementation commit; round 2 supplies a
+  red-by-reversion transcript (proof commits alone on the merge-base,
+  failing tails per proof) under `docs/notes/`. (f) Every NOT-YET item is
+  disabled on the page with its finding number, never silently absent.
+
 ---
 
 ## Appendix - the spike, reproducibly
