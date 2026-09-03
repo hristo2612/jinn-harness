@@ -648,7 +648,6 @@ version = "0.1.0"
 dependencies = [
  "api-kit",
  "cron-kit",
- "jinn-api",
  "jinn-cron",
  "jinn-plugins",
  "jinn-ui",

@@ -247,6 +247,12 @@ inverse, N operations) — also the shape hot-swap state handoff wants.
 
 ## 7. No guest-to-guest readiness gating on the dynamic string lane
 
+**Grade: ANSWERED at pin `a53a352` (jinnd M2-K24, harness pin-bump 7) —
+fixed at pin a53a352 for every wasm entry that DECLARES what it injects;
+an entry that declares nothing is unchanged, by the kernel's own
+invariant.** Raised at the M1 demo pin; the production consumer that
+made it concrete is #45, and the transcript is there.
+
 Sibling activation order is UNSPECIFIED — that is the finding, not any
 particular order: one boot ledger showed the consumer Active before the
 scheduler; the round-1 verification observed the opposite order on its
@@ -260,6 +266,21 @@ replay absorption (the firing law shrugs off the boot's replayed tick).
 **Packet-card shape:** per-entry dependency declaration for wasm entries
 (activate only after named contracts are provided), i.e. the typed lane's
 epoch gating extended to the string lane.
+
+**Fixed at pin `a53a352` (2026-09-03, pin-bump 7) — the shape the card
+asked for, verbatim.** `config.injects` beside `config.grants`
+(constitution 04 §Format): a wasm entry naming a string-lane contract
+activates only once that provider is `Active` — a provision landing while
+the provider is still `Loading` is not readiness — reloads when the
+provider is replaced, and is re-armed from `Failed` when a declared
+provider moves (and never before, R9). The harness's one activation-time
+injector, the `ui` transport, declares `jinn:ui-bundle`, and the order is
+no longer dealt: proof 5b's ten fresh boots at this pin reach the transport
+`Active`, listening and serving with NO subscription and NO probe. What the
+answer does not cover, named: an entry that declares nothing still meets
+its provider in whichever order the boot deals
+(`an_undeclared_entry_is_unchanged_by_this_packet`, the kernel's own
+invariant), so #30's window stands for undeclared consumers.
 
 ## 8. HostFs undo retention is unbounded in-memory
 
@@ -2695,7 +2716,9 @@ have to.
 
 ## 45. A wasm entry that injects a sibling's contract at activation is a coin toss, and the kernel never re-arms it when the sibling lands
 
-**Grade: reproducible WITH A TRANSCRIPT, shaped, packet-card-ready — the
+**Grade: ANSWERED at pin `a53a352` (jinnd M2-K24, harness pin-bump 7) —
+fixed at pin a53a352, transcript at the end of this entry. When raised:
+reproducible WITH A TRANSCRIPT, shaped, packet-card-ready — the
 production consumer #7 predicted, and #7's neighbour: the failed fiber
 is not retried when the provider it needed becomes Active.** Hit in
 harness packet UI-1 (PLA-349) at pin `85d36b4`, four boots out of five.
@@ -2826,11 +2849,57 @@ unchanged: only a dependency declaration on the string lane (M2-K24)
 makes "activate once the provider is Active" a kernel guarantee instead
 of a subscription, a classification and an alarm.
 
+**Fixed at pin `a53a352` (2026-09-03, harness pin-bump 7, PLA-352) —
+the transcript.** The transport entry now reads
+`"injects": ["jinn:ui-bundle"]` beside its grants (`tools/ui-kit`,
+`mount_bundle_on`), its `jinn:introspect` and `jinn:clock` grants are
+gone, and `jinn-api-http` lost the subscription, both activation probes,
+the post-commit alarm, the transition matcher and the "not yet"
+classification — removed, not flagged. `ui::read()` is the one read and
+every refusal is the entry's own fault (R11). Red first, against the OLD
+harness code on the NEW kernel — an entry that declares nothing is
+unchanged by K24 (the kernel's own invariant), so this is the old
+behaviour exactly, at the cost of one daemon build instead of two
+(`tests/composition/tests/ui.rs`, run 1, `test result: FAILED. 3 passed;
+3 failed`):
+
+```
+proof 3  assertion `left == right` failed: exactly one manifest crossing per activation
+           left: 4   right: 1
+         (two activation probes, the post-commit probe, the witnessed read — the four #45 named)
+proof 5  timed out waiting for the corrupt bundle to fail the transport's activation
+         (the transport rested Active without a bundle, answering 503: the late order)
+proof 5b 10/10 fresh boots reached transport active + listening + document served
+         (the workaround still holding the boot up, as it was built to)
+```
+
+Green, with the declaration (run 2, same suite, same pin):
+
+```
+proof 3: bundle 1375153 bytes crossed once (1 manifest crossings); 31 files; ledger 168 rows in total, 30 on the transport
+proof 5: corrupt bundle refused at activation — the transport's fiber failed, the port never opened; the refusal's reason on the record: true (the transport's own label; #38)
+proof 5b: 10/10 fresh boots reached transport active + listening + document served
+test result: ok (proofs 1, 2, 3, 5, 5b; proof 4 in #46)
+```
+
+The kernel's own gate is now the determinism: the transport's activation
+begins only after the bundle entry's, its one `manifest` and one `bundle`
+crossing land inside it, and a corrupt bundle fails THAT activation and
+nothing else — one order (proof 5), no listener, siblings Active. What
+stays open: #38 — the transport still writes its own activation fault
+onto the ledger before failing, because the kernel records a state and
+never a reason. And the late-provider order is not merely fixed but
+unreachable: a declared consumer whose provider is absent rests `pending`
+(`unmet: ["jinn:ui-bundle"]` on the 0.6.0 read) and never opens its port
+without its bundle.
+
 ## 46. A provider swap does not restart a wasm consumer that injected it: epoch gating stops at the string lane, so "a bundle swap is a restart" is not available at this pin
 
-**Grade: reproducible WITH A TRANSCRIPT, measured, packet-card-ready —
-the other half of #45.** Hit in harness packet UI-1 (PLA-349) at pin
-`85d36b4`, proof 4 of `tests/composition/tests/ui.rs`, every run.
+**Grade: ANSWERED at pin `a53a352` (jinnd M2-K24, harness pin-bump 7) —
+fixed at pin a53a352, transcript at the end of this entry. When raised:
+reproducible WITH A TRANSCRIPT, measured, packet-card-ready — the other
+half of #45.** Hit in harness packet UI-1 (PLA-349) at pin `85d36b4`,
+proof 4 of `tests/composition/tests/ui.rs`, every run.
 
 The UI-1 card (`docs/plans/ui-malleability-arc.md` §4.1, binding R9)
 states the swap as a restart: edit the bundle entry's `package` and
@@ -2865,3 +2934,73 @@ unload → reload (SOURCE-OF-TRUTH §3, R9). When that lands, proof 4
 flips: incarnation +1, one bundle crossing per incarnation, and the
 transitions subscription this packet added becomes dead code to remove.
 
+**Fixed at pin `a53a352` (2026-09-03, harness pin-bump 7, PLA-352) —
+the transcript.** Proof 4 flipped exactly as this entry said it would:
+incarnation +1, one bundle crossing per incarnation, the subscription
+removed. One word of this entry's prediction was imprecise and the
+proof says so: the `incarnation` the introspect read reports "identifies
+the CURRENT activation — never reused within a kernel process" (the
+contract's own words; the lane answers the roster slot id), an IDENTITY
+and not a per-fiber count — the swapped-in bundle fiber (12) takes a
+generation between the transport's two, so the field read 11 → 13. The
+kernel's own invariants spell "incarnation +1 exactly" as ONE MORE LOAD
+of the fiber, and that is what proof 4 asserts on the transport's own
+rows (one more `Loading`; the one `Unloading` before it caused by
+`DependencyChanged`), with the identity asserted to have moved and
+printed. Red first, against the OLD harness code on the NEW kernel
+(run 1):
+
+```
+proof 4  assertion `left == right` failed: the swap is a restart: the transport's incarnation +1 exactly (M2-K24)
+           left: 3   right: 4
+         (the swap served the marker by the witnessed re-read; the transport never restarted)
+```
+
+Green, with the declaration (run 2):
+
+```
+proof 4: swap served 1.332403208s after the edit; blip: 3 refused connects while it landed; transport loads 1 -> 2 (incarnation identity 11 -> 13); bundle crossings 1 -> 2
+test swapping_the_ui_is_a_profile_edit_of_one_entry ... ok
+```
+
+The transport's own rows on the ledger for that swap — the kernel's word
+for why it moved, which the old pin could never write:
+
+```
+seq   entry            kind
+  26  jinn-ui-bundle   ServiceProvided { service: jinn:ui-bundle }
+  50  jinn-api-http    ContractCall { contract: jinn:ui-bundle, operation: manifest }
+  51  jinn-api-http    ContractCall { contract: jinn:ui-bundle, operation: bundle }
+  70  jinn-api-http    NetListening { handle: 1, port: … }
+  74  jinn-ui-bundle   FiberTransition { fiber: 11, from: Pending,   to: Loading,  cause: InitialLoad }
+  75  jinn-ui-bundle   FiberTransition { fiber: 11, from: Loading,   to: Active,   cause: InitialLoad }
+  87  jinn-api-http    FiberTransition { fiber: 3,  from: Pending,   to: Loading,  cause: DependencyChanged }
+  88  jinn-api-http    FiberTransition { fiber: 3,  from: Loading,   to: Active,   cause: DependencyChanged }
+      … the profile edit (package + hash of the bundle entry) …
+1274  jinn-ui-bundle   ServiceWithdrawn { service: jinn:ui-bundle }
+1376  jinn-ui-bundle   ServiceProvided { service: jinn:ui-bundle }
+1379  jinn-api-http    ContractCall { contract: jinn:ui-bundle, operation: manifest }
+1380  jinn-api-http    ContractCall { contract: jinn:ui-bundle, operation: bundle }
+1382  jinn-api-http    NetListening { handle: 99, port: … }
+1384  jinn-ui-bundle   FiberTransition { fiber: 12, from: Pending,   to: Loading,  cause: InitialLoad }
+1385  jinn-ui-bundle   FiberTransition { fiber: 12, from: Loading,   to: Active,   cause: InitialLoad }
+1386  jinn-ui-bundle   FiberTransition { fiber: 11, from: Active,    to: Unloading, cause: ExplicitDispose }
+1387  jinn-ui-bundle   FiberTransition { fiber: 11, from: Unloading, to: Disposed, cause: ExplicitDispose }
+1388  jinn-api-http    FiberTransition { fiber: 3,  from: Active,    to: Unloading, cause: DependencyChanged }
+1389  jinn-api-http    FiberTransition { fiber: 3,  from: Unloading, to: Pending,  cause: DependencyChanged }
+1390  jinn-api-http    FiberTransition { fiber: 3,  from: Pending,   to: Loading,  cause: DependencyChanged }
+1391  jinn-api-http    FiberTransition { fiber: 3,  from: Loading,   to: Active,   cause: DependencyChanged }
+(cross-fiber transition rows are committed in sync-batch order, not causal order — the
+ transport's second read at 1379 is inside its second activation, not before the bundle's;
+ the causal proof is the gate itself: one load per activation, and the second read after
+ the second provision. The same-fiber order of the transport's own rows is exact.)
+```
+
+What the flip costs: at `85d36b4` the swap was 0 refused connects because
+the transport never stopped listening; at `a53a352` the port closes
+between the two incarnations and proof 4 MEASURES the blip (above) instead
+of asserting it away. That is R9's price and the right shape: a transport
+that keeps serving across a provider change is a transport whose running
+state the kernel cannot vouch for; a restart is a fact on the ledger, a
+refresh in place was a fact only in the transport's memory
+(`docs/notes/2026-09-03-a-declaration-is-a-gate.md`).
