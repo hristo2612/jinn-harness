@@ -129,8 +129,11 @@ The UI-2 meter (`docs/plans/ui-malleability-arc.md` §9 header: UI-1's
 paths plus `plugins/ext/**`, `tools/ext-kit/**`,
 `plugins/plugins/jinn-plugins/src`; `cfg(test)` a declared category;
 `tests/composition` excluded), `git diff --numstat main` on a clean
-tree, the reading pasted on the PR with its `cfg(test)` list. The
-estimate declared before the first edit was ~740; the ceiling is 1,100.
+tree, reads 750 raw production Rust net. The one `#[cfg(test)]` module
+added in `tools/ui-kit/src/lib.rs` is 25 lines, so the billed reading is
+**725 / 800**. Round 1's estimate was ~740; round 2 declared an estimated
+net-zero delta by ruling item before its first edit, and the actual +7 is
+the catalog source attestation mandated by §9.7 amendment 8(d).
 
 ## Round 2: what the verifier found, and what changed
 
