@@ -22,7 +22,6 @@ publish = false
 [dependencies]
 api-kit = { path = "../api-kit" }
 cron-kit = { path = "../cron-kit" }
-jinn-api = { path = "../../plugins/api/jinn-api" }
 jinn-cron = { path = "../../plugins/cron/jinn-cron" }
 jinn-plugins = { path = "../../plugins/plugins/jinn-plugins" }
 jinn-ui = { path = "../../plugins/ui/jinn-ui" }

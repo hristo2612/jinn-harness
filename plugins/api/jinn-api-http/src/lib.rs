@@ -121,8 +121,11 @@ struct HttpConfig {
     #[serde(default)]
     catalogs: Vec<String>,
     /// The bundle entry this API serves, when the profile mounts one —
-    /// written beside this entry's `jinn:ui-bundle` and `jinn:introspect`
-    /// grants (the discipline of `engines`); watched for on transitions.
+    /// written beside this entry's `jinn:ui-bundle` grant and its
+    /// `injects` declaration of the same contract (the discipline of
+    /// `engines`): the kernel gates this fiber's activation on that
+    /// entry being Active, so the read happens at `activate` and nowhere
+    /// else.
     #[serde(default)]
     ui_bundle_entry: Option<String>,
 }
@@ -144,10 +147,8 @@ static STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static TODO_STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static WORKFLOW_STORES: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static CATALOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
-/// The verified bundle this incarnation serves, `None` without one, and
-/// the entry it is read from.
+/// The verified bundle this incarnation serves, `None` without one.
 static BUNDLE: Mutex<Option<ui::Bundle>> = Mutex::new(None);
-static BUNDLE_ENTRY: Mutex<String> = Mutex::new(String::new());
 
 fn fault(context: &str, error: impl std::fmt::Debug) -> GuestFault {
     GuestFault::Failed(format!("{context}: {error:?}"))
@@ -735,13 +736,11 @@ fn activate(config: Vec<u8>) -> Result<(), GuestFault> {
     // The bundle BEFORE the bind: read once, verified, held for this
     // incarnation; a bundle that does not verify fails this fiber
     // here, with no listener ever opened (R11, UI-1 card §4.3 item 5).
-    *BUNDLE.lock().unwrap() = match &config.ui_bundle_entry {
-        Some(entry) => {
-            *BUNDLE_ENTRY.lock().unwrap() = entry.clone();
-            ui::load()?
-        }
-        None => None,
-    };
+    *BUNDLE.lock().unwrap() = config
+        .ui_bundle_entry
+        .as_ref()
+        .map(|_| ui::read())
+        .transpose()?;
     // The bind: a refusal (port outside the grant, non-loopback host,
     // no grant) is the broker's, on the record; this fiber then fails
     // its activation — contained to this entry (R11), never a crash.
@@ -785,26 +784,6 @@ impl Guest for Http {
         // Only the kernel's typed readiness wake of OUR sockets is a
         // reason to touch them; anything else here is a contract
         // violation, refused loudly.
-        // A witnessed transition: the bundle entry reaching Active (ui.rs);
-        // or the one post-commit probe, which reads only while nothing is
-        // held (a bundle already read is the transition's to refresh).
-        let probe = token == ui::PROBE_TOKEN && topic == ui::ALARM_TOPIC;
-        if probe || (token == ui::TRANSITIONS_TOKEN && topic == jinn_plugins::TRANSITIONS_TOPIC) {
-            if probe && BUNDLE.lock().unwrap().is_some() {
-                return Ok(Vec::new());
-            }
-            if probe || ui::completes(&BUNDLE_ENTRY.lock().unwrap(), &payload) {
-                let held = BUNDLE
-                    .lock()
-                    .unwrap()
-                    .as_ref()
-                    .map(|bundle| bundle.manifest.bundle_sha256.clone());
-                if let Some(bundle) = ui::read(held.as_deref())? {
-                    *BUNDLE.lock().unwrap() = Some(bundle);
-                }
-            }
-            return Ok(Vec::new());
-        }
         let handle: Option<[u8; 8]> = payload.as_slice().try_into().ok();
         let (Some(handle), true) = (handle, topic == READABLE_TOPIC) else {
             return Err(GuestFault::Failed(format!(

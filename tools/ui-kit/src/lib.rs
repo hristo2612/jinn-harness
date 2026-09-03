@@ -33,17 +33,18 @@ pub fn bundle_entry(package: &str, hash: &str) -> serde_json::Value {
 }
 
 /// Tells the transport's entry a bundle is mounted: the `jinn:ui-bundle`
-/// grant, `jinn:introspect` (its transitions publish is what says the
-/// bundle entry is Active — the authority the kernel enforces), a bare
-/// `jinn:clock` (the ONE post-activation probe, FINDINGS.md #45), and the
-/// entry's id (that fact told to the provider).
+/// grant (what it may call), the DECLARATION that it injects that contract
+/// at activation (`injects`, beside the grants — the kernel's gate at pin
+/// `a53a352`, M2-K24: activate only once the provider is Active, unload
+/// and reload when it is swapped, re-arm from Failed when it lands late;
+/// FINDINGS.md #7/#45/#46), and the entry's id (that fact told to the
+/// provider). A declaration never widens a grant (constitution 04).
 pub fn mount_bundle_on(transport: &mut serde_json::Value) {
     let grants = transport["config"]["grants"]
         .as_array_mut()
         .expect("grants");
     grants.push(serde_json::json!(BUNDLE_CONTRACT));
-    grants.push(serde_json::json!(jinn_api::INTROSPECT_CONTRACT));
-    grants.push(serde_json::json!(jinn_cron::CLOCK_CONTRACT));
+    transport["config"]["injects"] = serde_json::json!([BUNDLE_CONTRACT]);
     transport["config"]["data"]["ui-bundle-entry"] = serde_json::json!(BUNDLE_ID);
 }
 
@@ -147,4 +148,44 @@ pub fn marked(files: &[(String, Vec<u8>)], marker: &str) -> Vec<(String, Vec<u8>
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The transport entry DECLARES the bundle it injects (pin `a53a352`,
+    /// M2-K24) and holds no grant the declaration made unnecessary: no
+    /// `jinn:introspect`, no `jinn:clock` — the kernel's gate replaced
+    /// the subscription and the probe (FINDINGS.md #45/#46).
+    #[test]
+    fn the_transport_entry_declares_the_bundle_it_injects_and_no_workaround_grant() {
+        let mut transport = serde_json::json!({
+            "id": "jinn-api-http",
+            "config": { "grants": ["jinn:net"], "data": {} }
+        });
+        mount_bundle_on(&mut transport);
+        assert_eq!(
+            transport["config"]["injects"],
+            serde_json::json!([BUNDLE_CONTRACT]),
+            "the declaration, beside the grants"
+        );
+        let grants: Vec<&str> = transport["config"]["grants"]
+            .as_array()
+            .expect("grants")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        assert!(
+            grants.contains(&BUNDLE_CONTRACT),
+            "the grant authorizes the read"
+        );
+        assert!(
+            !grants.iter().any(
+                |grant| grant.starts_with("jinn:introspect") || grant.starts_with("jinn:clock")
+            ),
+            "no workaround grant: {grants:?}"
+        );
+        assert_eq!(transport["config"]["data"]["ui-bundle-entry"], BUNDLE_ID);
+    }
 }
