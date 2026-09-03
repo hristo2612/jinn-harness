@@ -1,5 +1,5 @@
 //! THE INTROSPECT MIRROR CHECK (harness pin-bump 6, `jinn:introspect`
-//! 0.4.0 → 0.5.0). `kernel.rs` spells three of the bundle's records a
+//! 0.4.0 → 0.5.0; pin-bump 7 widened the entry's `extra` set to 0.6.0). `kernel.rs` spells three of the bundle's records a
 //! second time as `serde` structs — `Readiness`, `Registrations`,
 //! `IntrospectEntry` — and nothing but a reader's eye ever compared the
 //! copies. 0.5.0 is the FIRST edition of the bundle a parser accepts, so
@@ -90,11 +90,16 @@ fn the_entry_mirror_names_only_entry_fields_and_leaves_exactly_unserved_to_extra
     // What the mirror does NOT name lands in `extra` additively; the
     // plugins seam reads `unserved` from there by key (its own mirror
     // check covers that key). Name the gap so a widening of it is a
-    // decision, not drift.
+    // decision, not drift. Pin-bump 7 (`jinn:introspect` 0.6.0, M2-K24)
+    // widened it by decision: `injects` (the entry's string-lane
+    // declaration) and `unmet` (which declared providers its gate finds
+    // missing) are carried in `extra` and read by nothing here yet — the
+    // operator surface that shows WHY an entry is `pending` is a later
+    // card's, not a side effect of a pin bump.
     let unnamed: Vec<_> = record.difference(&named).cloned().collect();
     assert_eq!(
         unnamed,
-        ["unserved"],
+        ["injects", "unmet", "unserved"],
         "entry fields carried only in `extra`"
     );
 }

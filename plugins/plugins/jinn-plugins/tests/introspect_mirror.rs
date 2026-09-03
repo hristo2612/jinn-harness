@@ -83,6 +83,11 @@ fn the_snapshot_reads_entry_fields_by_their_contract_names() {
             "unserved" => serde_json::json!("restarting"),
             "provisions" => serde_json::json!(["jinn:plugins.main"]),
             "registrations" => serde_json::json!({}),
+            // 0.6.0 (pin-bump 7, M2-K24): the entry's string-lane
+            // declaration and what its gate finds unmet. Read by nothing
+            // in this seam yet — named here so the gate's next widening
+            // is a decision too.
+            "injects" | "unmet" => serde_json::json!([]),
             other => panic!("the entry record grew a field this seam has not read: `{other}`"),
         };
         entry.insert(field.clone(), value);
