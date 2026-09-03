@@ -37,9 +37,15 @@ wit_bindgen::generate!({
 use exports::jinn::plugin::lifecycle::{Guest, GuestFault};
 use jinn::plugin::{effects, events, services};
 
-/// Effect tokens: the breadcrumbs, the source row, then one per listen.
+/// Effect tokens: the breadcrumbs, the source row, the fault label, then
+/// one per listen.
 const BREADCRUMB_TOKEN: u64 = 1;
 const SOURCE_TOKEN: u64 = 10;
+/// The label under which an activation about to fail names its reason
+/// (a guest's failure records its state and never its reason at this
+/// pin, FINDINGS.md #38; the row outlives the fiber — the transport's
+/// workaround, copied).
+const FAULT_TOKEN: u64 = 11;
 const LISTEN_TOKEN: u64 = 100;
 
 static CONFIG: Mutex<Option<ExtConfig>> = Mutex::new(None);
@@ -112,7 +118,14 @@ struct Boa;
 
 impl Guest for Boa {
     fn activate(config: Vec<u8>) -> Result<(), GuestFault> {
-        activate(config)
+        activate(config).inspect_err(|reason| {
+            let label = format!("jinn-ext-js-boa activation failed: {reason:?}");
+            let cut = label
+                .char_indices()
+                .nth(400)
+                .map_or(label.len(), |(at, _)| at);
+            let _ = effects::register(&label[..cut], FAULT_TOKEN);
+        })
     }
 
     fn check(_consumer: u64) -> bool {

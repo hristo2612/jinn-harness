@@ -214,9 +214,37 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8f42a60cbdf9a97f5d2305f08a87dc4e09308d1276d28c869c684d7777685682"
 
 [[package]]
+name = "jinn-engine"
+version = "0.1.0"
+dependencies = [
+ "jinn-settings",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jinn-session"
+version = "0.1.0"
+dependencies = [
+ "jinn-engine",
+ "jinn-settings",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "jinn-settings"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jinn-ui"
 version = "0.1.0"
 dependencies = [
+ "jinn-session",
  "serde",
  "serde_json",
  "sha2",

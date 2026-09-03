@@ -11,6 +11,14 @@ import { authFetch } from "@/lib/auth"
  * §8 amendment 4: the page renders only what the namespace schema declares,
  * and a save carries only declared keys. An undeclared key is dropped before
  * the wire rather than sent for the daemon to refuse with 422.
+ *
+ * UI-2 (§9.2 item 13): a save is a MOMENT first. Each namespace's patch goes
+ * through `POST /v1/moments/ui/before-patch-settings` as `{ namespace, patch }`
+ * BEFORE its `PATCH /v1/settings/{ns}`, and the PATCH carries the FOLDED patch
+ * — what the daemon's extensions made of it. A refused walk (a typed 503, the
+ * extension mid-restart) is surfaced as the page's conflict notice reading the
+ * refusal; this adapter does not retry on its own (the retry-once belongs with
+ * the composer, UI-6).
  */
 
 /** One property of a namespace schema, as `GET /v1/settings/{ns}` declares it.
@@ -72,6 +80,17 @@ export interface ConfigSaveResult {
 export interface ConfigHttp {
   responseError: (res: Response) => Promise<Error>
   conflict: (status: number, message: string, remedy?: string) => Error
+  /** The one requester of `POST /v1/moments/<domain>/<topic>` (`api.ts`). */
+  moment: (domain: string, topic: string, payload: unknown) => Promise<Response>
+}
+
+/** The moment's domain and topic this adapter dispatches (inventory §4.3 moment 19). */
+export const PATCH_SETTINGS_MOMENT = { domain: "ui", topic: "before-patch-settings" } as const
+
+/** What the moment answers: the payload as the daemon's extensions folded it. */
+interface PatchSettingsMomentWire {
+  namespace?: string
+  patch?: Record<string, unknown>
 }
 
 /** The document the last `getConfig` read: what the next save is diffed against. */
@@ -130,6 +149,28 @@ async function refusal(res: Response, { responseError, conflict }: ConfigHttp): 
   return conflict(res.status, error.detail ?? `the settings seam answered ${error.code}`, remedy)
 }
 
+/** A refused walk is the seam's typed `unavailable` naming the refusal (`restarting`,
+ *  `gone`, `suspended`, `stalled`, `cycle`) — the conflict the notice reads, with the
+ *  refusal's own word as the remedy's cue; any other failure is the ordinary error. */
+async function momentRefusal(res: Response, { responseError, conflict }: ConfigHttp): Promise<Error> {
+  const body = (await res.clone().json().catch(() => null)) as SettingsErrorEnvelopeWire | null
+  const error = body?.error
+  if (!error || error.code !== "unavailable") return responseError(res)
+  return conflict(
+    res.status,
+    error.detail ?? "the moment's walk was refused",
+    "An extension refused the moment whole (it may be restarting). Nothing was saved; try the save again.",
+  )
+}
+
+/** The moment, then the patch: what the PATCH carries is what the extensions folded. */
+async function foldPatch(http: ConfigHttp, namespace: string, patch: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const res = await http.moment(PATCH_SETTINGS_MOMENT.domain, PATCH_SETTINGS_MOMENT.topic, { namespace, patch })
+  if (!res.ok) throw await momentRefusal(res, http)
+  const folded = (await res.json()) as PatchSettingsMomentWire
+  return settingsOf(folded.patch)
+}
+
 /** The config slice of the `api` object, spread back in at its old position. */
 export function createConfigApi(http: ConfigHttp) {
   async function readNamespace(namespace: string): Promise<ResolvedNamespaceWire> {
@@ -138,7 +179,8 @@ export function createConfigApi(http: ConfigHttp) {
     return (await res.json()) as ResolvedNamespaceWire
   }
 
-  async function patchNamespace(namespace: string, patch: Record<string, unknown>): Promise<void> {
+  async function patchNamespace(namespace: string, unfolded: Record<string, unknown>): Promise<void> {
+    const patch = await foldPatch(http, namespace, unfolded)
     const res = await authFetch(`/v1/settings/${encodeURIComponent(namespace)}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

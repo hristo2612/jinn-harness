@@ -106,13 +106,14 @@ verbatim	packages/web/src/hooks/use-root-css-variables.ts	src/hooks/use-root-css
 verbatim	packages/web/src/hooks/use-sessions.ts	src/hooks/use-sessions.ts
 verbatim	packages/web/src/hooks/use-todo-prefixes.ts	src/hooks/use-todo-prefixes.ts
 verbatim	packages/web/src/hooks/use-workspaces.ts	src/hooks/use-workspaces.ts
-adapted	packages/web/src/lib/api-config.ts	src/lib/api-config.ts	1
+adapted	packages/web/src/lib/api-config.ts	src/lib/api-config.ts	1,13
 verbatim	packages/web/src/lib/api-experiments.ts	src/lib/api-experiments.ts
 verbatim	packages/web/src/lib/api-stt.ts	src/lib/api-stt.ts
 verbatim	packages/web/src/lib/api-todo-capture.ts	src/lib/api-todo-capture.ts
 verbatim	packages/web/src/lib/api-workflow-lifecycle.ts	src/lib/api-workflow-lifecycle.ts
-adapted	packages/web/src/lib/api.ts	src/lib/api.ts	1
+adapted	packages/web/src/lib/api.ts	src/lib/api.ts	1,13
 new	-	src/lib/api-v1-wire.ts
+new	-	src/lib/__tests__/api-config.test.ts	13
 adapted	packages/web/src/lib/app-routes.ts	src/lib/app-routes.ts	5
 adapted	packages/web/src/main.tsx	src/main.tsx	5
 adapted	packages/web/src/lib/auth.ts	src/lib/auth.ts	2
@@ -222,7 +223,7 @@ adapted	packages/web/src/routes/settings/plugins/inventory.ts	src/routes/setting
 new	-	src/routes/settings/plugins/__tests__/inventory.test.ts	10
 adapted	packages/web/src/routes/settings/plugins/page.tsx	src/routes/settings/plugins/page.tsx	4
 verbatim	packages/web/src/routes/settings/plugins/plugin-list.tsx	src/routes/settings/plugins/plugin-list.tsx
-adapted	packages/web/src/routes/settings/plugins/plugin-row.tsx	src/routes/settings/plugins/plugin-row.tsx	4
+adapted	packages/web/src/routes/settings/plugins/plugin-row.tsx	src/routes/settings/plugins/plugin-row.tsx	4,14
 verbatim	packages/web/src/routes/settings/shared.tsx	src/routes/settings/shared.tsx
 verbatim	packages/web/src/routes/settings/shortcuts-section.tsx	src/routes/settings/shortcuts-section.tsx
 verbatim	packages/web/src/routes/settings/stt-section.tsx	src/routes/settings/stt-section.tsx

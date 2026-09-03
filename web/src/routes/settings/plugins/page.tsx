@@ -45,6 +45,7 @@ function rowOf(entry: PluginCatalogEntryWire): CatalogRow {
     incarnation: entry.incarnation,
     package: entry.package,
     provides: entry.provides ?? [],
+    ...(entry.attestation ? { attestation: entry.attestation } : {}),
   }
 }
 

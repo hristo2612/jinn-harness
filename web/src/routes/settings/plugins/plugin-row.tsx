@@ -17,6 +17,8 @@ export type CatalogRow = PluginInventoryRow & {
   incarnation?: number
   package?: string
   provides?: string[]
+  /** UI-2 (§9.2 item 14): the entry's declared `origin`, when it has one. */
+  attestation?: { origin: string }
 }
 
 /** The pill's colour per status. Errors read as a red wash rather than a solid
@@ -49,6 +51,21 @@ function StatusPill({ status }: { status: PluginStatus }) {
       style={{ background: bg, color: fg }}
     >
       {label}
+    </span>
+  )
+}
+
+/** UI-2 (§9.2 item 14): who wrote an extension's source, as the entry declares
+ *  it (`human` / `agent`). Rendered only when the row carries one. */
+function OriginBadge({ plugin }: { plugin: CatalogRow }) {
+  if (!plugin.attestation) return null
+  return (
+    <span
+      data-testid={`plugin-origin-${plugin.id}`}
+      title="The entry's declared origin: who wrote this extension's source"
+      className="inline-flex h-[18px] flex-none items-center rounded-full bg-[var(--fill-tertiary)] px-2 text-[length:var(--text-caption2)] font-semibold text-[var(--text-secondary)]"
+    >
+      {plugin.attestation.origin}
     </span>
   )
 }
@@ -90,6 +107,7 @@ function PluginIdentity({ plugin }: { plugin: CatalogRow }) {
           {plugin.name}
         </span>
         <StatusPill status={plugin.status} />
+        <OriginBadge plugin={plugin} />
       </span>
       <span className="flex min-w-0 items-center gap-[7px] text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">
         <Reading plugin={plugin} />

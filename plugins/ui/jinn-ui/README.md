@@ -78,6 +78,52 @@ presented on a static path is ignored — never read, never put to
 `jinn:auth` — which the composition suite proves on the ledger
 (`tests/composition/tests/ui.rs`, proof 2).
 
+## Moments (UI-2, plan §9)
+
+A MOMENT is a `waterfall` walk on a `jinn:ui/<topic>` topic that the
+transport dispatches when an AUTHENTICATED client calls
+`POST /v1/moments/<domain>/<topic>` with the moment's payload, and
+answers with the FOLDED payload: listeners in registration order, a
+non-empty output replacing the payload for the next, the final payload
+the one answer, one `DispatchTrace` row per walk. The vocabulary is
+CLOSED (R3) — `src/moments.rs` is its schema:
+
+| Topic | Payload | Inventory |
+|---|---|---|
+| `jinn:ui/before-send` | `{ "text", "attachments": [], "session-id" }` (`BeforeSend`) | §4.3 moment 1 |
+| `jinn:ui/before-create-session` | the sessions seam's `SessionSpec` | §4.3 moment 3 |
+| `jinn:ui/before-patch-settings` | `{ "namespace", "patch": { … } }` (`BeforePatchSettings`) | §4.3 moment 19 — the one moment the ported shell reaches (the Settings save) |
+
+**The path law** (`moment_topic`): `/v1/moments/<domain>/<topic>` maps
+to `jinn:<domain>/<topic>` for exactly the topics above, byte for byte;
+anything else — another topic, a `..` segment, a case variant, a
+trailing slash, `/v1/moments/introspect/transitions` — is a 404 with NO
+dispatch. The vocabulary is closed, not forwarded: a route that relies
+on the kernel's refusal is a route that dispatched.
+
+**The answers**, in the order the transport decides them (after the
+door, `plugins/api/jinn-api-http/src/moments.rs`):
+
+| Case | Answer |
+|---|---|
+| not a named topic | `404 not-found`, no dispatch |
+| a method other than `POST` | `405`, no dispatch |
+| a body off the topic's schema (`validate_moment`) | `422 invalid`, no dispatch — the schema binds the client's INPUT; the walk's output is the listeners' and is not re-checked |
+| the walk delivered (zero or more listeners, any number of contained failures) | `200`, the folded bytes — with no listener, the body itself |
+| the walk REFUSED WHOLE by the kernel: `restarting`, `gone`, `suspended`, `stalled` (M2-K9), `cycle` (M2-K10) | `503 unavailable`, `detail` opening with the refusal's name, the typed `refusal` field beside it |
+
+**Fail-closed.** A refused walk is never answered with the unmodified
+payload: a validator extension ("refuse a send containing an API key")
+is defeated by fail-open, so the send waits for the walk or does not
+happen. The client's retry-once after a `503` belongs with the composer
+(UI-6); the Settings adapter surfaces the refusal as its conflict notice
+and does not retry.
+
+The emitter — the transport — is granted the three topic names as the
+profile's statement of what it emits (`tools/ui-kit`, `mount_moments_on`).
+Listeners are the extension tier (`plugins/ext/README.md`). Every claim
+above is proven on the ledger in `tests/composition/tests/moments.rs`.
+
 ## What is deliberately NOT here
 
 Compression (the old gateway memoised brotli/gzip per path+mtime+

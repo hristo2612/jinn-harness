@@ -1,0 +1,1108 @@
+//! THE MOMENTS and the JS-in-WASM extension tier (harness packet UI-2,
+//! PLA-353; `docs/plans/ui-malleability-arc.md` §9.3, proofs 1–8 and 10).
+//! Every proof boots the `ui` profile through the REAL pinned daemon
+//! (AGENTS.md standing order 3) — the kit-built profile mounting the Boa
+//! engine provider as `ext-green` (§6) — and drives the transport over
+//! loopback as the client would: `POST /v1/moments/<domain>/<topic>` with
+//! the operator's bearer. Every ledger claim is read from the daemon's
+//! own SQLite (`Daemon::ledger_rows`), never from the transport's answer
+//! alone. Proof 9 is the repo gate in `tools/ui-kit/tests/verbatim.rs`;
+//! proof 11 is the independent verifier's, over `agent-browser`.
+//!
+//! Self-skips LOUDLY when no jinnd checkout holding the pinned commit is
+//! reachable (KERNEL-PIN.md Gate 2).
+
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
+
+use composition::api::{get, listening, post, request, request_as, Response};
+use composition::daemon::{jinnd_source, pinned_commit, pinned_daemon};
+use composition::kit::{
+    artifact_hash, entry_mut, fresh_ui_root, suite_credential, Daemon, LedgerRow,
+};
+use composition::plugins::{history, state};
+use ext_kit::{
+    ext_entry, slow_source, BLUE_ID, BLUE_SOURCE, BOA_GUEST, BROKEN_SOURCE, GREEN_ID, GREEN_SOURCE,
+    LOOPING_SOURCE, THROWING_ID, THROWING_SOURCE, UNDEFINED_SOURCE,
+};
+use jinn_api::{AUTH_CONTRACT, OP_VERIFY};
+use jinn_ext::{source_breadcrumb, Origin, BREADCRUMBS};
+use jinn_ui::{TOPIC_BEFORE_CREATE_SESSION, TOPIC_BEFORE_SEND};
+
+const TRANSPORT: &str = "jinn-api-http";
+const CATALOG: &str = "main";
+const SEND_PATH: &str = "/v1/moments/ui/before-send";
+const CREATE_PATH: &str = "/v1/moments/ui/before-create-session";
+/// The §6 body: what the composer sends before the optimistic bubble.
+const SEND_BODY: &str = r#"{"text":"hello","session-id":"session-1","attachments":[]}"#;
+/// The guest deadline at the pin (`lane::DEADLINE`, `crates/jinnd-wasm/src/lane.rs`).
+const GUEST_DEADLINE: Duration = Duration::from_secs(5);
+/// Proof 2's line in the sand: above it the cost of one moment is KG-7.
+const KG7_BOUND: Duration = Duration::from_millis(250);
+
+fn gate() -> Option<&'static PathBuf> {
+    static BINARY: OnceLock<Option<PathBuf>> = OnceLock::new();
+    BINARY
+        .get_or_init(|| {
+            let commit = pinned_commit().expect("KERNEL-PIN.md parses");
+            let Some(source) = jinnd_source(&commit) else {
+                eprintln!(
+                    "SKIPPED (loudly): real-composition gate found no jinnd checkout holding \
+                     pinned commit {commit} — set JINND_DIR, add a sibling ../jinnd, or set \
+                     JINND_CLONE_URL (KERNEL-PIN.md Gate 2 discipline)"
+                );
+                return None;
+            };
+            Some(pinned_daemon(&source, &commit).expect("the pinned daemon builds"))
+        })
+        .as_ref()
+}
+
+/// The provider's pin in this root (the kit's sidecar).
+fn boa_hash(root: &Path) -> String {
+    artifact_hash(root, BOA_GUEST)
+}
+
+/// An extension entry on the §6 shape, pinned to this root's provider.
+fn extension(root: &Path, id: &str, topics: &[&str], source: &str) -> serde_json::Value {
+    ext_entry(id, &boa_hash(root), topics, source, Origin::Agent)
+}
+
+/// Edits the root's profile document BEFORE boot.
+fn edit_before_boot(root: &Path, edit: impl FnOnce(&mut serde_json::Value)) {
+    let path = root.join("profile.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("profile")).expect("parses");
+    edit(&mut document);
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&document).expect("encodes"),
+    )
+    .expect("profile");
+}
+
+fn remove_entry(document: &mut serde_json::Value, id: &str) {
+    let entries = document["entries"].as_array_mut().expect("entries");
+    let before = entries.len();
+    entries.retain(|entry| entry["id"] != id);
+    assert_eq!(entries.len(), before - 1, "{id} was mounted");
+}
+
+fn push_entry(document: &mut serde_json::Value, entry: serde_json::Value) {
+    document["entries"]
+        .as_array_mut()
+        .expect("entries")
+        .push(entry);
+}
+
+/// Boots a fresh `ui` root after `edit`, waits for the API and for every
+/// extension entry to settle (`Active` or `Failed`).
+fn booted(name: &str, edit: impl FnOnce(&Path, &mut serde_json::Value)) -> Option<(Daemon, u16)> {
+    let binary = gate()?;
+    let (root, port) = fresh_ui_root(name);
+    edit_before_boot(&root, |document| edit(&root, document));
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(root.join("profile.json")).expect("profile"))
+            .expect("parses");
+    let extensions: Vec<String> = document["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .filter(|entry| entry["package"] == jinn_ext::BOA_PACKAGE)
+        .map(|entry| entry["id"].as_str().expect("id").to_owned())
+        .collect();
+    let daemon = Daemon::boot_operator(binary, &root);
+    daemon.await_ready();
+    let health = get(port, "/v1/health");
+    assert_eq!(health.status, 200, "{}", health.raw);
+    for id in &extensions {
+        daemon.eventually(&format!("{id} to settle"), || settled(&daemon, id));
+    }
+    Some((daemon, port))
+}
+
+fn kind_of(row: &LedgerRow) -> (String, serde_json::Value) {
+    match serde_json::from_str::<serde_json::Value>(&row.kind) {
+        Ok(serde_json::Value::Object(object)) if object.len() == 1 => {
+            let (name, fields) = object.into_iter().next().expect("one key");
+            (name, fields)
+        }
+        Ok(serde_json::Value::String(unit)) => (unit, serde_json::Value::Null),
+        _ => (row.kind.clone(), serde_json::Value::Null),
+    }
+}
+
+fn is_call(row: &LedgerRow, contract: &str, operation: &str) -> bool {
+    let (name, fields) = kind_of(row);
+    name == "ContractCall" && fields["contract"] == contract && fields["operation"] == operation
+}
+
+fn settled(daemon: &Daemon, id: &str) -> bool {
+    daemon.ledger_rows().iter().any(|row| {
+        row.entry.as_deref() == Some(id)
+            && (row.kind.contains(r#""to":"Active""#) || row.kind.contains(r#""to":"Failed""#))
+    })
+}
+
+/// Every `DispatchTrace` row on a MOMENT topic after `seq`, as its
+/// fields (the cron seam emits on its own topics beside these).
+fn traces(daemon: &Daemon, seq: u64) -> Vec<(LedgerRow, serde_json::Value)> {
+    daemon
+        .ledger_rows()
+        .into_iter()
+        .filter(|row| row.seq > seq)
+        .filter_map(|row| {
+            let (name, fields) = kind_of(&row);
+            (name == "DispatchTrace"
+                && fields["topic"]
+                    .as_str()
+                    .is_some_and(|topic| topic.starts_with("jinn:ui/")))
+            .then_some((row, fields))
+        })
+        .collect()
+}
+
+/// The labels an entry registered, in sequence order.
+fn labels(daemon: &Daemon, id: &str) -> Vec<String> {
+    daemon
+        .ledger_rows()
+        .iter()
+        .filter(|row| row.entry.as_deref() == Some(id))
+        .filter_map(|row| {
+            let (name, fields) = kind_of(row);
+            (name == "EffectRegistered").then(|| fields["label"].as_str().unwrap_or("").to_owned())
+        })
+        .collect()
+}
+
+fn last_seq(daemon: &Daemon) -> u64 {
+    daemon.ledger_rows().last().map_or(0, |row| row.seq)
+}
+
+/// The ledger's own clock per row (`ts`, unix ms): the walk's cost read
+/// off the record rather than off the client's wall.
+fn ledger_ts(daemon: &Daemon) -> Vec<(u64, Option<String>, String, i64)> {
+    let connection =
+        rusqlite::Connection::open(daemon.root.join("ledger.sqlite")).expect("ledger opens");
+    let mut select = connection
+        .prepare("SELECT seq, entry, kind, ts FROM events ORDER BY seq")
+        .expect("ledger schema");
+    let rows = select
+        .query_map([], |row| {
+            Ok((
+                row.get::<_, u64>(0)?,
+                row.get::<_, Option<String>>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+            ))
+        })
+        .expect("ledger reads")
+        .collect::<Result<Vec<_>, _>>()
+        .expect("ledger rows");
+    rows
+}
+
+/// The transport's rows after `seq`, one segment per accepted connection
+/// (2.8's discipline, `tests/composition/tests/auth.rs`).
+fn segments(daemon: &Daemon, seq: u64) -> Vec<Vec<LedgerRow>> {
+    let mut segments: Vec<Vec<LedgerRow>> = Vec::new();
+    let mut open: Option<u64> = None;
+    for row in daemon
+        .ledger_rows()
+        .into_iter()
+        .filter(|row| row.seq > seq && row.entry.as_deref() == Some(TRANSPORT))
+    {
+        let (name, fields) = kind_of(&row);
+        if name == "NetAccepted" {
+            open = fields["handle"].as_u64();
+            segments.push(vec![row]);
+            continue;
+        }
+        let Some(handle) = open else { continue };
+        let closes = name == "NetClosed" && fields["handle"].as_u64() == Some(handle);
+        segments.last_mut().expect("an open segment").push(row);
+        if closes {
+            open = None;
+        }
+    }
+    segments
+}
+
+fn is_transport(row: &LedgerRow) -> bool {
+    let (name, fields) = kind_of(row);
+    match name.as_str() {
+        "NetAccepted" | "NetReadable" | "NetClosed" => true,
+        "ContractCall" => fields["contract"] == "jinn:net",
+        _ => false,
+    }
+}
+
+fn closed_segments(daemon: &Daemon, seq: u64, count: usize) -> Vec<Vec<LedgerRow>> {
+    daemon.eventually(
+        &format!("{count} connections to close on the ledger"),
+        || {
+            segments(daemon, seq)
+                .iter()
+                .filter(|segment| kind_of(segment.last().expect("a row")).0 == "NetClosed")
+                .count()
+                >= count
+        },
+    );
+    let segments = segments(daemon, seq);
+    assert_eq!(segments.len(), count, "one segment per connection");
+    segments
+}
+
+fn send(port: u16) -> Response {
+    request(port, "POST", SEND_PATH, Some(SEND_BODY))
+}
+
+/// The response body EXACTLY as the wire carried it.
+fn raw_body(response: &Response) -> &str {
+    response
+        .raw
+        .split_once("\r\n\r\n")
+        .map_or("", |(_, body)| body)
+}
+
+fn one_trace(daemon: &Daemon, seq: u64, topic: &str) -> serde_json::Value {
+    let traces = traces(daemon, seq);
+    assert_eq!(traces.len(), 1, "exactly one walk: {traces:#?}");
+    let (row, fields) = &traces[0];
+    assert_eq!(
+        row.entry.as_deref(),
+        Some(TRANSPORT),
+        "the emitter is the transport"
+    );
+    assert_eq!(fields["topic"], topic);
+    assert!(
+        fields["mode"]
+            .as_str()
+            .is_some_and(|mode| mode.eq_ignore_ascii_case("waterfall")),
+        "{fields}"
+    );
+    fields.clone()
+}
+
+/// A request that tolerates the transport dying mid-answer or never
+/// answering: the elapsed time and the status line if one came, `None`
+/// on a closed socket, a refused connect, or `wait` elapsing.
+fn tolerant(
+    port: u16,
+    method: &str,
+    path: &str,
+    body: &str,
+    wait: Duration,
+) -> (Duration, Option<u16>) {
+    use std::io::{Read as _, Write as _};
+    let started = Instant::now();
+    let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+    let Ok(mut stream) = std::net::TcpStream::connect_timeout(&address, Duration::from_secs(2))
+    else {
+        return (started.elapsed(), None);
+    };
+    stream.set_read_timeout(Some(wait)).expect("read timeout");
+    let wire = format!(
+        "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        suite_credential(),
+        body.len()
+    );
+    if stream.write_all(wire.as_bytes()).is_err() {
+        return (started.elapsed(), None);
+    }
+    let mut raw = Vec::new();
+    let _ = stream.read_to_end(&mut raw);
+    let status = String::from_utf8_lossy(&raw)
+        .strip_prefix("HTTP/1.1 ")
+        .and_then(|rest| rest.get(..3))
+        .and_then(|code| code.parse().ok());
+    (started.elapsed(), status)
+}
+
+#[test]
+fn a_moment_with_no_listener_answers_its_own_payload() {
+    let Some((daemon, port)) = booted("moments-none", |_, document| {
+        remove_entry(document, GREEN_ID)
+    }) else {
+        return;
+    };
+    let baseline = last_seq(&daemon);
+    let answer = send(port);
+    assert_eq!(answer.status, 200, "{}", answer.raw);
+    assert_eq!(raw_body(&answer), SEND_BODY, "the body, byte for byte");
+    daemon.eventually("the walk on the ledger", || {
+        !traces(&daemon, baseline).is_empty()
+    });
+    let trace = one_trace(&daemon, baseline, TOPIC_BEFORE_SEND);
+    assert_eq!(trace["listeners"], 0);
+    assert_eq!(trace["failures"], 0);
+    println!("proof 1: no listener — the body answered unmodified; {trace}");
+    daemon.interrupt();
+}
+
+#[test]
+fn one_js_extension_folds_the_payload_and_the_ledger_says_so() {
+    let Some((daemon, port)) = booted("moments-green", |_, _| {}) else {
+        return;
+    };
+    assert_eq!(
+        state(&get(port, &format!("/v1/plugins/{CATALOG}/{GREEN_ID}")).body),
+        "active"
+    );
+    let baseline = last_seq(&daemon);
+    let answer = send(port);
+    assert_eq!(answer.status, 200, "{}", answer.raw);
+    assert_eq!(answer.body["text"], "hello 🟢", "{}", answer.raw);
+    assert_eq!(answer.body["session-id"], "session-1");
+    daemon.eventually("the walk on the ledger", || {
+        !traces(&daemon, baseline).is_empty()
+    });
+    let trace = one_trace(&daemon, baseline, TOPIC_BEFORE_SEND);
+    assert_eq!(trace["listeners"], 1);
+    assert_eq!(trace["failures"], 0);
+
+    // The extension's own rows, in order: the four breadcrumbs, WHAT
+    // CODE RAN, the listen (§5.4's good row).
+    let mut expected: Vec<String> = BREADCRUMBS.iter().map(|s| (*s).to_owned()).collect();
+    expected.push(source_breadcrumb(GREEN_SOURCE));
+    expected.push(format!("listen {TOPIC_BEFORE_SEND}"));
+    assert_eq!(labels(&daemon, GREEN_ID), expected);
+
+    // Proof 2's MEASUREMENT (§5.5's unmeasured item): twenty walks, the
+    // wall per walk from the request to the answer, and the ledger's own
+    // clock from the walk's trace row back to the transport's previous
+    // row on that connection (the door's decision) — the cost of one
+    // moment on the spike's shape, a Boa context per delivery.
+    const WALKS: usize = 20;
+    let before = last_seq(&daemon);
+    let mut walls = Vec::with_capacity(WALKS);
+    for _ in 0..WALKS {
+        let started = Instant::now();
+        let answer = send(port);
+        walls.push(started.elapsed());
+        assert_eq!(answer.status, 200, "{}", answer.raw);
+        assert_eq!(answer.body["text"], "hello 🟢");
+    }
+    daemon.eventually("twenty walks on the ledger", || {
+        traces(&daemon, before).len() >= WALKS
+    });
+    let rows = ledger_ts(&daemon);
+    let mut ledger = Vec::with_capacity(WALKS);
+    for (index, (seq, _, _, ts)) in rows
+        .iter()
+        .enumerate()
+        .filter(|(_, (seq, entry, kind, _))| {
+            *seq > before && entry.as_deref() == Some(TRANSPORT) && kind.contains("DispatchTrace")
+        })
+    {
+        let previous = rows[..index]
+            .iter()
+            .rev()
+            .find(|(_, entry, _, _)| entry.as_deref() == Some(TRANSPORT))
+            .expect("a transport row before the walk");
+        ledger.push((*seq, ts - previous.3));
+    }
+    let wall_avg = walls.iter().sum::<Duration>() / WALKS as u32;
+    let wall_max = walls.iter().max().copied().unwrap_or_default();
+    let ledger_avg = ledger.iter().map(|(_, ms)| *ms).sum::<i64>() / WALKS as i64;
+    let ledger_max = ledger.iter().map(|(_, ms)| *ms).max().unwrap_or_default();
+    println!(
+        "proof 2: {WALKS} walks — wall per walk avg {wall_avg:?} max {wall_max:?} (all: {walls:?}); ledger clock trace-to-previous-transport-row avg {ledger_avg} ms max {ledger_max} ms; guest memory high-water mark: not exposed (jinn:introspect 0.6.0 carries injects/unmet, no memory reading — KG-7's second half)"
+    );
+    if wall_avg > KG7_BOUND {
+        println!(
+            "proof 2: the per-walk cost {wall_avg:?} is above {KG7_BOUND:?} — KG-7 is a finding; no Boa context reuse is designed in this packet"
+        );
+    }
+    daemon.interrupt();
+}
+
+#[test]
+fn two_extensions_compose_in_registration_order_and_the_order_is_named() {
+    let Some((daemon, port)) = booted("moments-two", |root, document| {
+        let blue = extension(root, BLUE_ID, &[TOPIC_BEFORE_SEND], BLUE_SOURCE);
+        push_entry(document, blue);
+    }) else {
+        return;
+    };
+    for id in [GREEN_ID, BLUE_ID] {
+        assert_eq!(
+            state(&get(port, &format!("/v1/plugins/{CATALOG}/{id}")).body),
+            "active"
+        );
+    }
+    let baseline = last_seq(&daemon);
+    let answer = send(port);
+    assert_eq!(answer.status, 200, "{}", answer.raw);
+    let text = answer.body["text"].as_str().expect("text").to_owned();
+    assert!(text.contains("🟢") && text.contains("🔵"), "{text}");
+    daemon.eventually("the walk on the ledger", || {
+        !traces(&daemon, baseline).is_empty()
+    });
+    let trace = one_trace(&daemon, baseline, TOPIC_BEFORE_SEND);
+    assert_eq!(trace["listeners"], 2);
+    assert_eq!(trace["failures"], 0);
+    // The order the ledger's listen rows record IS the order of the
+    // markers in the answer — asserted as OBSERVED, and named: the
+    // order across siblings is what the boot dealt (KG-3; FINDINGS #7
+    // answers declared injections only).
+    let listens: Vec<String> = daemon
+        .ledger_rows()
+        .iter()
+        .filter(|row| {
+            row.kind.contains("EffectRegistered")
+                && row.kind.contains(&format!("listen {TOPIC_BEFORE_SEND}"))
+        })
+        .filter_map(|row| row.entry.clone())
+        .collect();
+    assert_eq!(listens.len(), 2, "{listens:?}");
+    let green_first = text.find("🟢") < text.find("🔵");
+    let expected = if listens[0] == GREEN_ID {
+        GREEN_ID
+    } else {
+        BLUE_ID
+    };
+    assert_eq!(
+        green_first,
+        expected == GREEN_ID,
+        "the fold order is the listen-row order: answer {text:?}, listens {listens:?}"
+    );
+    println!(
+        "proof 3: two extensions folded in the ledger's listen order {listens:?} — answer {text:?} (KG-3: the order across siblings is what the boot dealt)"
+    );
+    daemon.interrupt();
+}
+
+#[test]
+fn a_throwing_extension_is_recorded_and_the_walk_continues() {
+    let Some(binary) = gate() else { return };
+    // First half: a throwing extension beside ext-green.
+    let (root, port) = fresh_ui_root("moments-throw");
+    let throwing = extension(&root, THROWING_ID, &[TOPIC_BEFORE_SEND], THROWING_SOURCE);
+    edit_before_boot(&root, |document| push_entry(document, throwing));
+    let daemon = Daemon::boot_operator(binary, &root);
+    daemon.await_ready();
+    for id in [GREEN_ID, THROWING_ID] {
+        daemon.eventually(&format!("{id} to settle"), || settled(&daemon, id));
+    }
+    let baseline = last_seq(&daemon);
+    let answer = send(port);
+    assert_eq!(answer.status, 200, "{}", answer.raw);
+    assert_eq!(
+        answer.body["text"], "hello 🟢",
+        "ext-green's fold survives (R9)"
+    );
+    daemon.eventually("the walk on the ledger", || {
+        !traces(&daemon, baseline).is_empty()
+    });
+    let trace = one_trace(&daemon, baseline, TOPIC_BEFORE_SEND);
+    assert_eq!(trace["listeners"], 2);
+    assert_eq!(trace["failures"], 1);
+    // A failed delivery is not a failed activation: the fiber stays active.
+    assert_eq!(
+        state(&get(port, &format!("/v1/plugins/{CATALOG}/{THROWING_ID}")).body),
+        "active"
+    );
+    // Where the failure is on the record: the throwing extension's own
+    // history, read through the operator surface, and the raw ledger.
+    let kinds: Vec<String> = history(port, CATALOG, THROWING_ID)["lines"]
+        .as_array()
+        .expect("lines")
+        .iter()
+        .filter(|line| line["seq"].as_u64().is_some_and(|seq| seq > baseline))
+        .map(|line| line["kind"].as_str().unwrap_or("").to_owned())
+        .collect();
+    let own_rows: Vec<String> = daemon
+        .ledger_rows()
+        .iter()
+        .filter(|row| row.seq > baseline && row.entry.as_deref() == Some(THROWING_ID))
+        .map(|row| row.kind.clone())
+        .collect();
+    println!(
+        "proof 4: throwing beside green — failures 1, the fold survived; the throwing extension's history after the walk: {kinds:?}; its raw rows: {own_rows:?}"
+    );
+    daemon.interrupt();
+
+    // Second half: a source returning `undefined` yields EMPTY output and
+    // the payload passes unchanged; a source returning a string is a
+    // contained failure (§9.4 probe), and neither aborts the walk.
+    let (root, port) = fresh_ui_root("moments-undefined");
+    let undefined = extension(
+        &root,
+        "ext-undefined",
+        &[TOPIC_BEFORE_SEND],
+        UNDEFINED_SOURCE,
+    );
+    let string = extension(&root, "ext-string", &[TOPIC_BEFORE_SEND], "(p) => 'nope'");
+    edit_before_boot(&root, |document| {
+        remove_entry(document, GREEN_ID);
+        push_entry(document, undefined);
+        push_entry(document, string);
+    });
+    let daemon = Daemon::boot_operator(binary, &root);
+    daemon.await_ready();
+    for id in ["ext-undefined", "ext-string"] {
+        daemon.eventually(&format!("{id} to settle"), || settled(&daemon, id));
+    }
+    let baseline = last_seq(&daemon);
+    let answer = send(port);
+    assert_eq!(answer.status, 200, "{}", answer.raw);
+    assert_eq!(
+        raw_body(&answer),
+        SEND_BODY,
+        "undefined passes the payload unchanged"
+    );
+    daemon.eventually("the walk on the ledger", || {
+        !traces(&daemon, baseline).is_empty()
+    });
+    let trace = one_trace(&daemon, baseline, TOPIC_BEFORE_SEND);
+    assert_eq!(trace["listeners"], 2);
+    assert_eq!(
+        trace["failures"], 1,
+        "the string-returning source is the one failure"
+    );
+    println!(
+        "proof 4 (second half): undefined = pass-through, a string = contained failure; {trace}"
+    );
+    daemon.interrupt();
+}
+
+/// Proof 5 is a MEASUREMENT with a NOT-YET clause, found in round 1: the
+/// card expected a moment posted inside an extension's restart window to
+/// be refused `restarting` (M2-K9). What the pinned kernel does on a
+/// ConfigChanged restart of a listener is WITHDRAW its listen with the
+/// old incarnation's suspension BEFORE the replacement commits, so a walk
+/// inside the window selects NOBODY and answers the payload UNMODIFIED —
+/// the fail-open the decision exists to prevent, at the kernel rather
+/// than at the transport (FINDINGS.md #47). The transport's own half is
+/// asserted (a refusal, when one comes, is typed and names its case;
+/// nothing else is answered but a delivered walk's fold); the kernel's
+/// half is recorded, counted, and printed, never asserted around.
+#[test]
+fn a_restarting_extension_refuses_the_moment_typed_and_nothing_is_sent() {
+    let Some((daemon, port)) = booted("moments-restart", |_, _| {}) else {
+        return;
+    };
+    let first = send(port);
+    assert_eq!(first.body["text"], "hello 🟢", "{}", first.raw);
+    let baseline = last_seq(&daemon);
+
+    // The operator's edit: a new source whose ACTIVATION is slow by
+    // construction (a bounded loop under fuel; ~3M iterations/s measured
+    // at this pin, so ~1.3 s), through the profile document — the lane
+    // the watcher serves, so the transport stays free to take moments
+    // while the extension restarts. (Through `PATCH /v1/profile/entries`
+    // the transport itself awaits the restart inside the patch's own
+    // request, #26, and cannot take a moment until it lands.)
+    let slow = slow_source(4_000_000, "v2");
+    let edited = Instant::now();
+    daemon.edit_profile(|document| {
+        entry_mut(document, GREEN_ID)["config"]["data"]["source"] = serde_json::json!(slow);
+    });
+    // Every answer in the window, bucketed: refused typed (what the card
+    // expected), the OLD fold (the edit not yet taken), UNMODIFIED (a walk
+    // that selected no listener — fail-open), the NEW fold (landed).
+    let mut refused: Vec<(Duration, String)> = Vec::new();
+    let mut old = 0u32;
+    let mut open: Vec<Duration> = Vec::new();
+    let mut landed: Option<(Duration, Response)> = None;
+    let deadline = edited + Duration::from_secs(60);
+    while landed.is_none() {
+        assert!(
+            Instant::now() < deadline,
+            "the restart to land\n{}",
+            daemon.log()
+        );
+        let answer = send(port);
+        let at = edited.elapsed();
+        match (answer.status, answer.body["text"].as_str()) {
+            (503, _) => refused.push((at, answer.body["error"].to_string())),
+            (200, Some("hello v2")) => landed = Some((at, answer)),
+            (200, Some("hello 🟢")) => old += 1,
+            (200, Some("hello")) => open.push(at),
+            (status, text) => panic!(
+                "a moment during the restart answered {status} {text:?}: {}",
+                answer.raw
+            ),
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    let (landed_at, landed) = landed.expect("landed");
+    assert_eq!(landed.body["text"], "hello v2");
+    // The transport's half: every refusal is typed and names its case.
+    for (_, error) in &refused {
+        assert!(
+            error.contains("\"refusal\":\"restarting\"") && error.contains("restarting:"),
+            "typed, naming restarting: {error}"
+        );
+        assert!(error.contains("\"unavailable\""), "{error}");
+    }
+    // The kernel's half, on the record: the walks in the window and what
+    // each selected; the refusal rows, if any; the restart's own window.
+    daemon.eventually("the landed walk on the ledger", || {
+        traces(&daemon, baseline)
+            .iter()
+            .any(|(_, f)| f["listeners"] == 1)
+    });
+    let window_traces = traces(&daemon, baseline);
+    let open_walks = window_traces
+        .iter()
+        .filter(|(_, fields)| fields["listeners"] == 0)
+        .count();
+    let refusal_rows: Vec<String> = daemon
+        .ledger_rows()
+        .iter()
+        .filter(|row| row.seq > baseline && row.kind.contains("Refused"))
+        .map(|row| row.kind.clone())
+        .collect();
+    let rows = ledger_ts(&daemon);
+    let suspended = rows.iter().rev().find(|(_, entry, kind, _)| {
+        entry.as_deref() == Some(GREEN_ID) && kind.contains("FiberSuspended")
+    });
+    let active = rows.iter().rev().find(|(_, entry, kind, _)| {
+        entry.as_deref() == Some(GREEN_ID)
+            && kind.contains(r#""to":"Active""#)
+            && kind.contains("ConfigChanged")
+    });
+    let window_ms = active.zip(suspended).map(|(a, s)| a.3 - s.3);
+    println!(
+        "proof 5: after the edit — {old} answers with the OLD fold, {} REFUSED typed `restarting` (first at {:?}), {} answered the payload UNMODIFIED (fail-open; first at {:?}), the new fold landed at {landed_at:?}; walks with listeners=0 on the ledger: {open_walks}; refusal rows: {refusal_rows:?}; the old incarnation's suspension to the new one's Active: {window_ms:?} ms",
+        refused.len(),
+        refused.first().map(|(at, _)| at),
+        open.len(),
+        open.first()
+    );
+    assert_eq!(
+        open.len(),
+        open_walks,
+        "every unmodified answer is a walk that selected nobody"
+    );
+    assert!(
+        !refused.is_empty() || !open.is_empty(),
+        "the window was hit: {old} old answers before it, landed at {landed_at:?}\n{}",
+        daemon.log()
+    );
+    if !open.is_empty() {
+        println!(
+            "proof 5: NOT-YET — the kernel withdrew the listen with the old incarnation's suspension BEFORE the replacement committed, so a moment inside the restart window was answered UNMODIFIED with no refusal (FINDINGS.md #47); M2-K9's `restarting` never fired for a listener-only fiber's ConfigChanged restart"
+        );
+    } else {
+        println!("proof 5: every moment inside the window was refused typed, as the card expected");
+    }
+    daemon.interrupt();
+}
+
+#[test]
+fn an_extension_is_granted_its_topic_and_nothing_else() {
+    let Some(binary) = gate() else { return };
+    let (root, port) = fresh_ui_root("moments-grants");
+    // An entry whose data names the topic but whose grants do not.
+    let mut ungranted = extension(&root, "ext-ungranted", &[TOPIC_BEFORE_SEND], GREEN_SOURCE);
+    ungranted["config"]["grants"] = serde_json::json!([jinn_ext::CLOCK_CONTRACT]);
+    // An entry granted before-send only.
+    let blue = extension(&root, BLUE_ID, &[TOPIC_BEFORE_SEND], BLUE_SOURCE);
+    edit_before_boot(&root, |document| {
+        remove_entry(document, GREEN_ID);
+        push_entry(document, ungranted);
+        push_entry(document, blue);
+    });
+    let daemon = Daemon::boot_operator(binary, &root);
+    daemon.await_ready();
+    for id in ["ext-ungranted", BLUE_ID] {
+        daemon.eventually(&format!("{id} to settle"), || settled(&daemon, id));
+    }
+    assert_eq!(
+        state(&get(port, &format!("/v1/plugins/{CATALOG}/ext-ungranted")).body),
+        "failed",
+        "a listen the kernel refuses fails the activation"
+    );
+    let kinds: Vec<String> = history(port, CATALOG, "ext-ungranted")["lines"]
+        .as_array()
+        .expect("lines")
+        .iter()
+        .map(|line| line["kind"].as_str().unwrap_or("").to_owned())
+        .collect();
+    assert!(
+        kinds.iter().any(|kind| kind.contains("GrantRefused")),
+        "GrantRefused on its history: {kinds:?}"
+    );
+    assert_eq!(
+        state(&get(port, &format!("/v1/plugins/{CATALOG}/{BLUE_ID}")).body),
+        "active"
+    );
+
+    // before-send: the ungranted one is no listener; blue folds.
+    let baseline = last_seq(&daemon);
+    let answer = send(port);
+    assert_eq!(answer.status, 200, "{}", answer.raw);
+    assert_eq!(answer.body["text"], "hello 🔵");
+    daemon.eventually("the walk on the ledger", || {
+        !traces(&daemon, baseline).is_empty()
+    });
+    let trace = one_trace(&daemon, baseline, TOPIC_BEFORE_SEND);
+    assert_eq!(trace["listeners"], 1, "{trace}");
+
+    // Second half: a valid before-create-session moment selects NO
+    // listener — the payload selects by topic, and nothing else selects.
+    let baseline = last_seq(&daemon);
+    let spec = serde_json::json!({ "engine": { "engine": "echo" } });
+    let answer = post(port, CREATE_PATH, &spec);
+    assert_eq!(answer.status, 200, "{}", answer.raw);
+    assert_eq!(answer.body, spec);
+    daemon.eventually("the walk on the ledger", || {
+        !traces(&daemon, baseline).is_empty()
+    });
+    let trace = one_trace(&daemon, baseline, TOPIC_BEFORE_CREATE_SESSION);
+    assert_eq!(trace["listeners"], 0, "{trace}");
+    println!("proof 6: an ungranted topic fails the fiber on the record; a granted one receives only its own topic");
+    daemon.interrupt();
+}
+
+/// Proof 7 is a MEASUREMENT with a NOT-YET clause (ruling 4): the walk
+/// costs the guest deadline, and what happens to the TRANSPORT — which
+/// emits inside its own `handle-event`, on the same clock — is recorded,
+/// never asserted in advance. If its instance dies on the walk's
+/// deadline, that transcript is KG-2's and the packet lands NOT-YET on
+/// "a bad extension costs its own slot, not the transport".
+#[test]
+fn a_looping_extension_costs_the_walk_the_guest_deadline_and_the_transport_s_fate_is_recorded() {
+    let Some(binary) = gate() else { return };
+    let (root, port) = fresh_ui_root("moments-loop");
+    let looping = extension(&root, "ext-looping", &[TOPIC_BEFORE_SEND], LOOPING_SOURCE);
+    edit_before_boot(&root, |document| {
+        remove_entry(document, GREEN_ID);
+        push_entry(document, looping);
+    });
+    let daemon = Daemon::boot_operator(binary, &root);
+    daemon.await_ready();
+    daemon.eventually("ext-looping to settle", || settled(&daemon, "ext-looping"));
+    let (_, transport_before) = {
+        let read = get(port, &format!("/v1/plugins/{CATALOG}/{TRANSPORT}"));
+        (state(&read.body), read.body["incarnation"].as_u64())
+    };
+    let baseline = last_seq(&daemon);
+
+    let (elapsed, status) = tolerant(port, "POST", SEND_PATH, SEND_BODY, Duration::from_secs(60));
+    // Let the kernel finish whatever it is doing to both fibers.
+    std::thread::sleep(Duration::from_secs(2));
+    let rows = daemon.ledger_rows();
+    let after = |id: &str| -> Vec<String> {
+        rows.iter()
+            .filter(|row| row.seq > baseline && row.entry.as_deref() == Some(id))
+            .map(|row| format!("{:>5} {}", row.seq, row.kind))
+            .collect()
+    };
+    let transport_rows = after(TRANSPORT);
+    let looping_rows = after("ext-looping");
+    let deadline_rows: Vec<String> = rows
+        .iter()
+        .filter(|row| row.seq > baseline && row.kind.to_ascii_lowercase().contains("deadline"))
+        .map(|row| format!("{:>5} {:?} {}", row.seq, row.entry, row.kind))
+        .collect();
+    let transport_failed = transport_rows
+        .iter()
+        .any(|row| row.contains(r#""to":"Failed""#) || row.contains(r#""to":"Unloading""#));
+    // Nothing after the walk trusts the transport to answer: the socket
+    // may accept (the kernel holds the listener) while no incarnation
+    // serves it, so every read here is bounded and the state comes off
+    // the LEDGER, not off the API.
+    let still_listening = listening(port);
+    let health = tolerant(port, "GET", "/v1/health", "", Duration::from_secs(10));
+    let transport_state: Vec<String> = rows
+        .iter()
+        .filter(|row| row.seq > baseline && row.entry.as_deref() == Some(TRANSPORT))
+        .filter(|row| row.kind.contains("FiberTransition"))
+        .map(|row| row.kind.clone())
+        .collect();
+    let transport_after = (still_listening, health, transport_state);
+    let log_deadlines: Vec<String> = daemon
+        .log()
+        .lines()
+        .filter(|line| line.to_ascii_lowercase().contains("deadline"))
+        .map(ToOwned::to_owned)
+        .collect();
+    println!(
+        "proof 7: the looping walk took {elapsed:?} (guest deadline {GUEST_DEADLINE:?}); the moment's answer: {status:?}\n  after the walk (listening, a bounded GET /v1/health as (elapsed, status), the transport's transitions): {transport_after:?} (before: incarnation {transport_before:?})\n  transport rows after the walk:\n    {}\n  ext-looping rows after the walk:\n    {}\n  deadline rows: {deadline_rows:?}\n  daemon log lines naming a deadline: {log_deadlines:?}",
+        transport_rows.join("\n    "),
+        looping_rows.join("\n    ")
+    );
+    assert!(
+        elapsed >= GUEST_DEADLINE - Duration::from_millis(500),
+        "the walk cost the guest deadline: {elapsed:?}"
+    );
+    let transport_answers = transport_after.1 .1 == Some(200);
+    if transport_failed || !still_listening || !transport_answers {
+        println!(
+            "proof 7: THE TRANSPORT DIED ON THE WALK'S DEADLINE — KG-2 as read (M2-K25); the packet lands NOT-YET on \"a bad extension costs its own slot, not the transport\""
+        );
+    } else {
+        println!("proof 7: the transport survived the walk's deadline");
+    }
+    daemon.interrupt();
+}
+
+#[test]
+fn an_extension_boots_from_a_profile_and_a_syntax_error_is_a_failed_fiber() {
+    let Some(binary) = gate() else { return };
+    // Real composition: ext-green reaches Active through the pinned
+    // daemon from the kit-written profile, with its breadcrumbs in
+    // order and its attestation on the catalog row.
+    let (root, port) = fresh_ui_root("moments-boot");
+    let broken = extension(&root, "ext-broken", &[TOPIC_BEFORE_SEND], BROKEN_SOURCE);
+    edit_before_boot(&root, |document| push_entry(document, broken));
+    let booted_at = Instant::now();
+    let daemon = Daemon::boot_operator(binary, &root);
+    daemon.await_ready();
+    for id in [GREEN_ID, "ext-broken"] {
+        daemon.eventually(&format!("{id} to settle"), || settled(&daemon, id));
+    }
+    let green = get(port, &format!("/v1/plugins/{CATALOG}/{GREEN_ID}"));
+    assert_eq!(state(&green.body), "active", "{}", green.raw);
+    assert_eq!(
+        green.body["attestation"],
+        serde_json::json!({ "origin": "human" }),
+        "{}",
+        green.raw
+    );
+    let transport = get(port, &format!("/v1/plugins/{CATALOG}/{TRANSPORT}"));
+    assert!(
+        transport.body.get("attestation").is_none(),
+        "no origin declared, no attestation field: {}",
+        transport.raw
+    );
+    let mut expected: Vec<String> = BREADCRUMBS.iter().map(|s| (*s).to_owned()).collect();
+    expected.push(source_breadcrumb(GREEN_SOURCE));
+    expected.push(format!("listen {TOPIC_BEFORE_SEND}"));
+    assert_eq!(labels(&daemon, GREEN_ID), expected);
+    let loaded: Vec<String> = daemon
+        .ledger_rows()
+        .iter()
+        .filter(|row| row.entry.as_deref() == Some(GREEN_ID) && row.kind.contains("ArtifactLoaded"))
+        .map(|row| row.kind.clone())
+        .collect();
+
+    // The variant whose source does not parse: `failed`, the breadcrumbs
+    // it wrote before failing, their withdrawal LIFO and clean.
+    let broken = get(port, &format!("/v1/plugins/{CATALOG}/ext-broken"));
+    assert_eq!(state(&broken.body), "failed", "{}", broken.raw);
+    let crumbs = labels(&daemon, "ext-broken");
+    assert!(
+        crumbs.starts_with(&["activate entered".to_owned(), "config parsed".to_owned()]),
+        "{crumbs:?}"
+    );
+    assert!(
+        crumbs.contains(&"js context built".to_owned()),
+        "the context builds before the source is read: {crumbs:?}"
+    );
+    assert!(
+        !crumbs.iter().any(|label| label == "js evaluated"),
+        "a syntax error never reaches `js evaluated`: {crumbs:?}"
+    );
+    let withdrawn: Vec<(String, bool)> = daemon
+        .ledger_rows()
+        .iter()
+        .filter(|row| row.entry.as_deref() == Some("ext-broken"))
+        .filter_map(|row| {
+            let (name, fields) = kind_of(row);
+            (name == "EffectWithdrawn").then(|| {
+                (
+                    fields["label"].as_str().unwrap_or("").to_owned(),
+                    fields["clean"].as_bool().unwrap_or(false),
+                )
+            })
+        })
+        .collect();
+    let mut lifo: Vec<String> = crumbs
+        .iter()
+        .filter(|label| !label.starts_with("jinn-ext-js-boa activation failed"))
+        .cloned()
+        .collect();
+    lifo.reverse();
+    lifo.insert(
+        0,
+        crumbs
+            .iter()
+            .find(|label| label.starts_with("jinn-ext-js-boa activation failed"))
+            .cloned()
+            .expect("the fault label"),
+    );
+    assert_eq!(
+        withdrawn
+            .iter()
+            .map(|(label, _)| label.clone())
+            .collect::<Vec<_>>(),
+        lifo,
+        "withdrawal is LIFO"
+    );
+    assert!(withdrawn.iter().all(|(_, clean)| *clean), "{withdrawn:?}");
+    // The REASON is on the ledger only because the guest writes it there
+    // itself before failing (#38's workaround, the transport's, copied):
+    // a `Failed` transition with no such label beside it would mean the
+    // one class the kernel owns — a trap or the deadline.
+    let reason: Vec<String> = daemon
+        .ledger_rows()
+        .iter()
+        .filter(|row| row.entry.as_deref() == Some("ext-broken"))
+        .filter(|row| row.kind.contains("ErrorRecorded") || row.kind.contains("activation failed"))
+        .map(|row| row.kind.clone())
+        .collect();
+    assert!(
+        reason.iter().any(|kind| kind.contains("source:")),
+        "the guest named its fault before failing: {reason:?}"
+    );
+    println!(
+        "proof 8: ext-green active from the profile in {:?} (artifact rows {loaded:?}); ext-broken failed with crumbs {crumbs:?}, withdrawn LIFO clean; its REASON on the record: {reason:?} (#38 / KG-5)",
+        booted_at.elapsed()
+    );
+    daemon.interrupt();
+}
+
+#[test]
+fn a_moment_is_the_door_then_one_walk_and_nothing_else() {
+    let Some((daemon, port)) = booted("moments-door", |_, _| {}) else {
+        return;
+    };
+    let baseline = last_seq(&daemon);
+    // 1: a moment with the bearer.
+    let granted = send(port);
+    assert_eq!(granted.status, 200, "{}", granted.raw);
+    // 2: no bearer.
+    let refused = request_as(port, "POST", SEND_PATH, Some(SEND_BODY), None);
+    assert_eq!(refused.status, 401, "{}", refused.raw);
+    // 3-7: paths the vocabulary does not name — 404, no dispatch — and
+    // §9.4's probes: upper case, a `..` segment, a trailing slash.
+    let misses = [
+        "/v1/moments/ui/after-nothing",
+        "/v1/moments/introspect/transitions",
+        "/v1/moments/ui/../before-send",
+        "/v1/moments/UI/before-send",
+        "/v1/moments/ui/before-send/",
+    ];
+    for miss in misses {
+        let answer = request(port, "POST", miss, Some(SEND_BODY));
+        assert_eq!(answer.status, 404, "{miss}: {}", answer.raw);
+    }
+    // 8: a bearer that verifies but a body that is not JSON: 422, no
+    // dispatch, the verify row present — the door is paid before the
+    // schema.
+    let invalid = request(port, "POST", SEND_PATH, Some("not json"));
+    assert_eq!(invalid.status, 422, "{}", invalid.raw);
+    // 9: a 256 KiB+ body is refused by the wire before any dispatch.
+    let huge = format!(
+        r#"{{"text":"{}","session-id":"s","attachments":[]}}"#,
+        "x".repeat(256 * 1024 + 1)
+    );
+    let too_big = request(port, "POST", SEND_PATH, Some(&huge));
+    assert!(
+        (400..500).contains(&too_big.status),
+        "the wire refuses the body: {}",
+        too_big.raw
+    );
+
+    let segments = closed_segments(&daemon, baseline, 9);
+    let verifies = |segment: &[LedgerRow]| {
+        segment
+            .iter()
+            .filter(|row| is_call(row, AUTH_CONTRACT, OP_VERIFY))
+            .count()
+    };
+    let walks = |segment: &[LedgerRow]| {
+        segment
+            .iter()
+            .filter(|row| kind_of(row).0 == "DispatchTrace")
+            .count()
+    };
+    let kinds = |segment: &[LedgerRow]| -> Vec<String> {
+        segment.iter().map(|row| row.kind.clone()).collect()
+    };
+    // The moment: exactly one verify, then exactly one walk, and every
+    // other row a transport row or the door's decision.
+    let moment = &segments[0];
+    assert_eq!(verifies(moment), 1, "{:#?}", kinds(moment));
+    assert_eq!(walks(moment), 1, "{:#?}", kinds(moment));
+    let verify_at = moment
+        .iter()
+        .position(|row| is_call(row, AUTH_CONTRACT, OP_VERIFY))
+        .expect("verify");
+    let walk_at = moment
+        .iter()
+        .position(|row| kind_of(row).0 == "DispatchTrace")
+        .expect("walk");
+    assert!(verify_at < walk_at, "the door, then the walk");
+    for row in moment {
+        let (name, fields) = kind_of(row);
+        let door_resolve = name == "ContractResolved" && fields["contract"] == AUTH_CONTRACT;
+        assert!(
+            is_transport(row)
+                || door_resolve
+                || name == "AuthDecided"
+                || name == "DispatchTrace"
+                || is_call(row, AUTH_CONTRACT, OP_VERIFY),
+            "nothing else on the moment's connection: {}",
+            row.kind
+        );
+    }
+    // No bearer: one verify, one refusal, no walk.
+    assert_eq!(verifies(&segments[1]), 1);
+    assert_eq!(walks(&segments[1]), 0, "{:#?}", kinds(&segments[1]));
+    // The five misses and the invalid body: the door paid, no walk.
+    for segment in &segments[2..8] {
+        assert_eq!(verifies(segment), 1, "{:#?}", kinds(segment));
+        assert_eq!(walks(segment), 0, "{:#?}", kinds(segment));
+    }
+    // The oversized body: refused by the wire — no verify, no walk.
+    assert_eq!(verifies(&segments[8]), 0, "{:#?}", kinds(&segments[8]));
+    assert_eq!(walks(&segments[8]), 0, "{:#?}", kinds(&segments[8]));
+    // Across the window: exactly one walk in total.
+    assert_eq!(traces(&daemon, baseline).len(), 1);
+    println!(
+        "proof 10: nine connections — one moment (verify then one walk), one 401, five 404s and one 422 with the door paid and no walk, one oversized body refused by the wire with no crossing at all (status {})",
+        too_big.status
+    );
+    daemon.interrupt();
+}
+
+/// KG-6, verified on the ledger rather than asserted from a read of
+/// `surfaces.rs`: at this pin `events.emit` is gated by the reserved-topic
+/// refusal only, not by the topic's grant. The transport is granted its
+/// three topics so the profile READS as the kernel will one day enforce
+/// it; this boot STRIPS those grants and shows the walk still lands.
+#[test]
+fn an_emit_is_not_gated_by_the_topics_grant_at_this_pin() {
+    let Some((daemon, port)) = booted("moments-kg6", |_, document| {
+        let transport = entry_mut(document, TRANSPORT);
+        let grants = transport["config"]["grants"]
+            .as_array_mut()
+            .expect("grants");
+        let before = grants.len();
+        grants.retain(|grant| !grant.as_str().is_some_and(|g| g.starts_with("jinn:ui/")));
+        assert_eq!(
+            grants.len(),
+            before - 3,
+            "the three topic grants were there"
+        );
+    }) else {
+        return;
+    };
+    let baseline = last_seq(&daemon);
+    let answer = send(port);
+    let refusals: Vec<String> = daemon
+        .ledger_rows()
+        .iter()
+        .filter(|row| row.seq > baseline && row.kind.contains("GrantRefused"))
+        .map(|row| row.kind.clone())
+        .collect();
+    println!(
+        "KG-6 probe: the transport with NO topic grant posted a moment — status {}, text {:?}, walks {}, GrantRefused rows {refusals:?}",
+        answer.status,
+        answer.body["text"],
+        traces(&daemon, baseline).len()
+    );
+    if answer.status == 200 && answer.body["text"] == "hello 🟢" {
+        println!("KG-6 probe: CONFIRMED on the ledger — emit is ungated by the topic grant at this pin (FINDINGS.md #49)");
+    } else {
+        println!("KG-6 probe: the kernel gated the emit — the finding is answered at this pin");
+    }
+    daemon.interrupt();
+}

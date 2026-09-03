@@ -46,6 +46,10 @@ export interface PluginCatalogEntryWire {
   provides?: string[]
   grants?: { source: string; values: unknown[]; qualifier: string }
   lifecycle: { state: string; reason?: unknown; "kernel-state"?: string }
+  /** UI-2 (docs/plans/ui-malleability-arc.md §9.2): the entry's `config.data.origin`
+   *  when it declares one — an extension's `agent | human` attestation. Absent
+   *  for every entry that declares none. */
+  attestation?: { origin: string }
 }
 export interface PluginCatalogListingWire {
   catalog: string

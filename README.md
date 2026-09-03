@@ -13,6 +13,31 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
+Phase UI-2 — kernel pin `a53a352`, UNCHANGED. **A moment is one walk,
+and an extension is a listener.** The second packet of the UI
+malleability arc (`docs/plans/ui-malleability-arc.md` §9): an
+authenticated `POST /v1/moments/<domain>/<topic>` is ONE `waterfall`
+walk on the `jinn:ui/<topic>` the path names — three closed topics
+(`before-send`, `before-create-session`, `before-patch-settings`) —
+answered with the payload as the listeners folded it, and FAIL-CLOSED
+when the kernel refuses the walk whole (a typed `503` naming
+`restarting`/`gone`/`suspended`/`stalled`/`cycle`, never the unmodified
+payload). The listeners are the JS-in-WASM extension tier
+(`plugins/ext/`): the operator's JS is the entry's `config.data` with
+its `origin` attested, run by a Boa guest whose component imports
+exactly the four plugin-world interfaces and whose only host call is one
+`jinn:clock` read per delivery; a syntax error is a `failed` fiber on the
+record with the breadcrumbs it wrote, a throw is a contained failure the
+walk continues past (R9), `undefined` is a pass-through. The Settings
+page's save dispatches `before-patch-settings` first and sends the
+FOLDED patch; the plugins page shows each extension's `origin`. Proven
+through the pinned daemon in `tests/composition/tests/moments.rs`
+(`docs/notes/2026-09-03-a-moment-is-one-walk.md`). What it is NOT: a
+per-delivery budget — a looping extension spends the walk's guest
+deadline, and what that costs the TRANSPORT is proof 7's transcript
+(#47); install/remove/disable/topic-widening of an extension from the
+UI (the K23 split, plan §9.5); the chat topics' client call sites (UI-6).
+
 Pin-bump 7 — kernel pin `a53a352` (M2-K24). **A declared dependency is a
 kernel gate, not a subscription.** The `ui` profile's transport entry
 declares `injects: ["jinn:ui-bundle"]` beside its grants, and the kernel
@@ -387,6 +412,7 @@ iteration channel — kernel changes are never made here).
 | `tools/todo-kit` | Builds the todos profile: the two Todo stores above the two session stores |
 | `tools/workflow-kit` | Builds the workflows profile: the two run stores above the two Todo stores |
 | `tools/plugin-kit` | Builds the plugins profile: the two catalogs beside the api trio, plus the disabled and misbound entries the honesty proofs need |
+| `tools/ext-kit` | Builds the JS-in-WASM extension tier's engine provider (Boa) and holds the extension entry shape; `tests/imports.rs` asserts the component imports exactly the four plugin-world interfaces |
 | `tools/ui-kit` | Builds the `ui` profile: the web client built by its pinned toolchain, archived into the embedded bundle provider beside the plugins profile; `tests/verbatim.rs` is the byte-for-byte gate over `web/port-map.txt` |
 | `web/` | The TypeScript client (not a Cargo member): jinn `43e8647`'s shell, Settings and plugins page, ported verbatim; Node and pnpm pinned by `web/.npmrc` and `packageManager`; the node lane in CI |
 | `plugins/` | First-party plugin crates (wasm components) — land per phase, one seam triple at a time |
@@ -624,6 +650,36 @@ Its own README carries these in full; the load-bearing ones:
   lands on the plugin splat.
 - **The service worker is dropped** (plan §8, question 4), so the UI is
   not installable and has no offline shell in this packet.
+
+### UI-2 — Moments and the extension tier
+
+- **A bad extension can cost the transport, not just its own slot** (#47):
+  at this pin every guest call is one `settle(deadline)` and `emit` awaits
+  each delivery inside the emitter's call, so a listener that spends the
+  5 s guest deadline spends the transport's too — proof 7's transcript
+  is the measurement, and the per-delivery budget is a kernel card
+  (jinnd M2-K25). No `budget` field exists on the entry because nothing
+  could honor it.
+- **`emit` is not gated by a topic grant** (#48): the transport is granted
+  the three topics it emits so the profile READS as the kernel will one
+  day enforce it, but at `a53a352` any guest can emit any unreserved
+  topic; the grants are a statement, not yet an authority.
+- **The cost of one moment is a fresh Boa context per delivery** (#49):
+  measured in proof 2 and recorded in the note; no context reuse is
+  designed until that number is a problem, and the guest's memory
+  high-water mark is not exposed by `jinn:introspect` 0.6.0.
+- **Listener order across siblings is what the boot dealt. (named here)**
+  Two extensions on one topic fold in the order of their `listen` rows;
+  nothing declares it (KG-3; #7 answers declared injections only). Proof
+  3 asserts the order it observed.
+- **Installing, removing, disabling an extension, widening its topics or
+  swapping its engine are profile edits, not clicks** (#37; the K23 split,
+  plan §9.5). Editing an installed extension's `source`, `origin` or
+  already-granted `topics` IS `PATCH /v1/profile/entries/{id}` today
+  (proof 5 uses it through the document lane).
+- **The two chat topics are dispatchable and proven, and reached by no
+  ported surface. (named here)** The ported shell has no composer (UI-6);
+  `before-patch-settings` is the one moment an operator can click.
 
 ### What is not here at all
 
