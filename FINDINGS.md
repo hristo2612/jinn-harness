@@ -3091,10 +3091,12 @@ answers, and asserts the transport's half only.
 
 ## 48. A looping listener spends the emitter's guest deadline too — what the transport's own instance does on a listener that never returns (KG-2, measured)
 
-**Grade: reproducible WITH A TRANSCRIPT, measured — the ruling's
-NOT-YET clause (PLA-353 ruling 4) decides its class from the transcript
-below.** Hit in harness packet UI-2 (PLA-353) at pin `a53a352`, proof 7
-of `tests/composition/tests/moments.rs`.
+**Grade: reproducible WITH A TRANSCRIPT, measured, packet-card-ready —
+BLOCKER-CLASS by the ruling's NOT-YET clause (PLA-353 ruling 4): the
+transport's own instance dies on the walk's deadline, the operator API
+is gone with it, and the kernel records no transition for it.** Hit in
+harness packet UI-2 (PLA-353) at pin `a53a352`, proof 7 of
+`tests/composition/tests/moments.rs`, every run.
 
 At `a53a352` every guest call is one `settle(deadline, …)`
 (`crates/jinnd-wasm/src/instance.rs`; `lane::DEADLINE` 5 s) and `emit`
@@ -3107,10 +3109,57 @@ is answering. Proof 7 mounts a `while (true) {}` source on
 both fibers — the transcript is filled in from the run on the PR and
 kept here verbatim.
 
-TRANSCRIPT: see the PR's proof 7 output, pasted into this entry at land.
+The transcript (proof 7, one `POST /v1/moments/ui/before-send` with the
+looping listener mounted as `ext-looping`, `ext-green` removed):
+
+```
+proof 7: the looping walk took 60.00011075s (guest deadline 5s); the moment's answer: None
+  after the walk (listening, a bounded GET /v1/health as (elapsed, status), the transport's
+  transitions): (true, (10.000736833s, None), [])  (before: incarnation Some(12))
+  transport rows after the walk:
+    184 NetAccepted { listener: 1, handle: 3 }
+    …
+    191 ContractCall { contract: jinn:auth, operation: verify }
+    192 AuthDecided { name: operator, granted: true }
+    302 ErrorRecorded { error: { code: PluginFailed, message: "guest exceeded its call deadline", fiber: null } }
+   1464 NetReadable { handle: 3 }
+   1465 ErrorRecorded { error: { code: PluginFailed, message: "the instance is gone", fiber: null } }
+  ext-looping rows after the walk:
+    193 ContractCall { contract: jinn:clock, operation: now }
+  deadline rows: [302 jinn-api-http ErrorRecorded { … "guest exceeded its call deadline" }]
+  daemon log lines naming a deadline: []
+proof 7: THE TRANSPORT DIED ON THE WALK'S DEADLINE
+```
+
+Read in order. The transport accepted the connection, paid the door,
+and emitted; the listener read its clock and looped. At the 5 s
+deadline the row that landed names the EMITTER (`jinn-api-http`,
+seq 302) — its `handle-event` was the call under `settle`, and it is
+the one the kernel killed: "guest exceeded its call deadline", and
+`Settled::Dead` ends the instance. The looping listener wrote no
+deadline row of its own. The client never got a byte: the moment's
+socket sat open until the client's own 60 s bound. After the walk the
+port STILL ACCEPTS — the kernel holds the `jinn:net` listener as a
+registration of a fiber whose instance is gone — and the next readiness
+wake on it (seq 1464) is answered with "the instance is gone" (seq
+1465): a bounded `GET /v1/health` gets nothing for 10 s. The transport's
+fiber shows NO transition (`[]`): not `Failed`, not `Unloading`; its
+introspect reading before the walk was `active` at incarnation 12, and
+nothing on the ledger says that changed. The operator API is down
+until the daemon is restarted, and the record says the transport is
+active.
+
+Three defects in one transcript, each its own line for the card:
+(1) the walk's cost lands on the emitter's clock (KG-2 as read); (2)
+an instance the kernel ended for a deadline leaves its FIBER
+transitionless — R11's "a bad extension fails its own fiber and nothing
+else" is broken in both halves here: the wrong fiber died, and no fiber
+was recorded failing; (3) a kernel-held listener keeps accepting for a
+dead instance, so the failure is invisible from the socket's side
+until a read is attempted.
 
 **The capability shape that would retire it (M2-K25, carded the same
-day by ruling if the transport dies):** a per-delivery budget — a fuel
+day by ruling — the transport died):** a per-delivery budget — a fuel
 or deadline cap declared at `listen`, charged to the LISTENER's slot and
 refused typed when exceeded — and a stated rule for the emitter's clock
 during a walk (the emitter's own deadline paused, or its remaining

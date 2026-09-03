@@ -81,8 +81,8 @@ to be refused `restarting` (M2-K9). The pinned kernel does something
 else on a `ConfigChanged` restart of a listener-only fiber: it suspends
 the old incarnation and WITHDRAWS its `listen` at the start of the
 replacement, activates the new instance in staging, and lands the new
-`listen` at the commit. For the whole staging window — ~500 ms with the
-proof's deliberately slow source — the topic has no registered
+`listen` at the commit. For the whole staging window — 1.5 s with the
+proof's deliberately slow source, 53 walks — the topic has no registered
 listener, so `emit` selects nobody, the walk lands with `listeners: 0`,
 and the transport answers the payload UNMODIFIED. Not one `503`. That is
 the fail-open the decision exists to prevent, one layer below the
@@ -100,10 +100,12 @@ The document lane is the watcher's, and the transport stays free.
 
 ## What proof 7 records
 
-A `while (true) {}` source on `jinn:ui/before-send`. The walk costs the
-guest deadline; what the TRANSPORT's own instance does — it emits inside
-its own `handle-event`, on the same 5 s clock — is the transcript the
-PR carries and `FINDINGS.md` #48 keeps. Nothing after that walk trusts
+A `while (true) {}` source on `jinn:ui/before-send`. The TRANSPORT's
+own instance died at the 5 s deadline — it emits inside its own
+`handle-event`, on the same clock — the moment got no answer, the port
+kept accepting for an instance that was gone, and the transport's fiber
+was left without a transition (`FINDINGS.md` #48, Blocker-class; the
+ruling's NOT-YET clause applies and jinnd M2-K25 is the unblock). Nothing after that walk trusts
 the transport to answer: the socket may accept (the kernel holds the
 listener) while no incarnation serves it, so every read is bounded and
 the state is read off the ledger. The first run of the proof learned

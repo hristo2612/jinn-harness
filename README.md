@@ -660,12 +660,14 @@ Its own README carries these in full; the load-bearing ones:
   in the window (~500 ms per source edit) selects nobody and M2-K9's
   `restarting` never fires. The transport's half of fail-closed holds; the
   kernel's does not. Proof 5 lands NOT-YET on it.
-- **A bad extension can cost the transport, not just its own slot** (#48):
-  at this pin every guest call is one `settle(deadline)` and `emit` awaits
-  each delivery inside the emitter's call, so a listener that spends the
-  5 s guest deadline spends the transport's too — proof 7's transcript is
-  the measurement, and the per-delivery budget is a kernel card (jinnd
-  M2-K25). No `budget` field exists on the entry because nothing could
+- **A bad extension KILLS the transport, not its own slot** (#48): at this
+  pin every guest call is one `settle(deadline)` and `emit` awaits each
+  delivery inside the emitter's call, so a listener that loops spends the
+  transport's 5 s deadline — proof 7 measured the transport's instance
+  dying on it, the operator API gone until a daemon restart, its port
+  still accepting, and its fiber left without a transition. The
+  per-delivery budget is a kernel card (jinnd M2-K25); proof 7 lands
+  NOT-YET. No `budget` field exists on the entry because nothing could
   honor it.
 - **`emit` is not gated by a topic grant** (#49): the transport is granted
   the three topics it emits so the profile READS as the kernel will one
