@@ -220,6 +220,8 @@ profile, behind the door.
 
 ### UI-2 - Moments and the JS-in-WASM extension tier
 
+Fully carded in §9 (PLA-353). In one line:
+
 **Decision.** A moment is a waterfall on a `jinn:ui/<topic>` topic that the
 transport dispatches when an authenticated client calls
 `POST /v1/moments/<topic>` with the moment's payload, and answers with the
@@ -1144,6 +1146,466 @@ declared. Dispatch of UI-1 waits for the 2026-09-04 audit.
   the meter stays 843/800 MANDATED. Round 3's scope lock covers all three.
 
 
+
+## 9. The second packet, carded: UI-2 - Moments and the JS-in-WASM extension tier
+
+**Milestone:** M3 preparation (the arc's second packet; the phase the arc
+exists for, §3 "UI-2", ruling 3) · **Owner:** kernel-dev - ONE build node;
+sub-agents allowed for the provider guest's toolchain legwork (§5.3's three
+facts) and for the two client adaptations, because proof 9 (the diff gate)
+and proof 8 (the guest's own self-test) are what make that safe; the seam,
+the transport route and the proofs stay with the card owner (§8 ruling 6) ·
+**Status:** carded 2026-09-03 (PLA-353 phase 1); dispatch after card review
+AND after pin-bump 7 lands, one heavy cargo lane at a time · **Pin the card
+assumes:** harness `main` after pin-bump 7 (PLA-352, PR #23, branch
+`packet/pin-bump-7-k24`, head `1f676c0`) lands - kernel `a53a352` (jinnd
+M2-K24), `jinn:plugin@0.10.0` UNCHANGED between `85d36b4` and `a53a352`
+(`kernel-pin/wit/plugin.wit` is byte-identical across the bump; the bump's
+diff touches `kernel-pin/wit/README.md` only), `jinn:introspect` 0.6.0
+(`kernel-pin/contracts/jinn-introspect/contract.wit`, `entry` gains
+`injects` and `unmet`), FINDINGS #7, #45 and #46 closed "fixed at pin
+`a53a352`", #38 open. **At the time of writing pin-bump 7 has NOT landed**
+(PR #23 open, build/verify live); nothing in this card depends on what it
+changes - the extension entry declares no `injects` (it injects no service)
+and the transport's declaration of its bundle is UI-1's - but the card is
+written against the post-bump tree and the packet does not dispatch before
+it · **Binding rules:** `AGENTS.md` standing orders 1 through 5; jinnd R1
+(no blocking in a guest), R3 (typed wire; the moment vocabulary is closed),
+R9 (no silent replacement: a refused walk is a typed 503, never the
+unmodified payload; a failing listener never aborts the walk), R11 (a bad
+extension fails its own fiber and nothing else - the one place the pinned
+kernel cannot keep that promise is named in proof 7 and KG-2), R12 (every
+seam delta additive, 0.x minor), Laws 1, 2, 5 (§8 ruling 1's two additions
+are in scope: `origin` on the entry and on the page, the source's sha256 on
+the ledger) · **LOC ceiling (card-authoritative, binding):** production Rust
+net delta **≤ 1,100** - the card author's PRE-DESIGN ESTIMATE, priced before
+design contact, which the COO re-prices ONCE on the first meter reading
+(the M1-P2 / K24 amendment 1 precedent; the UI-1 card's 800 landed at 843
+MANDATED and reads 765 after pin-bump 7 - PR #23's agent note, section
+"Meter"). The meter is UI-1's, its path list extended by the new plugin
+directories and the one existing seam this packet touches:
+`git diff --numstat main -- 'plugins/ext/**/*.rs' 'plugins/ui/**/*.rs' 'plugins/api/jinn-api-http/src/*.rs' 'plugins/api/jinn-api-http-wire/src/*.rs' 'plugins/plugins/jinn-plugins/src/*.rs' 'tools/ui-kit/**/*.rs' 'tools/ext-kit/**/*.rs'`,
+added minus deleted, summed over every file that is not under a `tests/`
+directory and not named `tests.rs`; a `#[cfg(test)]` module inside a
+production file is a declared category - the PR lists each such module
+with its line count and that count is subtracted; `tests/composition` is
+excluded. The plugins seam path is IN the list (not declared beside it)
+because the card knows in advance that the catalog row grows one additive
+field; a delta on any path outside the list is declared beside the meter
+with its reason (amendment 5's shape). The TypeScript tree carries NO line
+ceiling because its acceptance is a DIFF against the pinned sha ·
+**Standing gates:** `cargo fmt --check && cargo clippy --workspace
+--all-targets -- -D warnings && cargo test --workspace`, the node lane
+(`.github/workflows/ci.yml`, job `web`), `cargo test -p composition`, and
+the privacy firewall (same file, "privacy firewall").
+
+### 9.1 The one decision
+
+A moment is a `waterfall` walk on a `jinn:ui/<topic>` topic that the
+transport dispatches when an AUTHENTICATED client calls
+`POST /v1/moments/<domain>/<topic>` with the moment's payload, and answers
+with the FOLDED payload - `events.emit(topic, waterfall, all, body)`,
+listeners in registration order, a non-empty output replacing the payload
+for the next listener, the final payload the one answer, one
+`DispatchTrace` row per walk (`kernel-pin/wit/plugin.wit` `events.emit`;
+§1 "About the kernel", waterfall semantics). **Fail-closed:** a walk the
+kernel refuses whole - `restarting`, `gone`, `suspended`, `stalled`
+(M2-K9) or `cycle` (M2-K10), each a typed `kernel-error` in `plugin.wit` -
+is answered `503` with the envelope's `unavailable` code
+(`plugins/api/jinn-api/README.md`, "HTTP status mapping") and the refusal's
+name in `detail`, never the unmodified payload: a validator extension
+(inventory §4.3 moment 1, "refuse a send containing an API key") is
+defeated by fail-open, so the send waits for the walk or does not happen.
+The extension tier is `jinn-ext-js-boa` (§5.3, §5.4; ruling 5): a Tier A
+guest whose entry's `config.data` carries the operator's JS source, the
+topics it listens on and the `origin` attestation, whose authority is the
+topic names in its `config.grants` (`plugin.wit` `events.listen`: "a
+subscription is covered by the grant of the topic's own name") plus ONE
+kernel host provider read (`jinn:clock` `now`, §9.2), and whose JS has NO
+host calls - so it cannot re-enter a seam and #4/#32 has no target.
+
+### 9.2 Scope
+
+**The moments seam (Rust, in `jinn-ui` - "the seam is `jinn-ui` again",
+§2 table).**
+
+- `plugins/ui/jinn-ui` (definition, workspace member) gains the moment
+  vocabulary as pure types: the topic names, each topic's payload schema,
+  and the fail-closed law in prose. Three topics, closed (R3): `jinn:ui/before-send`
+  with `{ text, attachments, session-id }` (inventory §4.3 moment 1, the
+  operator's own example; §6 traces it); `jinn:ui/before-create-session`
+  with the `SessionSpec` shape (moment 3; `plugins/sessions/jinn-session/src/spec.rs`
+  per inventory §4.1 "sessions"); and `jinn:ui/before-patch-settings` with
+  `{ namespace, patch }` (moment 19 - "the one moment where a waterfall
+  already has a native shape"). The third is this card's ONE addition to
+  §3's scope and the reason is stated: the ported shell has no composer
+  (chat is UI-6, inventory §1.5's extraction first), so the two chat topics
+  can be dispatched and proven through the daemon but reached by no ported
+  surface; the Settings page's save IS a ported write (UI-1 proof 7 patches
+  `cron` / `tick-ms`, amendment 5), so `before-patch-settings` is the one
+  moment an operator can reach from the UI this packet ships, and it is
+  what proof 11 drives. The COO may strike it; the card then loses proof 11's
+  click path and keeps its data path. The path law: `/v1/moments/<domain>/<topic>`
+  maps to `jinn:<domain>/<topic>` for exactly the topics this crate names;
+  anything else is a 404 with no dispatch (the vocabulary is closed, not
+  forwarded - `/v1/moments/introspect/transitions` must never reach
+  `emit`, which the kernel would refuse anyway as reserved, `plugin.wit`
+  `events.emit` M2-K13, but a route that relies on the kernel's refusal is
+  a route that dispatched).
+- `plugins/api/jinn-api-http`: the route family `POST /v1/moments/<domain>/<topic>`,
+  behind the door exactly as every `/v1` request (one `verify`, then the
+  walk, `door.rs` unchanged); the body (capped at the wire's 256 KiB,
+  `plugins/api/jinn-api-http-wire/src/lib.rs`) is the payload bytes,
+  validated against the topic's schema BEFORE the walk (422 `invalid` on a
+  miss, no dispatch); the answer is `200` with the folded bytes; a refused
+  walk is `503 unavailable` naming the refusal; a walk with zero listeners
+  answers the body. The transport's entry is granted the three topic names
+  as the profile's statement of what it emits - noting for the record that
+  at pin `a53a352` `events.emit` checks only the reserved-topic refusal and
+  no topic grant (`crates/jinnd-wasm/src/surfaces.rs`, `emit`, read at the
+  pin: `listen` calls `check_grant(grant_for(topic))`, `emit` does not) -
+  KG-6 in §9.6, verified on the ledger in round 1 rather than asserted from
+  the read.
+- `plugins/api/jinn-api-http-wire`: no new status rows (`503` and `422`
+  exist, `status_for`); one MIME row is not needed (JSON both ways). Any
+  framing delta is billed on the meter.
+
+**The JS-in-WASM extension tier (Rust, `plugins/ext/` - a new seam group
+with its role-table README per standing order 4).**
+
+- `plugins/ext/jinn-ext` (definition, workspace member): contract name
+  `jinn:ext` - not a service anyone calls (an extension is a listener;
+  "Providers: `jinn-ext-js-boa`; Consumers: none", §2 table) but the home
+  of the entry's config schema and the activation law, compiled into the
+  guest and the kit. The schema: `config.data = { topics: [<topic>...],
+  source: <JS>, origin: "agent" | "human" }`, serde-typed, closed - an
+  unknown field is an activation fault (R3; the settings seam's
+  closed-surface law, `docs/notes/2026-08-29-closed-surfaces-refuse.md`).
+  NO `budget` field: §2's table named one, and at this pin nothing can
+  honor it (KG-2; a declared field the guest cannot enforce is a lie on
+  the record). `origin` is constitution 05's attestation restated for data
+  (the kernel's `docs/constitution/05-manifest-signing.md`, `[provenance] origin = "human | agent"`,
+  immutable there; here it is the operator's declaration on the entry, and
+  the plugins page shows it - ruling 1). The activation law, in prose and
+  as the guest's own checks: (1) register the four breadcrumbs of §5.4
+  (`activate entered`, `config parsed`, `js context built`, `js evaluated`)
+  as effects in that order, the activation discipline until #38 closes;
+  (2) register `source sha256:<hex>` so WHAT CODE RAN is on the record
+  (Law 2, ruling 1); (3) evaluate the source ONCE and fail the fiber if it
+  is not a function - a syntax error is a `failed` fiber on the record,
+  never a silent no-op listener (R11; §6 "Activate"); (4) `events.listen`
+  on each topic in `data.topics`, each of which must also be in
+  `config.grants` (a listen the kernel refuses is a `GrantRefused` row and
+  the activation fails - the guest does not swallow it).
+- `plugins/ext/jinn-ext-js-boa` (provider guest, NOT a workspace member
+  like every guest, `Cargo.toml`'s note): §5.3's shape -
+  `wit_bindgen::generate!` on `kernel-pin/wit`, `export!`, `boa_engine`
+  0.22 with `default-features = false`, `getrandom` 0.4 with the custom
+  backend symbol `__getrandom_v03_custom` and the cfg
+  `getrandom_backend="custom"` carried in the crate's OWN
+  `.cargo/config.toml` so the flag travels with the crate and not with a
+  shell; a `Clock` supplied through `ContextBuilder::clock` (§5.4 lesson 1)
+  - the real provider reads `jinn:clock` `now` ONCE per delivery under a
+  `jinn:clock` grant, the guest's one `services.call`, whose target is a
+  kernel host provider and never a guest, so the #4/#32 wait cycle has no
+  target; the component's imports are therefore exactly `types`, `effects`,
+  `events`, `services` of `jinn:plugin@0.10.0` and nothing else, asserted
+  by the kit (§5.3's `imports` program, committed this time as a kit
+  test). `handle-event(token, topic, payload)` =
+  `JSON.stringify((SOURCE)(JSON.parse(payload)))` in a Boa context; the
+  context is built per delivery in round 1 (the spike's shape - "correct
+  and slow", §5.5) and the cost is MEASURED in proof 2 before any reuse is
+  designed; a source that throws or returns a non-object answers the
+  guest-fault so the kernel records the failure and the walk continues
+  (R9); a source that returns `undefined` answers EMPTY bytes, which the
+  kernel treats as "leave the payload unchanged" (§1 waterfall semantics) -
+  the pass-through case, and proof 4's second half. Default 1 MB guest
+  stack (§5.4).
+- `tools/ext-kit` (workspace member): builds and encodes the provider by
+  the shared kit machinery (`plugin-kit`'s build + `wit_component` encode
+  with `validate(true)`, §5.3), prints size and sha256 (a component of
+  ~3.9 MB, §5.3 - the packet records the exact number), and writes the
+  extension entries the composition suite and the `ui` profile mount:
+  `ext_entry(id, topics, source, origin)` in the §6 "Install" shape,
+  grants = the topics (+ `jinn:clock`), `injects` absent. Every entry is
+  GENERATED with the artifact's honest hash (Law 5; `profiles/ui/README.md`
+  "never hand-maintained").
+- `tools/ui-kit`: the `ui` profile gains ONE extension entry, `ext-green`,
+  the operator's example from §6 (`origin: "human"`), and the transport
+  entry gains the three topic grants (`mount_bundle_on`'s sibling,
+  `mount_moments_on`). A variant with a second extension and a variant with
+  a throwing one exist for the suite, like `UI_MARKED` and `UI_CORRUPT`
+  today (`tests/composition/src/kit.rs`).
+
+**The plugins seam (Rust, one additive field).** `plugins/plugins/jinn-plugins`:
+the catalog row (`PluginCatalogEntryWire`, `web/src/lib/api-v1-wire.ts`;
+the seam's own `entry.rs`) gains an OPTIONAL `attestation: { origin }`
+read from the entry's `config.data.origin` when present - additive (R12),
+absent for every entry that declares none, never defaulted (the seam's
+"a reading, not a state machine" law, `plugins/plugins/README.md`). Both
+introspect mirror gates are untouched (the field is the profile's, not the
+kernel's).
+
+**The client (TypeScript, `web/`).** Two adaptations, and only these,
+join §4.2's list of twelve; the verbatim gate's map gains their rows:
+
+13. `lib/api-config.ts` (already adaptation 1's file): the save path calls
+    `POST /v1/moments/ui/before-patch-settings` with `{ namespace, patch }`
+    BEFORE its `PATCH /v1/settings/{ns}` and sends the FOLDED patch - in
+    the adapter, never in a component (§4.2 item 1's shape; §6's "before
+    the optimistic bubble" is the same rule one surface earlier). A `503`
+    from the moment is surfaced as the page's existing conflict notice
+    reading the typed refusal (inventory §2.22's notice, re-pointed in
+    item 1); the client does NOT retry on its own in this packet (the
+    retry-once of §3's decision belongs with the composer in UI-6 and is
+    stated there). `lib/api.ts` gains `moment(domain, topic, payload)` as
+    the one adapter function every later surface calls; `sendText`'s call
+    (inventory §4.3 moment 1) is UI-6's, by file ownership, and UI-6's
+    acceptance already carries the gateway half.
+14. `routes/settings/plugins/plugin-row.tsx` (already under adaptation 4,
+    `routes/settings/plugins/*`): renders the `attestation.origin` badge
+    (`human` / `agent`) when the row carries one, and nothing else changes.
+    The install, remove, enable and disable controls stay rendered disabled
+    with the finding exactly as item 4 left them (#37 / KG-1).
+
+No other TypeScript file changes; proof 9 asserts it both ways.
+
+**Toolchain.** Nothing new on the node side. On the Rust side: `boa_engine`
+and `getrandom` join the guest's manifest (guests are not workspace
+members, so the workspace's dependency set is unchanged; the PR states
+this against R10 anyway). The wasm target and `rustup which rustc`
+fallback are the kits' existing ones (§5, preamble).
+
+### 9.3 Acceptance
+
+Composition proofs in `tests/composition/tests/moments.rs` (proofs 1-8
+and 10) and `tests/composition/tests/ui.rs` (proof 9's sibling gate lives
+in `tools/ui-kit/tests/verbatim.rs`), each booting the `ui` profile
+through the pinned daemon built by `git archive` of the pin
+(`tests/composition/src/daemon.rs`); every one runs RED FIRST against a
+transport that has no moment route and a profile that mounts no
+extension. Every ledger claim is read from `Daemon::ledger_rows`
+(`tests/composition/src/kit.rs`), never from the transport's answer alone.
+
+1. `a_moment_with_no_listener_answers_its_own_payload` - the `ui` profile
+   with the extension entry REMOVED; `POST /v1/moments/ui/before-send`
+   with the §6 body answers `200` and the body byte-for-byte; exactly one
+   `DispatchTrace { topic: "jinn:ui/before-send", mode: waterfall,
+   listeners: 0, failures: 0, emitter: jinn-api-http }` row.
+2. `one_js_extension_folds_the_payload_and_the_ledger_says_so` - `ext-green`
+   mounted from the profile; the answer's `text` is `hello 🟢`;
+   `DispatchTrace { listeners: 1, failures: 0 }`; the extension's own rows
+   carry the four breadcrumbs, `source sha256:<the source's hex>` and
+   `listen jinn:ui/before-send` in that order (§5.4 table, good row). The
+   proof then sends the same moment twenty times and PRINTS the wall time
+   per walk (from the request to the answer, and from the walk's
+   `DispatchTrace` row to its predecessor on the transport) and the guest's
+   memory high-water mark if `jinn:introspect` 0.6.0 exposes one (it does
+   not at this pin - the proof prints "not exposed"), which closes §5.5's
+   "not measured" list on the first two items and is the packet's report
+   line. If the per-walk cost is above 250 ms, the number is a finding
+   (KG-7) and no reuse of the Boa context is designed inside this packet.
+3. `two_extensions_compose_in_registration_order_and_the_order_is_named` -
+   the two-extension variant (`ext-green` and `ext-blue`, the second
+   appending a different marker); the answer shows both markers; the
+   order in the answer equals the order of the two `EffectRegistered
+   "listen jinn:ui/before-send"` rows on the ledger; the proof asserts the
+   order it OBSERVED and prints it; the card records that the order across
+   siblings is what the boot dealt (#7 is answered for DECLARED injections
+   only; an extension declares none, so "an entry that declares nothing is
+   unchanged", FINDINGS #7 at `a53a352`) - KG-3.
+4. `a_throwing_extension_is_recorded_and_the_walk_continues` - the
+   throwing variant beside `ext-green`; `DispatchTrace { listeners: 2,
+   failures: 1 }`; the answer carries `ext-green`'s fold (R9); the
+   throwing extension's failure is in ITS history (`GET
+   /v1/plugins/main/<id>/history`); its fiber stays `active` (a failed
+   delivery is not a failed activation). Second half: a source returning
+   `undefined` yields EMPTY output and the payload passes unchanged,
+   `failures: 0`.
+5. `a_restarting_extension_refuses_the_moment_typed_and_nothing_is_sent` -
+   `PATCH /v1/profile/entries/ext-green` with a new `source` whose
+   ACTIVATION is slow by construction (a bounded counting loop of about
+   one second under fuel, so the restart window is wide enough to hit
+   deterministically, never `while(true)`); a moment posted inside the
+   window answers `503` with `detail` naming `restarting`; on the ledger
+   the walk's refusal row and NO `DispatchTrace` with a delivery; after
+   the restart lands the same moment answers `200` with the NEW source's
+   fold. The client's retry is not proven here (UI-6).
+6. `an_extension_is_granted_its_topic_and_nothing_else` - an entry whose
+   `data.topics` names `jinn:ui/before-send` but whose `config.grants`
+   does not; `GrantRefused` on its history, the fiber `failed`, and a
+   moment answers `listeners: 0`. Second half: an entry granted
+   `jinn:ui/before-send` only, whose source is registered on the topic,
+   receives NO delivery for `before-create-session` (the payload selects
+   listeners by topic; nothing else selects).
+7. `a_looping_extension_costs_the_walk_the_guest_deadline_and_the_transport_s_fate_is_recorded`
+   - a `while(true){}` source; the moment answers after the deadline,
+   MEASURED and printed (`lane::DEADLINE` 5 s at `a53a352`,
+   `crates/jinnd-wasm/src/lane.rs`). Then the honest half: the kernel
+   wraps EACH guest call in one `settle(deadline, ...)` (`crates/jinnd-wasm/src/instance.rs`)
+   and `emit` awaits every delivery end to end (`plugin.wit` `events.emit`;
+   #4/#32), so the transport's own `handle-event` - inside which it emits -
+   is on the same clock as the walk it waits for. The proof RECORDS what
+   happens to the transport (its next `/v1/health`; its fiber's state and
+   incarnation on `jinn:introspect`; whether the deadline row names it)
+   and asserts nothing about it in advance: if the transport's instance
+   dies on its own deadline (`settle.rs`, "guest exceeded its call
+   deadline") the fact is the packet's KG-2 transcript and the packet lands
+   NOT-YET on "a bad extension costs its own slot and not the transport",
+   with the kernel card named. R11 is kept by the kernel for the fiber
+   that looped; whether it is kept for the fiber that WAITED is what this
+   proof finds out.
+8. `an_extension_boots_from_a_profile_and_a_syntax_error_is_a_failed_fiber` -
+   real-composition (standing order 3): `ext-green` reaches `active`
+   through the pinned daemon from the kit-written profile with its
+   breadcrumbs in order; a variant whose `source` does not parse reads
+   `failed` with the breadcrumbs up to `config parsed` and the withdrawal
+   LIFO `clean: true` (§5.4 bad row); the catalog row for `ext-green`
+   carries `attestation: { origin: "human" }` and a row with no `origin`
+   carries no `attestation` field at all.
+9. `the_view_layer_is_verbatim` - the existing gate extended: EMPTY diff
+   for every file not on the list (items 1-14), NON-EMPTY for every file on
+   it, both directions; `no_old_gateway_route_survives_in_the_adapted_client`
+   re-run over the adapted scope (items 10-14).
+10. `a_moment_is_the_door_then_one_walk_and_nothing_else` - on the ledger
+    every connection segment that posted a moment carries exactly one
+    `verify`, then exactly one `DispatchTrace`, and no other crossing (the
+    2.8 `provider_segments` discipline, reused from proof 2 of §4.3); a
+    moment with no bearer is `401` with no dispatch; `/v1/moments/ui/after-nothing`,
+    `/v1/moments/introspect/transitions` and `/v1/moments/ui/../before-send`
+    are `404` with no dispatch; a 256 KiB+ body is refused by the wire
+    before any dispatch.
+11. Browser-level, driven by the INDEPENDENT VERIFIER with `agent-browser`
+    against a throwaway root, transcript posted on the Todo, no person in
+    the loop (§8's amendment): open `/`, paste the credential, open
+    Plugins and see `ext-green` `active` with its `human` badge and, in its
+    history, the `source sha256:` breadcrumb; open Settings, patch the
+    declared `cron` / `tick-ms` (amendment 5) with `ext-green`'s profile
+    entry re-pointed by the verifier's own file edit to
+    `jinn:ui/before-patch-settings` with a source that rewrites the patch
+    to a different declared value, save, and read back the FOLDED value
+    from `GET /v1/settings/cron` and from the page; then the network
+    transcript proving exactly two requests left the page for the save
+    (the moment, then the patch) and no request to any `/api/` path. If
+    the COO strikes the third topic, this proof reduces to the badge, the
+    breadcrumb, and one `fetch` of `/v1/moments/ui/before-send` issued from
+    the app's origin with the held credential (the same `authFetch`), whose
+    answer carries the emoji - and the card says so on the Todo before
+    dispatch.
+
+Plus: node lane green; `cargo test -p harness-docs` green (the new seam
+group README and the ext note are cited, `docs_gate.rs`); the privacy
+firewall green - the Boa guest's `target/` and the kit's outputs are
+untracked, and no path in the packet names a machine or the external ops
+volume; `cargo test -p harness-pin` green (no pin change); every quirk
+carried is named on the PR by its inventory row; the meter reading pasted
+with its `--numstat` and the `cfg(test)` list.
+
+### 9.4 Round protocol
+
+Standard harness packet rounds: 2 rounds, a third only by ruling (the STOP
+RULE, amendment 4's shape); the verifier owns the composition additions and
+proof 11. Round 1's first job, before any seam code, is proof 2's
+measurement on the spike's shape (§5.5 names it) so the ceiling is
+re-priced on a real number. Hostile probes to expect: a moment posted while
+the transport is restarting under a bundle swap (must refuse or 503, never
+a walk on a torn transport - proof 4 of §4.3 is the harness for it); a
+topic in upper case, with a `..` segment, or with a trailing slash (404,
+no dispatch); a bearer on `/v1/moments/...` that verifies but a body that
+is not JSON (422, no dispatch, the verify row present - the door is paid
+before the schema); a source that returns a string instead of an object
+(a contained failure, `failures: 1`, payload unchanged); a source that
+returns the payload with an ADDED unknown field (accepted - the fold is the
+listener's, the schema binds the client's input, not the walk's output;
+stated so the verifier does not file it); an extension whose `topics`
+lists a topic twice (one listen, the second a per-entry fault - the kit
+never writes it, the guest refuses it); two extensions with identical
+sources (both fold, twice); `while(true)` at ACTIVATION rather than in a
+delivery (the fiber fails at its own deadline, the transport is untouched -
+the contrast with proof 7 that makes KG-2 precise); a second entry claiming
+to PROVIDE `jinn:ext` (nothing provides it; the definition is types, not a
+service - a stray `services.provide` is a defect in that guest and fails
+it).
+
+### 9.5 Out of scope
+
+UI-3's live half (no push, no `/v1/events`; the moment's answer is the
+request's response and nothing else moves). The client-side call sites of
+the two chat topics (`sendText`, `buildNewSessionParams` - inventory §4.3
+moments 1 and 3) and the retry-once after a `503`: UI-6. The gateway-side
+twin of `before-send` (the session definition emitting the same topic so a
+send from cron pays the same moment): UI-6, stated there. Every moment not
+named in §9.2 (moment 2's node waterfall, 8's nav tree, 13's tool gate -
+each waits on its own surface or seam). A second engine
+(`jinn-ext-js-quickjs`; the libc shim or KG-4): ruling 5, prerequisite of
+nothing. Reusing a Boa `Context` across deliveries (measured first, proof
+2; designed later). A per-delivery budget of any kind (KG-2; no field, no
+harness timer). Talk, the Tauri shell, the service worker, the footgun
+gate, connectors, production data of any instance (the cutover rule, §7).
+
+**The K23 / PLA-348 split, exactly.** `jinn:profile-admin` (KG-1; jinnd
+M2-K23, PLA-348, `backlog`, unassigned at the time of writing, sequenced
+after M2-K24 on the kernel lane per SOURCE-OF-TRUTH §7's M3 entry) is NOT
+a dependency of this packet, and UI-2 never blocks on it. What this
+packet does WITHOUT it, because `jinn:profile.patch-entry` writes an
+entry's `config` subtree (`kernel-pin/contracts/jinn-profile/contract.wit`,
+`patch-entry`; #37): editing an INSTALLED extension's `source`, its
+`origin`, and the SUBSET of `topics` it is already granted - all of them
+`config.data`, all of them reachable through `PATCH /v1/profile/entries/{id}`
+today, and proof 5 uses exactly that. What waits on PLA-348 and lands
+NOT-YET in this packet, each rendered disabled on the plugins page with
+the finding as item 4 already renders enable/disable: (a) INSTALL - adding
+the extension ENTRY with its GRANTS ("install an extension is adding an
+entry with grants", §3 KG-1); in this packet an install is the kit writing
+the profile or the operator editing the file, and the card says so; (b)
+REMOVE; (c) the `disabled` toggle; (d) widening `topics` to one the entry
+is not granted (a grants change); (e) swapping the ENGINE - the entry's
+`package` and `hash` from `ext/jinn-ext-js-boa` to a later provider (#37's
+"the one swap every seam proves"). The page shows `origin` (ruling 1)
+without K23 because it is a read. When PLA-348 lands and a pin bump adopts
+it, items (a) through (e) are ONE later card - not a re-open of this one -
+and the disabled controls of item 4 and item 14 become that card's
+enumerated adaptations.
+
+### 9.6 Kernel findings this packet is likely to file
+
+- **KG-2, sharpened (per-delivery budget) - Blocker-class if proof 7 lands
+  as read.** At `a53a352` a guest call is one `settle(deadline, ...)`
+  (`crates/jinnd-wasm/src/instance.rs`; `lane::DEADLINE` 5 s) and `emit`
+  awaits each delivery inside the emitter's call; a listener that spends
+  the deadline spends the EMITTER's too. Candidate: a per-listen fuel or
+  deadline cap declared at `listen`, refused typed when exceeded, charged
+  to the listener's slot; and a stated rule for the emitter's clock during
+  a walk. Proof 7 is the transcript either way.
+- **KG-3 (listener order is a declaration nowhere)** - unchanged by K24
+  for entries that declare no injection (#7 at `a53a352`, "an entry that
+  declares nothing is unchanged"); proof 3 records the dealt order.
+  Candidate: an ordinal on `listen`, or profile order honored and stated.
+- **KG-5 (#38, open)** - an extension whose source does not parse reads
+  `failed` and the page can show the breadcrumbs it wrote before failing
+  (the harness-side answer, #38's UI-1 round 2) and nothing the kernel
+  said; the packet adds the transcript of a machine-written guest failing
+  on purpose, the second such transcript after §5.4's.
+- **KG-6 (emit is ungated by topic grant).** `surfaces.rs` at the pin
+  checks `grant_for(topic)` on `listen` and only the reserved-topic
+  refusal on `emit`; if the ledger confirms it in round 1, any guest can
+  emit any unreserved topic, and a moment's emitter is bounded by nothing
+  the profile states. Candidate: `emit` covered by the topic's grant like
+  `listen` (constitution 01 §Grants, "every topic is its own grant name").
+  The card grants the transport its topics NOW so the profile already reads
+  as the kernel will one day enforce it.
+- **KG-7 (the cost of one moment)** - only if proof 2's number is a
+  problem: a Boa context per delivery under fuel metering, on the record,
+  with the memory high-water mark the kernel does not yet expose (0.6.0
+  has `injects` and `unmet`, no memory reading) - the second half is a
+  `jinn:introspect` candidate regardless of the number.
+- **The ~4 MB artifact.** UI-1's ~1.4 MB bundle crosses once per
+  activation (§4.3 proof 3, measured 1,375,153 bytes at pin-bump 7); the
+  extension's component is ~3.9 MB (§5.3) and is LOADED, not crossed - the
+  activation-time cost is the kernel's `ArtifactLoaded` and Boa's context
+  build (§5.4), printed by proof 8; if either shows in the ten-boot
+  determinism budget (§4.3 proof 5b's bound), it is a finding and not a
+  workaround.
 
 ---
 
