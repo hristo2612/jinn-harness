@@ -11,6 +11,14 @@
 //!
 //! Self-skips LOUDLY when no jinnd checkout holding the pinned commit is
 //! reachable (KERNEL-PIN.md Gate 2).
+//!
+//! The extension tier's vocabulary is SPELLED below rather than imported
+//! from `jinn-ui`, `jinn-ext` and `ext-kit`: these proofs must compile and
+//! run RED on the merge-base without the implementation (§9.7 amendment
+//! 8(e), red-by-reversion; `docs/notes/ui-2-red-transcript.md`), so what
+//! the card names is what the proofs name. The crates stay the one home
+//! for the production code; a literal that drifts from its crate fails
+//! proof 2 and proof 8 on the ledger, which is the point of spelling it.
 
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
@@ -22,13 +30,8 @@ use composition::kit::{
     artifact_hash, entry_mut, fresh_ui_root, suite_credential, Daemon, LedgerRow,
 };
 use composition::plugins::{history, state};
-use ext_kit::{
-    ext_entry, slow_source, BLUE_ID, BLUE_SOURCE, BOA_GUEST, BROKEN_SOURCE, GREEN_ID, GREEN_SOURCE,
-    LOOPING_SOURCE, THROWING_ID, THROWING_SOURCE, UNDEFINED_SOURCE,
-};
 use jinn_api::{AUTH_CONTRACT, OP_VERIFY};
-use jinn_ext::{source_breadcrumb, Origin, BREADCRUMBS};
-use jinn_ui::{TOPIC_BEFORE_CREATE_SESSION, TOPIC_BEFORE_SEND};
+use sha2::{Digest, Sha256};
 
 const TRANSPORT: &str = "jinn-api-http";
 const CATALOG: &str = "main";
@@ -40,6 +43,88 @@ const SEND_BODY: &str = r#"{"text":"hello","session-id":"session-1","attachments
 const GUEST_DEADLINE: Duration = Duration::from_secs(5);
 /// Proof 2's line in the sand: above it the cost of one moment is KG-7.
 const KG7_BOUND: Duration = Duration::from_millis(250);
+
+/// The three moment topics the card names (§9.2; `jinn-ui`'s vocabulary).
+const TOPIC_BEFORE_SEND: &str = "jinn:ui/before-send";
+const TOPIC_BEFORE_CREATE_SESSION: &str = "jinn:ui/before-create-session";
+/// The first engine provider: its package (the entry's `package`) and its
+/// artifact basename (the kit's sidecar) — `jinn-ext` / `ext-kit`.
+const BOA_PACKAGE: &str = "ext/jinn-ext-js-boa";
+const BOA_GUEST: &str = "jinn-ext-js-boa";
+/// The ONE host provider an engine reads (§5.4 lesson 1).
+const CLOCK_CONTRACT: &str = "jinn:clock";
+/// The activation breadcrumbs, in the order the guest registers them
+/// (§5.4; FINDINGS #38's discipline).
+const BREADCRUMBS: [&str; 4] = [
+    "activate entered",
+    "config parsed",
+    "js context built",
+    "js evaluated",
+];
+/// The operator's example from §6, mounted by the kit with `origin: human`.
+const GREEN_ID: &str = "ext-green";
+const GREEN_SOURCE: &str = "(p) => ({ ...p, text: p.text + ' 🟢' })";
+/// A second extension appending a different marker (proof 3).
+const BLUE_ID: &str = "ext-blue";
+const BLUE_SOURCE: &str = "(p) => ({ ...p, text: p.text + ' 🔵' })";
+/// A source that throws on every delivery (proof 4).
+const THROWING_ID: &str = "ext-throwing";
+const THROWING_SOURCE: &str = "(p) => { throw new Error('the throwing extension'); }";
+/// A source that returns `undefined`: the pass-through case (proof 4).
+const UNDEFINED_SOURCE: &str = "(p) => undefined";
+/// A source that does not parse: a failed fiber on the record (proof 8).
+const BROKEN_SOURCE: &str = "(p) => { this is not javascript";
+/// A source that loops forever on delivery (proof 7).
+const LOOPING_SOURCE: &str = "(p) => { while (true) {} }";
+
+/// A source whose ACTIVATION is slow by construction: a bounded counting
+/// loop under fuel, run when the source expression is evaluated, then
+/// the fold — never `while(true)` (proof 5's restart window).
+fn slow_source(iterations: u64, marker: &str) -> String {
+    format!("(function () {{ var i = 0; while (i < {iterations}) i++; return (p) => ({{ ...p, text: p.text + ' {marker}' }}); }})()")
+}
+
+/// `sha256:<hex>` of the source as configured: what the catalog's
+/// `attestation.source` carries (proof 8; §9.7 amendment 8(d)).
+fn source_digest(source: &str) -> String {
+    format!("sha256:{:x}", Sha256::digest(source.as_bytes()))
+}
+
+/// The fifth breadcrumb, `source sha256:<hex>`: WHAT CODE RAN, on the
+/// record (§8 ruling 1).
+fn source_breadcrumb(source: &str) -> String {
+    format!("source {}", source_digest(source))
+}
+
+/// The extension entry in §6's "Install" shape: `config.data` carries the
+/// topics, the source and the origin; `config.grants` is the topics (each
+/// its own grant name) plus the one host provider the engine reads;
+/// `injects` is absent — an extension injects no service.
+fn ext_entry(
+    id: &str,
+    hash: &str,
+    topics: &[&str],
+    source: &str,
+    origin: &str,
+) -> serde_json::Value {
+    let mut grants: Vec<serde_json::Value> = topics.iter().map(|t| serde_json::json!(t)).collect();
+    grants.push(serde_json::json!(CLOCK_CONTRACT));
+    serde_json::json!({ "id": id, "package": BOA_PACKAGE, "hash": hash,
+                        "config": { "grants": grants,
+                                    "data": { "topics": topics, "source": source,
+                                              "origin": origin } } })
+}
+
+/// A NOT-YET assertion (§9.7 amendment 8(b)): asserts the pinned kernel's
+/// CURRENT behaviour by the finding's name, so the day a pin answers the
+/// finding this proof fails loudly and is flipped — never a print nobody
+/// reads.
+fn not_yet(finding: &str, still_holds: bool, what_changed: &str) {
+    assert!(
+        still_holds,
+        "NOT-YET {finding} is ANSWERED at this pin — {what_changed}; flip the assertion and close the finding"
+    );
+}
 
 fn gate() -> Option<&'static PathBuf> {
     static BINARY: OnceLock<Option<PathBuf>> = OnceLock::new();
@@ -66,7 +151,7 @@ fn boa_hash(root: &Path) -> String {
 
 /// An extension entry on the §6 shape, pinned to this root's provider.
 fn extension(root: &Path, id: &str, topics: &[&str], source: &str) -> serde_json::Value {
-    ext_entry(id, &boa_hash(root), topics, source, Origin::Agent)
+    ext_entry(id, &boa_hash(root), topics, source, "agent")
 }
 
 /// Edits the root's profile document BEFORE boot.
@@ -109,7 +194,7 @@ fn booted(name: &str, edit: impl FnOnce(&Path, &mut serde_json::Value)) -> Optio
         .as_array()
         .expect("entries")
         .iter()
-        .filter(|entry| entry["package"] == jinn_ext::BOA_PACKAGE)
+        .filter(|entry| entry["package"] == BOA_PACKAGE)
         .map(|entry| entry["id"].as_str().expect("id").to_owned())
         .collect();
     let daemon = Daemon::boot_operator(binary, &root);
@@ -504,8 +589,13 @@ fn a_throwing_extension_is_recorded_and_the_walk_continues() {
         state(&get(port, &format!("/v1/plugins/{CATALOG}/{THROWING_ID}")).body),
         "active"
     );
-    // Where the failure is on the record: the throwing extension's own
-    // history, read through the operator surface, and the raw ledger.
+    // Where the failure is on the record. At the pin a contained delivery
+    // failure is the `failures` count on the EMITTER's trace (asserted
+    // above) and NOTHING on the listener's own history: after the walk the
+    // throwing extension's rows are its one clock read and no failure row
+    // (FINDINGS.md #51; §9.7 amendment 8(b)). The card's clause "in ITS
+    // history" is NOT-YET, asserted by name: a pin that writes the row
+    // fails this assertion, and the proof is flipped to require it.
     let kinds: Vec<String> = history(port, CATALOG, THROWING_ID)["lines"]
         .as_array()
         .expect("lines")
@@ -519,8 +609,18 @@ fn a_throwing_extension_is_recorded_and_the_walk_continues() {
         .filter(|row| row.seq > baseline && row.entry.as_deref() == Some(THROWING_ID))
         .map(|row| row.kind.clone())
         .collect();
+    assert!(
+        own_rows.iter().any(|row| row.contains(CLOCK_CONTRACT)),
+        "the delivery reached the throwing extension (its clock read is on the record): {own_rows:?}"
+    );
+    not_yet(
+        "FINDINGS.md #51 (a contained delivery failure writes nothing on the listener's history)",
+        kinds.iter().all(|kind| kind == "ContractCall")
+            && !own_rows.iter().any(|row| row.contains("Fail") || row.contains("fail")),
+        &format!("the throwing extension's history after the walk now carries {kinds:?} (raw rows {own_rows:?})"),
+    );
     println!(
-        "proof 4: throwing beside green — failures 1, the fold survived; the throwing extension's history after the walk: {kinds:?}; its raw rows: {own_rows:?}"
+        "proof 4: throwing beside green — failures 1 on the emitter's trace, the fold survived; NOT-YET #51: the throwing extension's history after the walk is {kinds:?} (raw rows {own_rows:?}), no failure row"
     );
     daemon.interrupt();
 
@@ -699,7 +799,7 @@ fn an_extension_is_granted_its_topic_and_nothing_else() {
     let (root, port) = fresh_ui_root("moments-grants");
     // An entry whose data names the topic but whose grants do not.
     let mut ungranted = extension(&root, "ext-ungranted", &[TOPIC_BEFORE_SEND], GREEN_SOURCE);
-    ungranted["config"]["grants"] = serde_json::json!([jinn_ext::CLOCK_CONTRACT]);
+    ungranted["config"]["grants"] = serde_json::json!([CLOCK_CONTRACT]);
     // An entry granted before-send only.
     let blue = extension(&root, BLUE_ID, &[TOPIC_BEFORE_SEND], BLUE_SOURCE);
     edit_before_boot(&root, |document| {
@@ -859,9 +959,12 @@ fn an_extension_boots_from_a_profile_and_a_syntax_error_is_a_failed_fiber() {
     }
     let green = get(port, &format!("/v1/plugins/{CATALOG}/{GREEN_ID}"));
     assert_eq!(state(&green.body), "active", "{}", green.raw);
+    // The attestation is the catalog's STABLE reading of the entry: the
+    // origin, and the source's digest (the breadcrumb the page renders,
+    // never read off a sliding history window — §9.7 amendment 8(d)).
     assert_eq!(
         green.body["attestation"],
-        serde_json::json!({ "origin": "human" }),
+        serde_json::json!({ "origin": "human", "source": source_digest(GREEN_SOURCE) }),
         "{}",
         green.raw
     );

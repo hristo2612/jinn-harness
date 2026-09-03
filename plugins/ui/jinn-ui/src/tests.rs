@@ -221,7 +221,7 @@ fn the_api_namespace_is_exactly_v1_case_sensitive() {
     assert!(!is_api_path("/assets/v1.js"));
 }
 
-// --- the moment vocabulary (UI-2, §9.2) ---
+// The moment vocabulary (UI-2, §9.2).
 
 #[test]
 fn the_path_law_names_exactly_the_three_topics_and_nothing_else() {

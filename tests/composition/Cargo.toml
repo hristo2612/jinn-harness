@@ -32,9 +32,6 @@ harness-pin = { path = "../../tools/harness-pin" }
 # The UI seam's names and the kit's entry ids, from their one home.
 jinn-ui = { path = "../../plugins/ui/jinn-ui" }
 ui-kit = { path = "../../tools/ui-kit" }
-# The extension tier's entry shape, sources and names, from their one home.
-ext-kit = { path = "../../tools/ext-kit" }
-jinn-ext = { path = "../../plugins/ext/jinn-ext" }
 jinn-api = { path = "../../plugins/api/jinn-api" }
 jinn-cron = { path = "../../plugins/cron/jinn-cron" }
 jinn-settings = { path = "../../plugins/settings/jinn-settings" }

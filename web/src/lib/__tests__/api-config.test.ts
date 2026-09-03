@@ -85,6 +85,22 @@ describe("saving settings through the before-patch-settings moment", () => {
     expect(authFetch.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "PATCH")).toBe(false)
   })
 
+  // §9.7 amendment 8(d): the page shows the FOLDED value after a moment, so the
+  // save answers the document the daemon holds, not the one the page sent.
+  it("answers the folded document, which is what the page shows after the save", async () => {
+    daemon()
+    const moment = vi.fn(async (_domain: string, _topic: string, payload: unknown) => {
+      const { namespace, patch } = payload as { namespace: string; patch: Record<string, unknown> }
+      return json(200, { namespace, patch: { ...patch, "tick-ms": 900 } })
+    })
+    const api = createConfigApi({ responseError, conflict, moment })
+    const document = await api.getConfig()
+    const saved = await api.updateConfig({ cron: { "tick-ms": 700 } }, document.revision)
+
+    expect(saved.config).toEqual({ cron: { "tick-ms": 900 } })
+    expect(saved.revision).toBe(JSON.stringify({ cron: { "tick-ms": 900 } }))
+  })
+
   it("issues no moment when nothing declared changed", async () => {
     daemon()
     const moment = vi.fn()
