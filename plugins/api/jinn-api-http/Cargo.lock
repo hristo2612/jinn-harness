@@ -301,6 +301,7 @@ dependencies = [
 name = "jinn-ui"
 version = "0.1.0"
 dependencies = [
+ "jinn-session",
  "serde",
  "serde_json",
  "sha2",

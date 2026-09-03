@@ -1,0 +1,18 @@
+# The JS-in-WASM extension tier's service definition: the `jinn:ext`
+# entry's config schema (topics, source, origin — closed), the activation
+# law's names (the four breadcrumbs, the source hash), and the two JS
+# programs an engine provider evaluates. Compiled natively (unit tests,
+# the kit) and into the engine guests; it therefore depends on nothing
+# but serde and sha2.
+[package]
+name = "jinn-ext"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10"

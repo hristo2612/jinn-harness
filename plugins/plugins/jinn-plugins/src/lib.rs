@@ -70,7 +70,9 @@ mod tests;
 
 pub use catalog::{Catalog, Source};
 pub use checks::{failures, Check, CHECKS};
-pub use entry::{Entry, Grant, GrantSource, Grants, Listing, ReadWindow, JOIN_QUALIFIER};
+pub use entry::{
+    Attestation, Entry, Grant, GrantSource, Grants, Listing, ReadWindow, JOIN_QUALIFIER,
+};
 pub use history::{History, Line};
 pub use lifecycle::{Lifecycle, Reason, Snapshot, Unserved, Window};
 pub use mutants::{Mutant, MUTANTS};

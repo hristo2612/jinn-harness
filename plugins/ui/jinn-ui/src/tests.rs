@@ -220,3 +220,79 @@ fn the_api_namespace_is_exactly_v1_case_sensitive() {
     assert!(!is_api_path("/"));
     assert!(!is_api_path("/assets/v1.js"));
 }
+
+// --- the moment vocabulary (UI-2, §9.2) ---
+
+#[test]
+fn the_path_law_names_exactly_the_three_topics_and_nothing_else() {
+    assert_eq!(
+        moment_topic("/v1/moments/ui/before-send"),
+        Some(TOPIC_BEFORE_SEND)
+    );
+    assert_eq!(
+        moment_topic("/v1/moments/ui/before-create-session"),
+        Some(TOPIC_BEFORE_CREATE_SESSION)
+    );
+    assert_eq!(
+        moment_topic("/v1/moments/ui/before-patch-settings"),
+        Some(TOPIC_BEFORE_PATCH_SETTINGS)
+    );
+    for miss in [
+        "/v1/moments",
+        "/v1/moments/",
+        "/v1/moments/ui",
+        "/v1/moments/ui/",
+        "/v1/moments/ui/after-nothing",
+        "/v1/moments/introspect/transitions",
+        "/v1/moments/ui/../before-send",
+        "/v1/moments/UI/before-send",
+        "/v1/moments/ui/Before-Send",
+        "/v1/moments/ui/before-send/",
+        "/v1/moments/ui/before-send/x",
+        "/v1/momentsui/before-send",
+    ] {
+        assert_eq!(moment_topic(miss), None, "{miss} is not a moment");
+    }
+    for under in ["/v1/moments", "/v1/moments/", "/v1/moments/ui/before-send"] {
+        assert!(is_moments_path(under), "{under}");
+    }
+    assert!(!is_moments_path("/v1/momentsx"));
+    assert!(!is_moments_path("/v1/settings"));
+}
+
+#[test]
+fn every_topic_binds_its_payload_schema_before_the_walk() {
+    let send = br#"{ "text": "hello", "session-id": "s-1", "attachments": [] }"#;
+    assert_eq!(validate_moment(TOPIC_BEFORE_SEND, send), Ok(()));
+    assert_eq!(
+        validate_moment(
+            TOPIC_BEFORE_SEND,
+            br#"{ "text": "hello", "attachments": [] }"#
+        )
+        .map_err(|e| e.contains("session-id")),
+        Err(true),
+        "session-id is required"
+    );
+    assert!(validate_moment(TOPIC_BEFORE_SEND, b"[1,2]").is_err());
+    assert!(validate_moment(TOPIC_BEFORE_SEND, b"not json").is_err());
+    let session = br#"{ "engine": { "engine": "echo" } }"#;
+    assert_eq!(
+        validate_moment(TOPIC_BEFORE_CREATE_SESSION, session),
+        Ok(())
+    );
+    assert!(validate_moment(TOPIC_BEFORE_CREATE_SESSION, b"{}").is_err());
+    let patch = br#"{ "namespace": "cron", "patch": { "tick-ms": 700 } }"#;
+    assert_eq!(validate_moment(TOPIC_BEFORE_PATCH_SETTINGS, patch), Ok(()));
+    assert!(
+        validate_moment(
+            TOPIC_BEFORE_PATCH_SETTINGS,
+            br#"{ "namespace": "cron", "patch": 5 }"#
+        )
+        .is_err(),
+        "the patch is an object"
+    );
+    assert!(validate_moment("jinn:ui/after-nothing", b"{}").is_err());
+    let detail = refused_detail("restarting", TOPIC_BEFORE_SEND, "entry ext-green");
+    assert!(detail.starts_with("restarting: "), "{detail}");
+    assert_eq!(WALK_REFUSALS.len(), 5);
+}

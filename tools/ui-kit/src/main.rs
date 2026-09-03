@@ -6,13 +6,16 @@ use std::path::{Path, PathBuf};
 
 use api_kit::{api_entries, settings_entries, PROVIDER_ID};
 use cron_kit::{build, component, cron_entries, flag, write_artifact, write_profile};
+use ext_kit::{ext_entry, GREEN_ID, GREEN_SOURCE};
+use jinn_ext::Origin;
+use jinn_ui::TOPIC_BEFORE_SEND;
 use plugin_kit::{
     api_catalog_grants, fixed_entry, live_entry, misbound_entry, FIXED_ID, MAIN_CATALOG,
     PARKED_CATALOG, SHELVED_ID,
 };
 use ui_kit::{
-    archive, build_web, bundle_entry, marked, mount_bundle_on, write_bundle, BUNDLE_DIR,
-    BUNDLE_DIR_VAR, BUNDLE_PACKAGE,
+    archive, build_web, bundle_entry, marked, mount_bundle_on, mount_moments_on, write_bundle,
+    BUNDLE_DIR, BUNDLE_DIR_VAR, BUNDLE_PACKAGE,
 };
 
 /// Builds the embedded provider with `$JINN_UI_BUNDLE_DIR` pointed at
@@ -45,6 +48,8 @@ fn kit(root: &Path, port: u16, every_ms: u64, tick_ms: u64) {
     let store = build(&artifacts, "settings", "jinn-settings-store");
     let live = build(&artifacts, "plugins", "jinn-plugins-profile");
     let fixed = build(&artifacts, "plugins", "jinn-plugins-static");
+    let (ext, ext_size) = ext_kit::build(&artifacts);
+    println!("{} {ext_size} bytes sha256 {ext}", ext_kit::BOA_GUEST);
 
     let mut entries = cron_entries(&scheduler, &snapshot, every_ms, tick_ms);
     entries.extend(api_entries(&http, &status, &edit, port));
@@ -61,6 +66,14 @@ fn kit(root: &Path, port: u16, every_ms: u64, tick_ms: u64) {
         port.wrapping_add(2),
     ));
     entries.push(bundle_entry(BUNDLE_PACKAGE, &bundle));
+    // The operator's example from §6: ONE extension, origin `human`.
+    entries.push(ext_entry(
+        GREEN_ID,
+        &ext,
+        &[TOPIC_BEFORE_SEND],
+        GREEN_SOURCE,
+        Origin::Human,
+    ));
 
     let catalogs = [MAIN_CATALOG, PARKED_CATALOG];
     for entry in &mut entries {
@@ -69,6 +82,7 @@ fn kit(root: &Path, port: u16, every_ms: u64, tick_ms: u64) {
             grants.extend(api_catalog_grants(&catalogs));
             entry["config"]["data"]["catalogs"] = serde_json::json!(catalogs);
             mount_bundle_on(entry);
+            mount_moments_on(entry);
         }
     }
     write_profile(root, entries);

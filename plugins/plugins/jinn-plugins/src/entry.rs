@@ -152,8 +152,22 @@ pub struct Entry {
     pub grants: Grants,
     /// Its life, as the reading law licenses it.
     pub lifecycle: Lifecycle,
+    /// The operator's attestation on the entry, when it declares one:
+    /// `config.data.origin` read verbatim (the extension tier's
+    /// `origin: agent | human`, UI-2 §9.2; constitution 05's provenance
+    /// restated for data). ABSENT for every entry that declares none,
+    /// never defaulted: a reading, not a state machine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attestation: Option<Attestation>,
     #[serde(flatten)]
     pub extra: Extensions,
+}
+
+/// See [`Entry::attestation`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub struct Attestation {
+    pub origin: String,
 }
 
 /// The read a catalog actually performed to answer. It travels with
