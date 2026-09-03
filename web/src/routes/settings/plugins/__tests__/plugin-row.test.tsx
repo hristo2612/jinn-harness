@@ -41,15 +41,15 @@ describe('an extension row', () => {
     renderRow(row({ attestation: { origin: 'human', source: 'sha256:5faf0000' } }))
 
     const notYet = within(screen.getByTestId('plugin-not-yet-ext-green')).getAllByRole('button')
-    expect(notYet.length).toBeGreaterThanOrEqual(3)
+    expect(notYet).toHaveLength(7)
     for (const item of notYet) {
       expect(item.getAttribute('aria-disabled')).toBe('true')
       expect((item as HTMLButtonElement).disabled).toBe(true)
     }
     const text = notYet.map((item) => `${item.textContent} ${item.getAttribute('title')}`).join('\n')
-    expect(text).toMatch(/#37/)
-    expect(text).toMatch(/#47/)
-    expect(text).toMatch(/#48/)
+    for (const item of ['Install extension · #37', 'Remove extension · #37', 'Disable extension · #37', 'Widen topics · #37', 'Swap engine · #37', 'Refuse a moment mid-restart · #47', 'A bad extension costs its own slot · #48']) {
+      expect(text).toContain(item)
+    }
   })
 })
 

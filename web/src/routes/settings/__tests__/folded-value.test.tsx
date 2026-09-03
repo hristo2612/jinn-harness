@@ -73,11 +73,13 @@ describe('a save the daemon folded', () => {
 
   it('leaves an edit queued during the write alone: that write brings its own answer', async () => {
     let land: (result: { revision: string; config: Record<string, unknown> }) => void = () => {}
+    let landQueued: (result: { revision: string; config: Record<string, unknown> }) => void = () => {}
     apiMocks.updateConfig
       .mockReturnValueOnce(new Promise((resolve) => { land = resolve }))
-      .mockResolvedValueOnce({ revision: 'rev-3', config: { sessions: { interruptOnNewMessage: true } } })
+      .mockReturnValueOnce(new Promise((resolve) => { landQueued = resolve }))
 
     const toggle = await renderSettings()
+    await waitFor(() => expect(fetchTalkCapability).toHaveBeenCalledTimes(1))
     fireEvent.click(toggle)
     await waitFor(() => expect(apiMocks.updateConfig).toHaveBeenCalledTimes(1))
     // A second edit while the first is in flight.
@@ -86,8 +88,16 @@ describe('a save the daemon folded', () => {
 
     land({ revision: 'rev-2', config: { sessions: { interruptOnNewMessage: false } } })
     await waitFor(() => expect(apiMocks.updateConfig).toHaveBeenCalledTimes(2))
-    // The first answer (false) never replaced the queued edit (true); the second write's answer is what shows.
-    await waitFor(() => expect(screen.getByRole('switch', INTERRUPT).getAttribute('aria-checked')).toBe('true'))
+    // The first answer (false) neither replaces the queued edit nor marks that
+    // still-pending write Saved. Only the queued write's own answer may do so.
+    expect(screen.getByRole('switch', INTERRUPT).getAttribute('aria-checked')).toBe('true')
+    expect(screen.getByText('Saving…')).toBeTruthy()
+    expect(screen.queryByText('Saved')).toBeNull()
+    expect(fetchTalkCapability).toHaveBeenCalledTimes(1)
     expect((apiMocks.updateConfig.mock.calls[1][0] as { sessions: { interruptOnNewMessage: boolean } }).sessions.interruptOnNewMessage).toBe(true)
+
+    landQueued({ revision: 'rev-3', config: { sessions: { interruptOnNewMessage: true } } })
+    expect(await screen.findByText('Saved')).toBeTruthy()
+    expect(fetchTalkCapability).toHaveBeenCalledTimes(2)
   })
 })
