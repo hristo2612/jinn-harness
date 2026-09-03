@@ -29,8 +29,12 @@ exactly the four plugin-world interfaces and whose only host call is one
 `jinn:clock` read per delivery; a syntax error is a `failed` fiber on the
 record with the breadcrumbs it wrote, a throw is a contained failure the
 walk continues past (R9), `undefined` is a pass-through. The Settings
-page's save dispatches `before-patch-settings` first and sends the
-FOLDED patch; the plugins page shows each extension's `origin`. Proven
+page's save dispatches `before-patch-settings` first, sends the
+FOLDED patch and shows the document the daemon answered — never "Saved"
+over the draft it sent; the plugins page shows each extension's `origin`
+and the digest of its source from the catalog's attestation, and the
+tier's NOT-YET items as disabled pills carrying their finding numbers
+(#37, #47, #48). Proven
 through the pinned daemon in `tests/composition/tests/moments.rs`
 (`docs/notes/2026-09-03-a-moment-is-one-walk.md`). What it is NOT: a
 per-delivery budget — a looping extension spends the walk's guest
@@ -675,7 +679,9 @@ Its own README carries these in full; the load-bearing ones:
   topic; the grants are a statement, not yet an authority.
 - **A contained delivery failure is a count on the emitter's trace and
   nothing on the listener's history** (#51): the plugins page shows a
-  throwing extension `active` with a clock read and no failure.
+  throwing extension `active` with a clock read and no failure. Proof 4
+  asserts `failures: 1` on the emitter's trace and the ABSENCE on the
+  listener by name, so the pin that writes the row flips the proof.
 - **The guest's memory is not a reading the kernel exposes** (#50): the
   cost of one moment is measured (3.3 ms per walk, a fresh Boa context
   each) and no context reuse is designed; the memory high-water mark is
@@ -686,7 +692,9 @@ Its own README carries these in full; the load-bearing ones:
   declared injections only). Proof 3 asserts the order it observed.
 - **Installing, removing, disabling an extension, widening its topics or
   swapping its engine are profile edits, not clicks** (#37; the K23 split,
-  plan §9.5). Editing an installed extension's `source`, `origin` or
+  plan §9.5), rendered DISABLED on the extension's row with the finding
+  beside the two kernel NOT-YET items (#47, #48) — never silently absent.
+  Editing an installed extension's `source`, `origin` or
   already-granted `topics` IS `PATCH /v1/profile/entries/{id}` today.
 - **The two chat topics are dispatchable and proven, and reached by no
   ported surface. (named here)** The ported shell has no composer (UI-6);

@@ -41,7 +41,12 @@ is a lie on the record (KG-2, `FINDINGS.md`).
 - `origin` — `agent | human`: who wrote the source. Constitution 05's
   `[provenance] origin` restated for data; the operator's declaration on
   the entry, shown by the plugins page as the row's `attestation.origin`
-  and read by nothing else.
+  and read by nothing else. The plugins catalog carries the source's
+  digest beside it as `attestation.source` (`sha256:<hex>`,
+  `source_digest`; the same digest the guest writes on the ledger as its
+  `source sha256:` breadcrumb), so the page's breadcrumb is a STABLE
+  reading of the entry and never a sliding history window (plan §9.7
+  amendment 8(d)).
 
 ## The activation law
 

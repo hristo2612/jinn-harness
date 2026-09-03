@@ -131,3 +131,68 @@ paths plus `plugins/ext/**`, `tools/ext-kit/**`,
 `tests/composition` excluded), `git diff --numstat main` on a clean
 tree, the reading pasted on the PR with its `cfg(test)` list. The
 estimate declared before the first edit was ~740; the ceiling is 1,100.
+
+## Round 2: what the verifier found, and what changed
+
+Three Blockers and a Major at round 1's head (PLA-353,
+`wic_992226223d0a`; rulings `wic_11e20879a220`; plan §9.7 amendment 8).
+
+**The page said "Saved" over a stale draft.** The save went through the
+moment, the PATCH carried the folded patch, the daemon held the folded
+value — and the page kept the number the operator typed, because the
+adapter recorded the daemon's answer only in its own `lastRead` and the
+commit hook marked the write saved without handing the page anything.
+Now `updateConfig` answers `{ revision, config }`, the document as the
+daemon holds it, and the commit hook's `onFolded` replaces the page's
+draft with it BEFORE the status reads saved. One guard: when a newer
+edit is already queued behind the write in flight, the answer is not
+adopted — that edit goes out next and brings its own answer, and
+replacing the draft under it would clobber the very edit about to be
+written. The Settings page sits exactly at its size ratchet, so its
+adoption is one line on the hook's option list.
+
+**The breadcrumb was read off a sliding window.** Proof 11 wants the
+`source sha256:` breadcrumb on the plugins page; round 1 showed it only
+in the row's history, which is the last 400 ledger rows — and the page's
+own traffic pushed the activation rows out of the window before the
+verifier looked. The breadcrumb is now the catalog's: `attestation`
+carries `source` (the digest of `config.data.source`, `sha256:<hex>`)
+beside `origin`, computed by `jinn_ext::source_digest` — the one home,
+the same bytes the guest writes on the ledger — and the row renders
+`source <digest>` from that stable reading. The history stays what it
+is: a window, labelled as one.
+
+**Proof 4 printed what it should have asserted.** The card's "in ITS
+history" is not true at this pin (#51), and a print of the absence is
+not evidence of anything. The proof asserts `failures: 1` on the
+emitter's trace and, as a named NOT-YET assertion, that the throwing
+extension's history after the walk is its clock read and no failure
+row. When a pin writes the row, that assertion fails with #51 in its
+message and the proof is flipped.
+
+**The proofs came after the implementation.** Round 1 opened the PR on
+the implementation commit and wrote the proofs against it; there was no
+failing transcript. The remedy the ruling names is red-by-reversion:
+the proofs alone on the merge-base, run, the failing tail of each
+pasted (`docs/notes/ui-2-red-transcript.md`). For that to be possible
+at all the proofs had to STAND without the implementation — round 1's
+file imported the topics from `jinn-ui`, the breadcrumbs and `Origin`
+from `jinn-ext` and the fixture sources from `ext-kit`, none of which
+exist at the merge-base, so "alone on the merge-base" would have been
+one compile error and not ten failing proofs. The proofs now spell the
+vocabulary they check: the topic strings, the package, the breadcrumbs,
+the §6 entry shape, the fixture sources, the digest. That is the right
+shape for an acceptance test anyway — the card names those strings, and
+a crate whose constant drifted from the card should fail the proof, not
+redefine it. The production crates stay the one home for production
+code; the proof-only sources (a throwing one, a looping one, …) that
+`ext-kit` used to export for the suite's benefit now live in the suite,
+which is where a fixture belongs.
+
+**Every NOT-YET item is on the page, disabled, with its number.** The
+extension row carries three pills — the K23 profile-admin edits
+(#37, PLA-348), a moment mid-restart (#47, M2-K26), a bad extension
+costing only its own slot (#48, M2-K25) — each `disabled` with the
+finding as its title and the number in the label; install joins the
+plugins page's read-only sentence. A limit an operator can see is a
+limit they can plan around; one that is merely absent is a surprise.

@@ -3267,3 +3267,12 @@ topic, reason }` row attributed to the LISTENER per contained failure
 (the fault's message capped, as `ErrorRecorded` caps), beside the
 emitter's count. The same drain that would close #38 for activations
 closes this for deliveries.
+
+**Round 2 (2026-09-03): asserted by name, not printed.** Proof 4 now
+asserts `failures: 1` on the emitter's `DispatchTrace` and, as a NAMED
+NOT-YET assertion citing this entry, that the listener's history after
+the walk is its clock read and no failure row (plan §9.7 amendment
+8(b)). The day a pin writes the `DeliveryFailed` row the assertion
+fails with this number in its message and the proof is flipped to
+require it. jinnd M2-K25 (`da74c67`) closes only the FATAL half of this
+finding; the non-fatal row is a later card.
