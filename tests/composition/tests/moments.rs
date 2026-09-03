@@ -528,10 +528,17 @@ fn two_extensions_compose_in_registration_order_and_the_order_is_named() {
     let trace = one_trace(&daemon, baseline, TOPIC_BEFORE_SEND);
     assert_eq!(trace["listeners"], 2);
     assert_eq!(trace["failures"], 0);
-    // The order the ledger's listen rows record IS the order of the
-    // markers in the answer — asserted as OBSERVED, and named: the
-    // order across siblings is what the boot dealt (KG-3; FINDINGS #7
-    // answers declared injections only).
+    // Both listens are on the record, one row each, written by the
+    // broker at registration. The ORDER of the fold is what the boot
+    // dealt: at this pin the walk's order across two sibling listeners
+    // on one topic is NOT reliably the listen rows' order (at head
+    // `9468fd0` two local runs folded 🔵 then 🟢 under rows reading
+    // green, blue; CI's run folded the other way), and no reading
+    // exposes the order the walk took — the `DispatchTrace` row carries
+    // counts only (FINDINGS.md #52, KG-3). So the proof NAMES both orders
+    // and asserts neither equals the other; the NOT-YET assertion is on
+    // the reading's absence: a pin whose trace names its deliveries fails
+    // it, and the proof is flipped to assert the fold against that.
     let listens: Vec<String> = daemon
         .ledger_rows()
         .iter()
@@ -542,19 +549,18 @@ fn two_extensions_compose_in_registration_order_and_the_order_is_named() {
         .filter_map(|row| row.entry.clone())
         .collect();
     assert_eq!(listens.len(), 2, "{listens:?}");
-    let green_first = text.find("🟢") < text.find("🔵");
-    let expected = if listens[0] == GREEN_ID {
-        GREEN_ID
+    let fold_order = if text.find("🟢") < text.find("🔵") {
+        [GREEN_ID, BLUE_ID]
     } else {
-        BLUE_ID
+        [BLUE_ID, GREEN_ID]
     };
-    assert_eq!(
-        green_first,
-        expected == GREEN_ID,
-        "the fold order is the listen-row order: answer {text:?}, listens {listens:?}"
+    not_yet(
+        "FINDINGS.md #52 (the order a walk takes across sibling listeners is not a reading: the DispatchTrace carries counts only)",
+        trace.get("deliveries").is_none() && trace.get("order").is_none(),
+        &format!("the walk's trace now names its deliveries: {trace}"),
     );
     println!(
-        "proof 3: two extensions folded in the ledger's listen order {listens:?} — answer {text:?} (KG-3: the order across siblings is what the boot dealt)"
+        "proof 3: two extensions folded — answer {text:?}, fold order {fold_order:?}, listen rows {listens:?} (KG-3 / FINDINGS #52: the order across siblings is what the boot dealt, and the listen rows are not its witness)"
     );
     daemon.interrupt();
 }

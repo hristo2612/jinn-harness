@@ -200,3 +200,29 @@ slot (#48, M2-K25). Each is `disabled` with the finding as its title and
 the number in the label; install also joins the plugins page's read-only
 sentence. A limit an operator can see is a limit they can plan around;
 one that is merely absent is a surprise.
+
+## Round 2, resubmitted: proof 3's witness was not one
+
+The round's build node died twice on provider infrastructure with the
+work committed; the resubmission ran the gates on the same head and
+proof 3 went red, twice, on the one assertion the card's premise
+carried: "two extensions compose in registration order, the order is
+what the ledger's listen rows say". The fold read `hello 🔵 🟢` under
+listen rows reading green then blue; CI's composition gate at the same
+head had folded the other way. Nothing in the packet changed between
+those runs — the order across two sibling listeners on one topic is
+what the boot deals, and the listen rows are not its witness. The
+`DispatchTrace` row at the pin carries `listeners` and `failures` and
+no order, so no reading says which way a walk went (FINDINGS #52).
+
+Proof 3 now asserts what is true — two listeners, no failure, both
+markers in the answer, exactly two listen rows — NAMES the fold order
+and the row order side by side, and carries a NOT-YET assertion on the
+reading's absence: a pin whose trace names its deliveries fails it, and
+the proof is flipped to assert the fold against that. A relation
+between two readings neither of which the kernel guarantees was never
+an acceptance criterion, whichever way the coin landed in round 1; the
+transcript of the red run is in #52. The red-by-reversion tail for
+proof 3 is unchanged (it fails on the merge-base before reaching this
+assertion, for want of an engine provider).
+

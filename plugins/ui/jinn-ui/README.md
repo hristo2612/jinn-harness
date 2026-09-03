@@ -83,7 +83,8 @@ presented on a static path is ignored — never read, never put to
 A MOMENT is a `waterfall` walk on a `jinn:ui/<topic>` topic that the
 transport dispatches when an AUTHENTICATED client calls
 `POST /v1/moments/<domain>/<topic>` with the moment's payload, and
-answers with the FOLDED payload: listeners in registration order, a
+answers with the FOLDED payload: listeners in the order the walk deals
+(nothing declares it and no reading exposes it, FINDINGS #52), a
 non-empty output replacing the payload for the next, the final payload
 the one answer, one `DispatchTrace` row per walk. The vocabulary is
 CLOSED (R3) — `src/moments.rs` is its schema:

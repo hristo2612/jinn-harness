@@ -3276,3 +3276,66 @@ the walk is its clock read and no failure row (plan §9.7 amendment
 fails with this number in its message and the proof is flipped to
 require it. jinnd M2-K25 (`da74c67`) closes only the FATAL half of this
 finding; the non-fatal row is a later card.
+
+## 52. The order a `waterfall` walks two sibling listeners on one topic is not their `listen` rows' order, and no reading exposes the order the walk took — "listeners in registration order" is not observable at this pin (KG-3, measured)
+
+**Grade: reproducible WITH A TRANSCRIPT (two runs of three at one head
+disagree with the rows), mechanism untraced — the KG-3 gap the UI-2
+card named as "a declaration nowhere" is also a READING nowhere.**
+Harness packet UI-2 (PLA-353) at pin `a53a352`, proof 3 of
+`tests/composition/tests/moments.rs`, found on the round-2 resubmission's
+gate run at head `9468fd0`.
+
+The proof boots the `ui` profile with two extensions on
+`jinn:ui/before-send`, `ext-green` and `ext-blue`, each appending its
+marker to `text`, and posts one moment. The card's premise (§9.2: "both
+fold, in registration order; the order is what the ledger's listen rows
+say and nothing else") was asserted as observed. The ledger wrote the
+listens green first, blue second — one `EffectRegistered` row each,
+recorded by the adapter at registration, not batched — and the walk
+folded blue first:
+
+```
+seq entry      kind
+ 62 ext-green  EffectRegistered { label: "listen jinn:ui/before-send" }
+ 68 ext-blue   EffectRegistered { label: "listen jinn:ui/before-send" }
+108 ext-green  FiberTransition { fiber: 12, Pending → Loading, InitialLoad }
+109 ext-green  FiberTransition { fiber: 12, Loading → Active,  InitialLoad }
+110 ext-blue   FiberTransition { fiber: 13, Pending → Loading, InitialLoad }
+111 ext-blue   FiberTransition { fiber: 13, Loading → Active,  InitialLoad }
+
+thread 'two_extensions_compose_in_registration_order_and_the_order_is_named' panicked at tests/composition/tests/moments.rs:551:5:
+assertion `left == right` failed: the fold order is the listen-row order: answer "hello 🔵 🟢", listens ["ext-green", "ext-blue"]
+  left: false
+ right: true
+```
+
+Twice locally at that head (the workspace gate run and a solo rerun,
+`--nocapture`); the same head's CI composition gate (run 33762143213)
+folded green first and passed. Nothing in the packet differs between
+those runs. So the order across two sibling listeners on one topic is
+what the boot deals — and the `DispatchTrace` row the walk lands carries
+`topic`, `mode`, `listeners`, `failures`, `emitter` and no order
+(`crates/jinnd-events/src/bus.rs`, `DispatchTraceRecord`), so after the
+fact nothing on the record says which way a walk went. The typed table
+itself is an insertion-ordered `Vec` per event type
+(`crates/jinnd-events/src/table.rs`); where the string-lane `listen` of
+a wasm guest meets that table, and why two boots of one profile select
+differently, is a kernel read this packet does not make (standing
+order 1).
+
+**What the proof does now.** It asserts what is true — two listeners,
+zero failures, both markers in the answer, exactly two listen rows —
+names the fold order and the row order side by side, and carries a
+NOT-YET assertion on the reading's absence (the trace has no
+`deliveries`/`order` field): a pin that names its deliveries fails it
+and the proof is flipped to assert the fold against that reading.
+
+**The capability shape that would retire it.** Either half of KG-3's
+candidate (§9.6: an ordinal on `listen`, or profile order honored and
+stated) makes the order a declaration; the READING is the walk's
+`DispatchTrace` naming its deliveries in the order taken (listener
+entry per delivery, with its outcome — which also carries #51's
+non-fatal half for free). Until then "registration order" is a sentence
+in a README, not a fact on the ledger.
+

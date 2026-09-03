@@ -687,9 +687,11 @@ Its own README carries these in full; the load-bearing ones:
   each) and no context reuse is designed; the memory high-water mark is
   not on `jinn:introspect` 0.6.0.
 - **Listener order across siblings is what the boot dealt. (named here)**
-  Two extensions on one topic fold in the order of their `listen` rows;
-  nothing declares it (KG-3; the kernel's answer to sibling order covers
-  declared injections only). Proof 3 asserts the order it observed.
+  Two extensions on one topic fold in an order nothing declares and no
+  reading exposes: the walk's order and the `listen` rows' order
+  disagreed in two runs of three at one head (FINDINGS #52; KG-3, the
+  kernel's answer to sibling order covers declared injections only).
+  Proof 3 names both orders and asserts neither is the other's witness.
 - **Installing, removing, disabling an extension, widening its topics or
   swapping its engine are profile edits, not clicks** (#37; the K23 split,
   plan §9.5), rendered DISABLED on the extension's row with the finding
