@@ -11,16 +11,22 @@ in the branch's history (`8abc816` before `2bda3e6` and `48bb947`).*
 ## What was run, exactly
 
 A throwaway detached checkout at the merge-base — harness `main`
-`101a657`, the tree UI-2 branched from — holding ONE change: the proof
-file as the round's tests-first commit `8abc816` has it. Nothing else
-from the branch: no `jinn-ui` moment vocabulary, no `jinn-ext`, no Boa
-guest, no `ext-kit`, no `/v1/moments` route on the transport, no
-`attestation` on the catalog, no client adaptation.
+`101a657`, the tree UI-2 branched from — holding ONE proof-only commit,
+`47e77d4`: the daemon proof file exactly as the round's tests-first
+commit `8abc816` has it. Nothing else from the branch: no `jinn-ui`
+moment vocabulary, no `jinn-ext`, no Boa guest, no `ext-kit`, no
+`/v1/moments` route on the transport, no `attestation` on the catalog,
+no client adaptation. `8abc816` itself is a delta on the round-1 branch,
+so it is not cherry-picked onto a tree where several of its modified
+paths do not exist; its proof artifact is extracted and committed alone,
+making the reversion literal and inspectable.
 
 ```text
 git worktree add --detach <throwaway> 101a657
 git -C <throwaway> checkout 8abc816 -- tests/composition/tests/moments.rs
-git -C <throwaway> status --short        # A  tests/composition/tests/moments.rs
+git -C <throwaway> add tests/composition/tests/moments.rs
+git -C <throwaway> commit -m "test(ui-2): proof snapshot on merge-base"
+git -C <throwaway> show --stat --oneline # 47e77d4, one file created
 JINND_DIR=<a jinnd checkout holding a53a352> \
   cargo test -p composition --test moments -- --test-threads=1 --nocapture
 ```
@@ -49,7 +55,7 @@ run. Paths in the tails below are relative to the throwaway's root.
 
 ```text
 running 10 tests
-test result: FAILED. 0 passed; 10 failed; 0 ignored; 0 measured; 0 filtered out; finished in 187.94s
+test result: FAILED. 0 passed; 10 failed; 0 ignored; 0 measured; 0 filtered out; finished in 193.19s
 ```
 
 Zero passed. No proof passes without the implementation, so none had

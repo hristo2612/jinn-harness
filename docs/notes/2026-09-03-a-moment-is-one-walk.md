@@ -193,9 +193,10 @@ code; the proof-only sources (a throwing one, a looping one, …) that
 which is where a fixture belongs.
 
 **Every NOT-YET item is on the page, disabled, with its number.** The
-extension row carries three pills — the K23 profile-admin edits
-(#37, PLA-348), a moment mid-restart (#47, M2-K26), a bad extension
-costing only its own slot (#48, M2-K25) — each `disabled` with the
-finding as its title and the number in the label; install joins the
-plugins page's read-only sentence. A limit an operator can see is a
-limit they can plan around; one that is merely absent is a surprise.
+extension row carries seven pills: each K23 profile-admin edit separately
+(install, remove, disable, widen topics, swap engine; #37 / PLA-348), a
+moment mid-restart (#47, M2-K26), and a bad extension costing only its own
+slot (#48, M2-K25). Each is `disabled` with the finding as its title and
+the number in the label; install also joins the plugins page's read-only
+sentence. A limit an operator can see is a limit they can plan around;
+one that is merely absent is a surprise.
