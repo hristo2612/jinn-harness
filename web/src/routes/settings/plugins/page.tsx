@@ -119,7 +119,7 @@ export default function PluginsSettingsPage() {
               data-testid="plugins-read-only-reason"
               className="mt-2 px-1 text-[length:var(--text-caption1)] leading-relaxed text-[var(--text-tertiary)]"
             >
-              Enable, disable, rescan and reveal are disabled here: {READ_ONLY_REASON}
+              Enable, disable, rescan, reveal and install are disabled here: {READ_ONLY_REASON}
             </p>
           </div>
         </div>

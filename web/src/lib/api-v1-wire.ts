@@ -47,9 +47,11 @@ export interface PluginCatalogEntryWire {
   grants?: { source: string; values: unknown[]; qualifier: string }
   lifecycle: { state: string; reason?: unknown; "kernel-state"?: string }
   /** UI-2 (docs/plans/ui-malleability-arc.md §9.2): the entry's `config.data.origin`
-   *  when it declares one — an extension's `agent | human` attestation. Absent
-   *  for every entry that declares none. */
-  attestation?: { origin: string }
+   *  when it declares one — an extension's `agent | human` attestation — and
+   *  `source`, the digest of its `config.data.source` (`sha256:<hex>`), the same
+   *  digest the guest writes on the ledger as its breadcrumb (§9.7 amendment
+   *  8(d)). Absent for every entry that declares none. */
+  attestation?: { origin: string; source?: string }
 }
 export interface PluginCatalogListingWire {
   catalog: string

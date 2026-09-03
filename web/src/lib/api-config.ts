@@ -66,9 +66,12 @@ export interface ConfigDocument {
 }
 
 /** What a save leaves behind: the revision the document now has, so the page that
- *  just wrote it is current again rather than stale against its own write. */
+ *  just wrote it is current again rather than stale against its own write, and
+ *  the document AS THE DAEMON ANSWERED IT — a moment may have folded the patch
+ *  (§9.7 amendment 8(d)), so the page shows this, never the draft it sent. */
 export interface ConfigSaveResult {
   revision: string
+  config: Record<string, unknown>
 }
 
 /**
@@ -211,7 +214,7 @@ export function createConfigApi(http: ConfigHttp) {
         const declared = declaredPatch(patch, lastDeclared[namespace])
         if (Object.keys(declared).length > 0) await patchNamespace(namespace, declared)
       }
-      return { revision: revisionOf(lastRead) }
+      return { revision: revisionOf(lastRead), config: { ...lastRead } }
     },
   }
 }
