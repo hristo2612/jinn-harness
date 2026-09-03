@@ -13,6 +13,26 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
+Pin-bump 7 — kernel pin `a53a352` (M2-K24). **A declared dependency is a
+kernel gate, not a subscription.** The `ui` profile's transport entry
+declares `injects: ["jinn:ui-bundle"]` beside its grants, and the kernel
+now does what the UI-1 card first assumed: it activates the transport
+only once the bundle entry is `Active`, unloads and reloads it under
+`DependencyChanged` when the bundle is swapped (incarnation +1 exactly,
+one bundle crossing per incarnation, the settings and plugins consumers
+untouched, the port's blip measured), and re-arms it from `Failed` when
+a provider it declared lands later. The workaround UI-1 carried for
+#45/#46 — the `jinn:introspect/transitions` subscription, the
+`jinn:introspect` and `jinn:clock` grants, the post-commit probe and the
+"not yet" classification — is REMOVED, not kept behind a flag: the
+bundle read is ONE crossing at activation, and a corrupt bundle fails
+that activation and nothing else (one order; proof 5). `jinn:introspect`
+is 0.6.0 (`injects` / `unmet` on entry reads; carried in the mirrors'
+`extra` and read by nothing here yet). FINDINGS #7, #45 and #46 close as
+fixed at the pin with transcripts; #38 stays open
+(`docs/notes/2026-09-03-a-declaration-is-a-gate.md`). The soak is
+untouched on pin `3a8e5c03` until the 2026-09-04 audit.
+
 Phase UI-1 — kernel pin `85d36b4` (M2-K18), UNCHANGED. **The web UI is
 a profile.** The first packet of the UI malleability arc
 (`docs/plans/ui-malleability-arc.md` §4): the built client is ONE plugin
@@ -24,8 +44,8 @@ serves the document and its assets from memory to any loopback peer
 with NO door and NO crossing — a byte is never a dispatch, a bearer on
 a static path is ignored — while every `/v1/*` request keeps the door
 exactly as 2.8 left it. Swapping the UI is a profile edit of one
-entry's `package` and `hash` (witnessed on the kernel's transitions
-publish and re-read — not a restart at this pin, #46); a bundle that
+entry's `package` and `hash` (at this phase's pin a witnessed re-read,
+not a restart, #46; a restart since pin-bump 7); a bundle that
 does not verify fails the transport and nothing else. The client under `web/` is jinn `43e8647`'s
 shell, Settings and plugins page ported VERBATIM behind a byte-for-byte
 gate over a pinned map (`tools/ui-kit/tests/verbatim.rs`,
@@ -409,8 +429,11 @@ per-seam "could NOT prove" sections.
   513 ms at two layers, 755 at three, 1084 at four).
 - **`jinn:fs` cannot drop a suffix** (#34), so every heal in all three
   durable stores rewrites the whole prefix.
-- **Sibling activation order is unspecified** (#7), which is what keeps
-  #30's window open.
+- **Sibling activation order is unspecified for an entry that declares
+  nothing** (#7, answered at pin `a53a352` for the string lane: a wasm
+  entry's `injects` declaration is a kernel gate, and the `ui` transport
+  uses it); an undeclared consumer still meets its provider in whichever
+  order the boot deals, which is what keeps #30's window open.
 - **A vendor CLI is exercised only where an operator names one.** The
   todos and workflows vendor legs self-skip in CI; sessions has no vendor
   test at all.
@@ -577,16 +600,16 @@ Its own README carries these in full; the load-bearing ones:
 - **A failed plugin shows `failed` and no reason** (#38), on the page
   that exists to show reasons — the transcript of the page trying is
   this packet's addition to that finding.
-- **Activation-time injection is a coin toss the kernel does not
-  re-arm** (#45), and **a provider swap does not restart its wasm
-  consumer** (#46): the transport completes and refreshes its one read
-  on `jinn:introspect/transitions`, a read-only kernel grant it has no
-  other use for, plus ONE post-commit probe on a one-shot clock alarm
-  (a listen made inside `activate` is not live until the activation
-  commits — the coin toss's third face, transcript in #45); a provider's
-  contained failure is "not yet" to it, and its own activation fault is
-  named on the ledger before it fails (#38's workaround). Proof 4
-  asserts the incarnation unchanged until M2-K24.
+- **Activation-time injection was a coin toss the kernel did not
+  re-arm** (#45), and **a provider swap did not restart its wasm
+  consumer** (#46) — both answered at pin `a53a352` (M2-K24, pin-bump
+  7): the transport declares `injects: ["jinn:ui-bundle"]`, the kernel
+  gates its activation and restarts it on a swap, and the transitions
+  subscription, the introspect and clock grants, the post-commit probe
+  and the "not yet" classification are gone. What stays: the
+  transport's own activation fault is still named on the ledger by the
+  transport itself before it fails (#38's workaround), because the
+  kernel still records a state and never a reason.
 - **The Settings page shows only what a profile's settings seam
   declares** — in the `ui` profile that is `cron` (`jobs`, `tick-ms`,
   `entry-id`; the secret reference is read-only); the config.yaml-shaped

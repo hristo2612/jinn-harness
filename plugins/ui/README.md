@@ -8,15 +8,18 @@ per the seam-triple naming law (AGENTS.md):
 |---|---|---|
 | Service definition | `jinn-ui` | The `jinn:ui-bundle` contract: operations `manifest` (paths, sha256, MIME, cache class, the document's name, the blob's hash) and `bundle` (the whole archive as one length-prefixed blob); the codec; `verify`, which FAILS CLOSED on any mismatch; the SERVING LAW as pure functions (the document `no-cache`, hashed `assets/` `immutable`, an unknown asset `404 text/plain` never the SPA fallback, every other non-`/v1` path the document, `.webmanifest` as `application/manifest+json`); the MIME table. Pure types + logic; compiled into the guests and the kit. |
 | Provider | `jinn-ui-bundle-embedded` | Wasm plugin holding the built client COMPILED IN: `include_bytes!` of the archive and manifest `ui-kit` wrote. Its config is empty and it is granted only the contract it provides; its identity is its content hash, which is what makes a UI swap a profile edit of ONE entry's `package` and `hash`. |
-| Consumer | `jinn-api-http` (`plugins/api/`) | The transport, when its profile mounts a bundle: reads the manifest and the whole archive as one crossing each — at `activate`, or on the kernel's `jinn:introspect/transitions` publish the moment the bundle entry is witnessed `Active` (sibling order is unspecified, `FINDINGS.md` #45) — verifies, and holds the files for the incarnation's life; answers `GET` on every non-`/v1` path from that memory BEFORE the door and with NO crossing — a byte is never a dispatch, a bearer on a static path is ignored — while every `/v1/*` request keeps the door as packet 2.8 left it. A bundle that does not verify fails the transport's activation and nothing else (R11). |
+| Consumer | `jinn-api-http` (`plugins/api/`) | The transport, when its profile mounts a bundle: DECLARES it (`injects: ["jinn:ui-bundle"]` beside its grants, pin `a53a352`, M2-K24), so the kernel activates it only once the bundle entry is `Active` and restarts it when the bundle is swapped; reads the manifest and the whole archive as one crossing each at `activate`, verifies, and holds the files for the incarnation's life; answers `GET` on every non-`/v1` path from that memory BEFORE the door and with NO crossing — a byte is never a dispatch, a bearer on a static path is ignored — while every `/v1/*` request keeps the door as packet 2.8 left it. A bundle that does not verify fails the transport's activation and nothing else (R11). |
 
 The direction of calls: the transport RESOLVES the bundle contract and
 reads it once per incarnation; the provider PROVIDES. A second provider
 shape (a bundle read from a directory, a bundle fetched by hash) is a new
 package next to `jinn-ui-bundle-embedded` and a profile edit; the
-composition suite proves the swap is witnessed and re-read with every
-consumer's incarnation untouched (`FINDINGS.md` #46 on why it is not a
-restart at this pin).
+composition suite proves the swap is a RESTART of the transport —
+incarnation +1 exactly, one bundle crossing per incarnation, the unload's
+cause `DependencyChanged` on the ledger — with every OTHER consumer's
+incarnation untouched: the kernel's epoch gating on the declared
+`injects` (`FINDINGS.md` #46, fixed at pin `a53a352`; before it the swap
+was a witnessed re-read).
 
 The contract surface is documented in `jinn-ui/README.md` — one home per
 fact. Guest crates here are NOT workspace members (see the workspace

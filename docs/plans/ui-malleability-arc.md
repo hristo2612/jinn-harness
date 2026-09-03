@@ -622,29 +622,33 @@ transport that does not serve:
    into the proof's output and copied to the card's report.
 4. `swapping_the_ui_is_a_profile_edit_of_one_entry` - edit the bundle
    entry's `package` and `hash` to a second kit-built bundle whose document
-   carries a marker. AT THE PINNED KERNEL (`85d36b4`, §8 amendment 4): the
-   swap is a witnessed transition and a re-read, not a restart - the
-   transport's `incarnation` is ASSERTED UNCHANGED (never merely omitted),
-   exactly one more `jinn:ui-bundle` crossing lands on the ledger, `GET /`
-   answers the marker, refused connects while it lands are 0, and the
-   settings and plugins consumers' incarnations are unchanged; the blip is
-   measured. When jinnd M2-K24 (PLA-350) lands and pin-bump 7 adopts it,
-   this proof FLIPS to `incarnation` +1 exactly and the transitions
-   subscription is removed (harness FINDINGS #46).
+   carries a marker. AT PIN `a53a352` (jinnd M2-K24, adopted by pin-bump 7;
+   flipped here per §8 amendment 4's own text): the swap IS a restart - the
+   transport declares `injects: ["jinn:ui-bundle"]`, so the kernel unloads
+   it under `DependencyChanged` and reloads it; its `incarnation` is
+   ASSERTED +1 EXACTLY (never merely omitted), exactly one more
+   `jinn:ui-bundle` crossing lands on the ledger (one per incarnation), the
+   one `Unloading` row names `DependencyChanged`, `GET /` answers the marker,
+   the settings and plugins consumers' incarnations are unchanged, and the
+   blip of the port between the two incarnations is MEASURED (refused
+   connects, edit-to-marker), never asserted away. The transitions
+   subscription, the `jinn:introspect` grant and the post-commit probe that
+   stood in for this at `85d36b4` are removed (harness FINDINGS #45/#46,
+   fixed at pin `a53a352`). Before the pin-bump this item read: the swap is
+   a witnessed transition and a re-read, incarnation asserted UNCHANGED,
+   refused connects 0.
 5. `a_bundle_that_does_not_match_its_manifest_never_serves_a_byte` - boot
-   the `ui` profile with a deliberately corrupted archive. AT THE PINNED
-   KERNEL the transport meets its provider in one of two orders (#45) and
-   the proof covers BOTH, each deterministically: (i) provider present at
-   boot - the transport's fiber reads `failed` if verification ran at
-   activation, or stays `active` answering every page a typed 503 with the
-   delivery failure on the record if it ran on the witnessed transition; the
-   proof asserts which order occurred and that no byte was served; (ii) the
-   provider landed by a profile edit AFTER the transport is `active` - the
-   delivery order, forced; the transport stays `active`, serves the typed
-   503, and the failure is on the record. In both orders the settings and
-   plugins consumers stay `active` and the operator-api profile without a
-   bundle entry still answers `/v1/health` 200. After M2-K24 this collapses
-   to one order: the transport's fiber reads `failed` at activation.
+   the `ui` profile with a deliberately corrupted archive. AT PIN `a53a352`
+   this is ONE order: the kernel activates the declared transport only once
+   the bundle entry is `active`, the read and its verify run INSIDE that
+   activation, the transport's fiber reads `failed` and the port never
+   opens; one `manifest` and one `bundle` crossing on the record, no byte
+   served; the settings and plugins consumers stay `active`, and the
+   operator-api profile without a bundle entry still answers `/v1/health`
+   200 and `/` a typed 503. The two orders `85d36b4` had (#45), and the
+   forced late-provider order that item covered, are no longer reachable: a
+   declared consumer without its provider rests `pending`, never `active`
+   without its bundle.
 5b. `a_fresh_boot_is_deterministic` (added by §8 amendment 4) - ten
    consecutive boots of the `ui` profile, each on a FRESH root, through the
    pinned daemon from git archive: every boot reaches the transport `active`
@@ -654,6 +658,8 @@ transport that does not serve:
    operator is to test cannot boot on a coin toss. If the pinned kernel
    cannot be made deterministic from the harness side within Law, the
    packet lands as NOT-YET on this item with M2-K24 named as the unblock.
+   At pin `a53a352` the item stays and passes with NO harness-side
+   workaround: the kernel's gate on the declaration is the determinism.
 6. `the_view_layer_is_verbatim` - not a daemon proof: a repo test that runs
    `git diff --stat 43e8647 -- packages/web/<f>` for every ported file
    against `web/<f>` through a pinned mapping and asserts an EMPTY diff for
