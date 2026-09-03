@@ -90,7 +90,7 @@
       ]
     },
     "src/lib/api.ts": {
-      "lines": 1072,
+      "lines": 1064,
       "exempt": [
         "complexity"
       ]

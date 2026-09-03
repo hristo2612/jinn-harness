@@ -23,10 +23,13 @@ import type {
   UpdateNoteInput,
 } from "@/routes/notes/types"
 import { createConfigApi } from "@/lib/api-config"
+import { createMomentApi, momentResponse } from "@/lib/api-moments"
+import { writeHeaders, type WriteOriginWire } from "@/lib/api-write"
 import { createExperimentsApi } from "@/lib/api-experiments"
 import { createSttApi } from "@/lib/api-stt"
 import { createTodoCaptureApi } from "@/lib/api-todo-capture"
 export type { TodoCaptureWire, TodoCaptureStageWire, TodoCaptureRouteWire } from "@/lib/api-todo-capture"
+export type { WriteOriginWire } from "@/lib/api-write"
 import { createWorkflowLifecycleApi } from "@/lib/api-workflow-lifecycle"
 import type { StaleChatPolicy } from "@/lib/stale-chat"
 import type { EnginesResponse, ModelInfo } from "@/lib/engine-registry"
@@ -202,19 +205,6 @@ export async function get<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-/**
- * The surface a write came from, when it is not this UI. The gateway allowlists
- * the values and drops anything else, so declaring one is audit colour and never
- * authority — it buys the caller a label on their own write, nothing more.
- */
-export type WriteOriginWire = "talk"
-
-function writeHeaders(origin?: WriteOriginWire): Record<string, string> {
-  return origin
-    ? { "Content-Type": "application/json", "X-Jinn-Origin": origin }
-    : { "Content-Type": "application/json" };
-}
-
 async function post<T>(path: string, body?: unknown, origin?: WriteOriginWire): Promise<T> {
   requireCounterpart(path)
   const res = await authFetch(path, {
@@ -224,21 +214,6 @@ async function post<T>(path: string, body?: unknown, origin?: WriteOriginWire): 
   });
   if (!res.ok) throw await responseError(res);
   return res.json();
-}
-
-/**
- * UI-2 (docs/plans/ui-malleability-arc.md §9.2 item 13): a MOMENT — one
- * `POST /v1/moments/<domain>/<topic>` with the moment's payload, answered with
- * the payload as the daemon's extensions folded it. The one requester every
- * surface's moment goes through; `api.moment` parses its answer and the
- * settings adapter classifies its refusal (a refused walk is a typed 503).
- */
-function momentResponse(domain: string, topic: string, payload: unknown): Promise<Response> {
-  return authFetch(`/v1/moments/${encodeURIComponent(domain)}/${encodeURIComponent(topic)}`, {
-    method: "POST",
-    headers: writeHeaders(),
-    body: JSON.stringify(payload),
-  })
 }
 
 async function del<T>(path: string, origin?: WriteOriginWire): Promise<T> {
@@ -844,12 +819,7 @@ export const api = {
     conflict: (status, message, remedy) => new ApiError(status, message, "CONFIG_CONFLICT", undefined, remedy),
     moment: momentResponse,
   }),
-  /** UI-2 item 13: the folded payload of one moment, or the seam's error. */
-  moment: async <T extends object>(domain: string, topic: string, payload: T): Promise<T> => {
-    const res = await momentResponse(domain, topic, payload)
-    if (!res.ok) throw await responseError(res)
-    return (await res.json()) as T
-  },
+  ...createMomentApi({ responseError }),
   reloadConnectors: () =>
     post<{ started: string[]; stopped: string[]; errors: string[] }>("/api/connectors/reload", {}),
   getLogs: (n?: number) =>

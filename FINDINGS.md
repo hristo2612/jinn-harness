@@ -3183,7 +3183,17 @@ it (`tools/ui-kit`, `mount_moments_on`), and verifies the gap on the
 ledger rather than asserting it from the read: a `ui` root whose
 transport entry has those three grants STRIPPED still lands the walk.
 
-TRANSCRIPT: the probe's output, pasted into this entry at land.
+```
+KG-6 probe: the transport with NO topic grant posted a moment — status 200, text "hello 🟢",
+  walks 1, GrantRefused rows []
+KG-6 probe: CONFIRMED on the ledger — emit is ungated by the topic grant at this pin
+```
+
+The `ui` root's transport entry had `jinn:ui/before-send`,
+`jinn:ui/before-create-session` and `jinn:ui/before-patch-settings`
+removed from `config.grants` before boot; the walk landed, the
+extension folded, and the ledger holds no refusal. A guest granted
+nothing but `jinn:net` dispatched a topic and had its listeners run.
 
 **The capability shape that would retire it.** `emit` covered by the
 topic's grant exactly as `listen` is — `check_grant(grant_for(topic))`

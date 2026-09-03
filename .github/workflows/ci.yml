@@ -13,6 +13,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+          # The extension tier's kit test builds its guest for the plugin
+          # world (tools/ext-kit/tests/imports.rs), so this lane needs the
+          # wasm32 std like the composition lane does.
+          targets: wasm32-unknown-unknown
       - uses: Swatinem/rust-cache@v2
       - name: privacy firewall (no tracked build state, no machine paths)
         run: |
