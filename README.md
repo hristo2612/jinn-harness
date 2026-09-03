@@ -35,7 +35,8 @@ through the pinned daemon in `tests/composition/tests/moments.rs`
 (`docs/notes/2026-09-03-a-moment-is-one-walk.md`). What it is NOT: a
 per-delivery budget — a looping extension spends the walk's guest
 deadline, and what that costs the TRANSPORT is proof 7's transcript
-(#47); install/remove/disable/topic-widening of an extension from the
+(#48); a moment inside an extension's restart window is answered
+unmodified by the kernel, not refused (#47); install/remove/disable/topic-widening of an extension from the
 UI (the K23 split, plan §9.5); the chat topics' client call sites (UI-6).
 
 Pin-bump 7 — kernel pin `a53a352` (M2-K24). **A declared dependency is a
@@ -653,30 +654,38 @@ Its own README carries these in full; the load-bearing ones:
 
 ### UI-2 — Moments and the extension tier
 
-- **A bad extension can cost the transport, not just its own slot** (#47):
+- **A moment inside an extension's restart window is answered UNMODIFIED,
+  not refused** (#47): the kernel withdraws a listener's `listen` with the
+  old incarnation's suspension BEFORE the replacement commits, so a walk
+  in the window (~500 ms per source edit) selects nobody and M2-K9's
+  `restarting` never fires. The transport's half of fail-closed holds; the
+  kernel's does not. Proof 5 lands NOT-YET on it.
+- **A bad extension can cost the transport, not just its own slot** (#48):
   at this pin every guest call is one `settle(deadline)` and `emit` awaits
   each delivery inside the emitter's call, so a listener that spends the
-  5 s guest deadline spends the transport's too — proof 7's transcript
-  is the measurement, and the per-delivery budget is a kernel card
-  (jinnd M2-K25). No `budget` field exists on the entry because nothing
-  could honor it.
-- **`emit` is not gated by a topic grant** (#48): the transport is granted
+  5 s guest deadline spends the transport's too — proof 7's transcript is
+  the measurement, and the per-delivery budget is a kernel card (jinnd
+  M2-K25). No `budget` field exists on the entry because nothing could
+  honor it.
+- **`emit` is not gated by a topic grant** (#49): the transport is granted
   the three topics it emits so the profile READS as the kernel will one
   day enforce it, but at `a53a352` any guest can emit any unreserved
   topic; the grants are a statement, not yet an authority.
-- **The cost of one moment is a fresh Boa context per delivery** (#49):
-  measured in proof 2 and recorded in the note; no context reuse is
-  designed until that number is a problem, and the guest's memory
-  high-water mark is not exposed by `jinn:introspect` 0.6.0.
+- **A contained delivery failure is a count on the emitter's trace and
+  nothing on the listener's history** (#51): the plugins page shows a
+  throwing extension `active` with a clock read and no failure.
+- **The guest's memory is not a reading the kernel exposes** (#50): the
+  cost of one moment is measured (3.3 ms per walk, a fresh Boa context
+  each) and no context reuse is designed; the memory high-water mark is
+  not on `jinn:introspect` 0.6.0.
 - **Listener order across siblings is what the boot dealt. (named here)**
   Two extensions on one topic fold in the order of their `listen` rows;
-  nothing declares it (KG-3; #7 answers declared injections only). Proof
-  3 asserts the order it observed.
+  nothing declares it (KG-3; the kernel's answer to sibling order covers
+  declared injections only). Proof 3 asserts the order it observed.
 - **Installing, removing, disabling an extension, widening its topics or
   swapping its engine are profile edits, not clicks** (#37; the K23 split,
   plan §9.5). Editing an installed extension's `source`, `origin` or
-  already-granted `topics` IS `PATCH /v1/profile/entries/{id}` today
-  (proof 5 uses it through the document lane).
+  already-granted `topics` IS `PATCH /v1/profile/entries/{id}` today.
 - **The two chat topics are dispatchable and proven, and reached by no
   ported surface. (named here)** The ported shell has no composer (UI-6);
   `before-patch-settings` is the one moment an operator can click.

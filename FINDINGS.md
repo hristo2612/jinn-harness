@@ -3004,3 +3004,207 @@ that keeps serving across a provider change is a transport whose running
 state the kernel cannot vouch for; a restart is a fact on the ledger, a
 refresh in place was a fact only in the transport's memory
 (`docs/notes/2026-09-03-a-declaration-is-a-gate.md`).
+
+## 47. A listener's config restart withdraws its listen BEFORE the replacement commits, so a reply-expecting walk inside the window selects nobody and answers the payload UNMODIFIED — M2-K9's `restarting` never fires for it
+
+**Grade: reproducible WITH A TRANSCRIPT, measured, packet-card-ready —
+Blocker-class for any waterfall that means "validate before you act".**
+Hit in harness packet UI-2 (PLA-353) at pin `a53a352`, proof 5 of
+`tests/composition/tests/moments.rs`, every run.
+
+The UI-2 card (`docs/plans/ui-malleability-arc.md` §9.1, binding R9)
+makes a moment FAIL-CLOSED: a walk the kernel refuses whole is a typed
+`503`, never the unmodified payload, because a validator extension
+("refuse a send containing an API key") is defeated by fail-open. The
+card expected the restart case to be M2-K9's `restarting` refusal: a
+reply-expecting `emit` "is decided BEFORE any delivery: if any selected
+listener sits in an incarnation that already owes a transition, the whole
+walk is refused" (`kernel-pin/wit/plugin.wit`, `events.emit`).
+
+What the pinned kernel does on a `ConfigChanged` restart of a
+listener-only fiber (the operator edits `ext-green`'s `source` through
+the document lane; the new source's activation is slow by construction):
+
+```
+seq  ts(ms)         entry          kind
+382  …326039  jinn-api-http  DispatchTrace { topic: jinn:ui/before-send, mode: Waterfall, listeners: 1, failures: 0 }   ← the OLD fold, "hello 🟢"
+386  …326065  ext-green      EffectWithdrawn { label: "listen jinn:ui/before-send", clean: true }
+387  …326065  ext-green      FiberSuspended { retained: 0 }
+388  …326065  ext-green      ContractResolved { contract: jinn:clock }        ← the NEW instance's activation begins (staging)
+389  …326065  ext-green      ContractCall { contract: jinn:clock, operation: now }
+399  …326069  jinn-api-http  DispatchTrace { …, listeners: 0, failures: 0 }   ← a walk in the window: NOBODY selected, "hello" answered
+…    eight more walks, every one `listeners: 0`, every one answered 200 with the UNMODIFIED payload …
+711  …326554  jinn-api-http  DispatchTrace { …, listeners: 0, failures: 0 }
+715  …326560  ext-green      EffectRegistered { label: "activate entered" }   ← the staging registrations, recorded at commit (R8)
+…
+720  …326561  ext-green      EffectRegistered { label: "listen jinn:ui/before-send" }
+721  …326561  ext-green      FiberTransition { fiber: 12, from: Active,    to: Unloading, cause: ConfigChanged }
+722  …326561  ext-green      FiberTransition { fiber: 12, from: Unloading, to: Pending,   cause: ConfigChanged }
+723  …326562  ext-green      FiberTransition { fiber: 12, from: Pending,   to: Loading,   cause: ConfigChanged }
+724  …326562  ext-green      FiberTransition { fiber: 12, from: Loading,   to: Active,    cause: ConfigChanged }
+752  …326564  jinn-api-http  DispatchTrace { …, listeners: 1, failures: 0 }   ← the NEW fold, "hello v2"
+```
+
+No `DispatchRefused` row anywhere. The proof's client, posting a moment
+every ~5 ms across the edit (the source's activation loop sized to
+~1.5 s):
+
+```
+proof 5: after the edit — 13 answers with the OLD fold, 0 REFUSED typed `restarting`,
+  53 answered the payload UNMODIFIED (fail-open; first at 347 ms), the new fold landed
+  at 3.42 s; walks with listeners=0 on the ledger: 53; refusal rows: [];
+  the old incarnation's suspension to the new one's Active: 1492 ms
+```
+
+Fifty-three sends went through unvalidated in one edit, and not one
+`503`. The window is exactly the replacement's staging: the old
+incarnation is SUSPENDED and its `listen` WITHDRAWN at the start
+(seq 386–387), the new incarnation's `listen` lands at the commit
+(seq 720). Between the two, the topic has no registered listener, so
+`emit` selects none, `restarting` has nothing to key on, and the walk
+"succeeds" with the payload untouched. M2-K9's refusal is keyed on a
+SELECTED listener owing a transition; a withdrawn registration is not
+selected, so the refusal is unreachable on this path.
+
+Why this is Blocker-class and not a quirk: the whole point of a
+`before-*` waterfall is that the emitter cannot tell "no extension
+objects" from "no extension was asked". For ~500 ms per source edit
+(longer for a heavier source, up to the 5 s guest deadline) every send
+goes through UNVALIDATED, and the ledger's `listeners: 0` is the only
+trace. The transport keeps its half of R9 (a refusal it is handed is
+typed), but it is never handed one.
+
+**The capability shape that would retire it.** During a replacement,
+the old registration should stay SELECTABLE and owing until the commit:
+a walk that selects it is then refused `restarting` exactly as M2-K9
+promises — the registration is withdrawn AT the swap commit, together
+with the transitions, not at the staging's start. Equivalent shapes: the
+topic table keeps a tombstone for a fiber in replacement and `emit`
+refuses on it; or `Unserved` is consulted for every fiber that HAD a
+registration on the topic in the incarnation being replaced. Card
+candidate: jinnd M2-K25's sibling, or the same card — "the restart
+window is closed to reply-expecting walks". Until then the UI-2 decision
+holds at the transport and is broken by the kernel in the window, and
+proof 5 lands NOT-YET on "a moment inside an extension's restart is
+refused typed"; the proof prints the window, counts the unmodified
+answers, and asserts the transport's half only.
+
+## 48. A looping listener spends the emitter's guest deadline too — what the transport's own instance does on a listener that never returns (KG-2, measured)
+
+**Grade: reproducible WITH A TRANSCRIPT, measured — the ruling's
+NOT-YET clause (PLA-353 ruling 4) decides its class from the transcript
+below.** Hit in harness packet UI-2 (PLA-353) at pin `a53a352`, proof 7
+of `tests/composition/tests/moments.rs`.
+
+At `a53a352` every guest call is one `settle(deadline, …)`
+(`crates/jinnd-wasm/src/instance.rs`; `lane::DEADLINE` 5 s) and `emit`
+awaits every delivery end to end inside the emitter's call
+(`plugin.wit`, `events.emit`; #4/#32). The transport emits inside its
+own `handle-event` (the `jinn:net/readable` wake that carried the
+request), so the walk it waits for is on the same clock as the wake it
+is answering. Proof 7 mounts a `while (true) {}` source on
+`jinn:ui/before-send`, posts one moment, and RECORDS what happens to
+both fibers — the transcript is filled in from the run on the PR and
+kept here verbatim.
+
+TRANSCRIPT: see the PR's proof 7 output, pasted into this entry at land.
+
+**The capability shape that would retire it (M2-K25, carded the same
+day by ruling if the transport dies):** a per-delivery budget — a fuel
+or deadline cap declared at `listen`, charged to the LISTENER's slot and
+refused typed when exceeded — and a stated rule for the emitter's clock
+during a walk (the emitter's own deadline paused, or its remaining
+budget the walk's bound, but never silently shared). No `budget` field
+exists on the extension entry at this pin because nothing could honor it.
+
+## 49. `events.emit` is not gated by the topic's grant — a guest may emit on any unreserved topic, granted or not (KG-6, verified on the ledger)
+
+**Grade: reproducible WITH A TRANSCRIPT, packet-card-ready.** Hit in
+harness packet UI-2 (PLA-353) at pin `a53a352`; the probe
+`an_emit_is_not_gated_by_the_topics_grant_at_this_pin` in
+`tests/composition/tests/moments.rs`.
+
+`crates/jinnd-wasm/src/surfaces.rs` at the pin: `listen` calls
+`check_grant(grant_for(topic))`; `emit` calls only `reserve(topic)` (the
+M2-K13 reserved-topic refusal) and then dispatches. Constitution 01
+§Grants says every topic is its own grant name, and `listen` honors it;
+`emit` does not. The UI-2 card grants the transport the three topics it
+emits so the profile already READS as the kernel will one day enforce
+it (`tools/ui-kit`, `mount_moments_on`), and verifies the gap on the
+ledger rather than asserting it from the read: a `ui` root whose
+transport entry has those three grants STRIPPED still lands the walk.
+
+TRANSCRIPT: the probe's output, pasted into this entry at land.
+
+**The capability shape that would retire it.** `emit` covered by the
+topic's grant exactly as `listen` is — `check_grant(grant_for(topic))`
+before dispatch, the refusal a `GrantRefused` row. Every first-party
+emitter in this distribution already carries the grant it would need.
+
+## 50. The cost of one moment is 3.3 ms on the spike's shape, and the guest's memory high-water mark is not a reading the kernel exposes (KG-7, measured)
+
+**Grade: measured, with the number on the record — the first half is
+NOT a finding (the number is far under the card's 250 ms line); the
+second half is a `jinn:introspect` candidate.** Harness packet UI-2
+(PLA-353) at pin `a53a352`, proof 2 of `tests/composition/tests/moments.rs`.
+
+The Boa engine provider builds a FRESH JS context per delivery — one
+`jinn:clock` `now` crossing, `Context::builder().clock(…).build()`, one
+`eval` of the fold program — under the kernel's fuel metering, on a
+debug-built pinned daemon. Twenty walks of the §6 payload through
+`ext-green`, measured from the request to the answer and on the
+ledger's own clock (the walk's `DispatchTrace` row against the
+transport's previous row on that connection):
+
+```
+proof 2: 20 walks — wall per walk avg 3.267349ms max 9.690208ms
+  (all: [2.98, 2.99, 2.94, 3.07, 2.94, 2.91, 2.92, 2.92, 2.88, 2.90, 2.90, 2.93, 2.95, 9.69, 2.91, 2.89, 2.89, 2.93, 2.87, 2.93] ms);
+  ledger clock trace-to-previous-transport-row avg 1 ms max 8 ms;
+  guest memory high-water mark: not exposed (jinn:introspect 0.6.0 carries injects/unmet, no memory reading)
+```
+
+So §5.5's "correct and slow" is correct and 3 ms; no reuse of a Boa
+`Context` across deliveries is designed in this packet (§9.5), and the
+operator's source cannot leak state between moments because there is
+no state to leak — each delivery is a new realm. What remains
+unmeasured is the guest's memory: `jinn:introspect` 0.6.0 exposes an
+entry's `injects` and `unmet` and no memory reading, so a per-delivery
+context's footprint is a number nobody can read off the record.
+
+**The capability shape that would retire the second half.** A
+`memory` reading on the introspect entry (the instance's linear-memory
+size, and its high-water mark since activation), so a provider's cost
+is a fact on the record and not a guess from outside the process.
+
+## 51. A listener's contained delivery failure is a COUNT on the emitter's `DispatchTrace` and nothing on the listener's own history — the plugin that failed has no row saying so
+
+**Grade: reproducible WITH A TRANSCRIPT, packet-card-ready — #38's
+sibling for deliveries.** Hit in harness packet UI-2 (PLA-353) at pin
+`a53a352`, proof 4 of `tests/composition/tests/moments.rs`.
+
+R9 says a failing listener never aborts a walk: its failure is
+"contained and recorded". The recording is `failures: 1` on the
+EMITTER's trace row (`DispatchTrace`, attributed to `jinn-api-http`).
+On the LISTENER — the throwing extension `ext-throwing`, whose source
+is `(p) => { throw new Error('the throwing extension'); }` — the
+ledger after the walk carries exactly one row, its `jinn:clock` read:
+
+```
+proof 4: throwing beside green — failures 1, the fold survived;
+  the throwing extension's history after the walk: ["ContractCall"];
+  its raw rows: [{"ContractCall":{"contract":"jinn:clock","operation":"now"}}]
+```
+
+Its fiber stays `active` (a failed delivery is not a failed
+activation, correctly). But the plugins page's history for that entry —
+the surface that exists to show an operator what a plugin did — shows
+a clock read and no failure, and the walk's own row is on ANOTHER
+entry. The guest fault's message ("source: Error: the throwing
+extension") crosses the boundary (`Settled::Fault`) and is dropped:
+`report.failures` is counted and never written.
+
+**The capability shape that would retire it.** One `DeliveryFailed {
+topic, reason }` row attributed to the LISTENER per contained failure
+(the fault's message capped, as `ErrorRecorded` caps), beside the
+emitter's count. The same drain that would close #38 for activations
+closes this for deliveries.

@@ -52,7 +52,7 @@ pub fn mount_bundle_on(transport: &mut serde_json::Value) {
 /// names as grants — the profile's statement of what it dispatches,
 /// written now so the profile already reads as the kernel will one day
 /// enforce it (at pin `a53a352` `events.emit` checks only the reserved-
-/// topic refusal and no topic grant; FINDINGS.md KG-6 / #47).
+/// topic refusal and no topic grant; FINDINGS.md #49, KG-6).
 pub fn mount_moments_on(transport: &mut serde_json::Value) {
     let grants = transport["config"]["grants"]
         .as_array_mut()
