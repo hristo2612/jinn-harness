@@ -79,9 +79,11 @@ function drain(
     .updateConfig(next, queue.revision || undefined)
     .then((result) => {
       queue.revision = result?.revision ?? ""
-      if (result?.config && queue.pending === null) options.onFolded(result.config as Config)
-      setSaveState({ phase: "saved" })
-      options.onSaved()
+      if (queue.pending === null) {
+        if (result?.config) options.onFolded(result.config as Config)
+        setSaveState({ phase: "saved" })
+        options.onSaved()
+      }
     })
     .catch((err) => {
       const failure = failureFor(err)

@@ -7,9 +7,29 @@
  */
 export const NOT_YET: ReadonlyArray<{ label: string; reason: string }> = [
   {
-    label: "Install · remove · disable · widen topics · swap engine · #37",
+    label: "Install extension · #37",
     reason:
-      "FINDINGS #37 / KG-1 (PLA-348): a profile-admin edit; the operator API writes config only. Waits on jinnd M2-K23.",
+      "FINDINGS #37 / KG-1 (PLA-348): install needs adding an entry with grants. Waits on jinnd M2-K23.",
+  },
+  {
+    label: "Remove extension · #37",
+    reason:
+      "FINDINGS #37 / KG-1 (PLA-348): remove needs deleting an entry. Waits on jinnd M2-K23.",
+  },
+  {
+    label: "Disable extension · #37",
+    reason:
+      "FINDINGS #37 / KG-1 (PLA-348): disable needs changing the entry's disabled state. Waits on jinnd M2-K23.",
+  },
+  {
+    label: "Widen topics · #37",
+    reason:
+      "FINDINGS #37 / KG-1 (PLA-348): widening topics also widens grants. Waits on jinnd M2-K23.",
+  },
+  {
+    label: "Swap engine · #37",
+    reason:
+      "FINDINGS #37 / KG-1 (PLA-348): an engine swap changes the entry's package and hash. Waits on jinnd M2-K23.",
   },
   {
     label: "Refuse a moment mid-restart · #47",
