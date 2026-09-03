@@ -18,9 +18,10 @@ kernel gate, not a subscription.** The `ui` profile's transport entry
 declares `injects: ["jinn:ui-bundle"]` beside its grants, and the kernel
 now does what the UI-1 card first assumed: it activates the transport
 only once the bundle entry is `Active`, unloads and reloads it under
-`DependencyChanged` when the bundle is swapped (incarnation +1 exactly,
-one bundle crossing per incarnation, the settings and plugins consumers
-untouched, the port's blip measured), and re-arms it from `Failed` when
+`DependencyChanged` when the bundle is swapped (incarnation +1 exactly —
+one more load of its fiber, the introspect identity moved — one bundle
+crossing per incarnation, the settings and plugins consumers untouched,
+the port's blip measured: 3 refused connects, 1.33 s to the marker), and re-arms it from `Failed` when
 a provider it declared lands later. The workaround UI-1 carried for
 #45/#46 — the `jinn:introspect/transitions` subscription, the
 `jinn:introspect` and `jinn:clock` grants, the post-commit probe and the

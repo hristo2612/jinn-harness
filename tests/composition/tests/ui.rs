@@ -427,6 +427,16 @@ fn swapping_the_ui_is_a_profile_edit_of_one_entry() {
             .filter(|row| is_call(row, BUNDLE_CONTRACT, OP_BUNDLE))
             .count()
     };
+    // The transport's loads: one `Loading` row per activation of its fiber.
+    let loads = |daemon: &Daemon| {
+        daemon
+            .ledger_rows()
+            .iter()
+            .filter(|row| row.entry.as_deref() == Some(TRANSPORT))
+            .filter(|row| row.kind.contains(r#""to":"Loading""#))
+            .count()
+    };
+    let loads_before = loads(&daemon);
     let (_, transport_before) = lifecycle(port, TRANSPORT);
     let (_, settings_before) = lifecycle(port, SETTINGS);
     let (_, plugins_before) = lifecycle(port, PLUGINS);
@@ -478,19 +488,30 @@ fn swapping_the_ui_is_a_profile_edit_of_one_entry() {
     }
     let landed = first_marked.expect("marked") - edited;
 
-    // Incarnation +1 EXACTLY, one bundle crossing per incarnation, and
-    // the kernel's own word for why: the one `Unloading` row on the
-    // transport names `DependencyChanged` — its declared provider moved.
-    // No consumer that declares nothing moved.
+    // Incarnation +1 EXACTLY — in the kernel's own vocabulary, which its
+    // invariants spell as ONE MORE LOAD of the fiber: exactly one more
+    // `Loading` row on the transport, and the one `Unloading` row that
+    // precedes it names `DependencyChanged` (the kernel's word for why:
+    // its declared provider moved). The `incarnation` the introspect
+    // read reports is an IDENTITY, "never reused within a kernel
+    // process" (the contract's own words), not a per-fiber count: the
+    // swapped-in bundle fiber takes a generation between the transport's
+    // two, so the field is asserted to have MOVED and printed, never
+    // asserted to a distance. One bundle crossing per incarnation, and
+    // no consumer that declares nothing moved.
     daemon.eventually("the new incarnation's read to land on the ledger", || {
         bundle_reads(&daemon) == reads_before + 1
     });
     let (state, transport_after) = lifecycle(port, TRANSPORT);
     assert_eq!(state, "active");
     assert_eq!(
-        transport_after,
-        transport_before + 1,
-        "the swap is a restart: the transport's incarnation +1 exactly (M2-K24)"
+        loads(&daemon),
+        loads_before + 1,
+        "the swap is a restart: exactly one more load of the transport (M2-K24)"
+    );
+    assert!(
+        transport_after > transport_before,
+        "a restart is evidenced by the same fiber under a new incarnation ({transport_before} -> {transport_after})"
     );
     assert_eq!(
         bundle_reads(&daemon),
@@ -511,7 +532,8 @@ fn swapping_the_ui_is_a_profile_edit_of_one_entry() {
         "the kernel unloaded the transport because its declared provider changed"
     );
     println!(
-        "proof 4: swap served {landed:?} after the edit; blip: {refused} refused connects while it landed; transport incarnation {transport_before} -> {transport_after}; bundle crossings {reads_before} -> {}",
+        "proof 4: swap served {landed:?} after the edit; blip: {refused} refused connects while it landed; transport loads {loads_before} -> {} (incarnation identity {transport_before} -> {transport_after}); bundle crossings {reads_before} -> {}",
+        loads(&daemon),
         bundle_reads(&daemon)
     );
     assert_eq!(

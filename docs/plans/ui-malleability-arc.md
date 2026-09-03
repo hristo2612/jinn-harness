@@ -626,7 +626,10 @@ transport that does not serve:
    flipped here per §8 amendment 4's own text): the swap IS a restart - the
    transport declares `injects: ["jinn:ui-bundle"]`, so the kernel unloads
    it under `DependencyChanged` and reloads it; its `incarnation` is
-   ASSERTED +1 EXACTLY (never merely omitted), exactly one more
+   ASSERTED +1 EXACTLY in the kernel's own vocabulary — one more LOAD of
+   its fiber on its own rows, the introspect `incarnation` (an identity,
+   never reused in a process) asserted to have moved and printed
+   (harness FINDINGS #46, the transcript) — never merely omitted, exactly one more
    `jinn:ui-bundle` crossing lands on the ledger (one per incarnation), the
    one `Unloading` row names `DependencyChanged`, `GET /` answers the marker,
    the settings and plugins consumers' incarnations are unchanged, and the
