@@ -8,8 +8,15 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+pub mod moments;
 #[cfg(test)]
 mod tests;
+
+pub use moments::{
+    is_moments_path, moment_topic, refused_detail, validate_moment, BeforeCreateSession,
+    BeforePatchSettings, BeforeSend, MOMENTS_PATH, MOMENT_TOPICS, TOPIC_BEFORE_CREATE_SESSION,
+    TOPIC_BEFORE_PATCH_SETTINGS, TOPIC_BEFORE_SEND, WALK_REFUSALS,
+};
 
 /// The schema version every manifest carries.
 pub const API_VERSION: &str = "0.1.0";

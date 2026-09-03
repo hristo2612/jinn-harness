@@ -261,9 +261,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "jinn-ext"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "jinn-plugins"
 version = "0.1.0"
 dependencies = [
+ "jinn-ext",
  "jinn-settings",
  "serde",
  "serde_json",
@@ -301,6 +311,7 @@ dependencies = [
 name = "jinn-ui"
 version = "0.1.0"
 dependencies = [
+ "jinn-session",
  "serde",
  "serde_json",
  "sha2",

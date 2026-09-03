@@ -27,11 +27,17 @@
 //! a dispatch on the connection's behalf, and a bearer on a static path is
 //! ignored. Every `/v1/*` request keeps the door as 2.8 left it.
 //!
+//! THE MOMENTS (packet UI-2): `POST /v1/moments/<domain>/<topic>` is
+//! one waterfall walk on the topic the path names, behind the door like
+//! every `/v1` request, answered with the folded payload — fail-closed on
+//! a refused walk (`moments.rs`).
+//!
 //! World `jinn:plugin@0.4.0`: the listener and its connections are kernel
 //! registrations — released on suspend, re-listened by the next
 //! `activate`.
 
 mod door;
+mod moments;
 mod ui;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -64,6 +70,7 @@ wit_bindgen::generate!({
 
 use exports::jinn::plugin::lifecycle::{Guest, GuestFault};
 use jinn::plugin::{effects, net, services};
+use jinn_ui::is_moments_path;
 
 const EFFECT_TOKEN: u64 = 1;
 /// The label under which an activation that is about to fail names its
@@ -583,6 +590,10 @@ fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> 
     // on a per-catalog contract.
     if is_plugins_path(path) {
         return dispatch_plugins(method, path, query);
+    }
+    // And the moments: a topic the path names, one walk, the fold.
+    if is_moments_path(path) {
+        return moments::dispatch(method, path, body);
     }
     let Some((route, id)) = route(method, path) else {
         return route_miss(

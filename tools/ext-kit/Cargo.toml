@@ -1,0 +1,25 @@
+# The extension tier's kit builder (UI-2, docs/plans/ui-malleability-arc.md
+# §9.2). Usage:
+#
+#     cargo run -p ext-kit -- build <artifacts-dir>
+#
+# Builds and encodes the Boa engine provider by the shared kit machinery,
+# prints its size and sha256, and writes the artifact + sidecar. The
+# extension ENTRY shape every profile mounts lives in the library half
+# (one home per fact); `tests/imports.rs` asserts the component's imports
+# are exactly the four plugin-world interfaces (§5.3's `imports` program,
+# committed as a kit test).
+[package]
+name = "ext-kit"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+license = "MIT"
+publish = false
+
+[dependencies]
+cron-kit = { path = "../cron-kit" }
+jinn-ext = { path = "../../plugins/ext/jinn-ext" }
+serde_json = "1.0"
+# Reads a component's top-level imports (the kit test's assertion).
+wasmparser = "0.233"

@@ -1,0 +1,6 @@
+# `getrandom` (pulled by Boa) refuses wasm32-unknown-unknown unless a
+# backend is chosen by cfg; the guest supplies the custom one in src/lib.rs.
+# Carried here so the flag travels with the crate and not with a shell
+# (the kit strips RUSTFLAGS from the guest build on purpose).
+[build]
+rustflags = ["--cfg", "getrandom_backend=\"custom\""]

@@ -56,6 +56,13 @@ that needs positive proof:
   COUNT of the reason-bearing lines it declines to cite, and the
   qualifier that says why — a statement about a read that happened, which
   is why it is admissible where a sentinel is not.
+- **An attestation is read, never defaulted.** An entry whose
+  `config.data` declares an `origin` (the extension tier, `plugins/ext/`)
+  carries `attestation { origin, source }` — the origin verbatim and the
+  digest of its `source` (`sha256:<hex>`, `jinn_ext::source_digest`, the
+  guest's own ledger breadcrumb) — a STABLE reading of the document the
+  page renders from, never a window of history. An entry that declares
+  no origin carries no `attestation` field at all.
 
 ## Two authorities, never mixed
 

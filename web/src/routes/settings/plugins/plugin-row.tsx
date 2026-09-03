@@ -4,6 +4,7 @@ import { FolderOpen, History } from "lucide-react"
 import { api } from "@/lib/api"
 import { ToggleSwitch } from "../shared"
 import type { PluginInventoryRow, PluginStatus } from "./inventory"
+import { NotYet } from "./not-yet"
 
 /** UI-1 (docs/plans/ui-malleability-arc.md §4.2 item 4): why every control on
  *  a row is disabled. The operator API writes config only; a plugin's shape is
@@ -17,6 +18,9 @@ export type CatalogRow = PluginInventoryRow & {
   incarnation?: number
   package?: string
   provides?: string[]
+  /** UI-2 (§9.2 item 14): the entry's declared `origin`, when it has one, and
+   *  the digest of its source (§9.7 amendment 8(d)). */
+  attestation?: { origin: string; source?: string }
 }
 
 /** The pill's colour per status. Errors read as a red wash rather than a solid
@@ -49,6 +53,21 @@ function StatusPill({ status }: { status: PluginStatus }) {
       style={{ background: bg, color: fg }}
     >
       {label}
+    </span>
+  )
+}
+
+/** UI-2 (§9.2 item 14): who wrote an extension's source, as the entry declares
+ *  it (`human` / `agent`). Rendered only when the row carries one. */
+function OriginBadge({ plugin }: { plugin: CatalogRow }) {
+  if (!plugin.attestation) return null
+  return (
+    <span
+      data-testid={`plugin-origin-${plugin.id}`}
+      title="The entry's declared origin: who wrote this extension's source"
+      className="inline-flex h-[18px] flex-none items-center rounded-full bg-[var(--fill-tertiary)] px-2 text-[length:var(--text-caption2)] font-semibold text-[var(--text-secondary)]"
+    >
+      {plugin.attestation.origin}
     </span>
   )
 }
@@ -90,10 +109,21 @@ function PluginIdentity({ plugin }: { plugin: CatalogRow }) {
           {plugin.name}
         </span>
         <StatusPill status={plugin.status} />
+        <OriginBadge plugin={plugin} />
       </span>
       <span className="flex min-w-0 items-center gap-[7px] text-[length:var(--text-caption1)] text-[var(--text-tertiary)]">
         <Reading plugin={plugin} />
       </span>
+      {plugin.attestation?.source && (
+        <span
+          data-testid={`plugin-source-${plugin.id}`}
+          title="What code runs: the digest of the entry's source, as the catalog attests it"
+          className="truncate font-[family-name:var(--font-code)] text-[length:var(--text-caption1)] text-[var(--text-tertiary)]"
+        >
+          source {plugin.attestation.source}
+        </span>
+      )}
+      {plugin.attestation && <NotYet id={plugin.id} />}
       {plugin.error && (
         <span
           data-testid={`plugin-error-${plugin.id}`}

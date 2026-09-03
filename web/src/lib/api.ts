@@ -23,10 +23,13 @@ import type {
   UpdateNoteInput,
 } from "@/routes/notes/types"
 import { createConfigApi } from "@/lib/api-config"
+import { createMomentApi, momentResponse } from "@/lib/api-moments"
+import { writeHeaders, type WriteOriginWire } from "@/lib/api-write"
 import { createExperimentsApi } from "@/lib/api-experiments"
 import { createSttApi } from "@/lib/api-stt"
 import { createTodoCaptureApi } from "@/lib/api-todo-capture"
 export type { TodoCaptureWire, TodoCaptureStageWire, TodoCaptureRouteWire } from "@/lib/api-todo-capture"
+export type { WriteOriginWire } from "@/lib/api-write"
 import { createWorkflowLifecycleApi } from "@/lib/api-workflow-lifecycle"
 import type { StaleChatPolicy } from "@/lib/stale-chat"
 import type { EnginesResponse, ModelInfo } from "@/lib/engine-registry"
@@ -200,19 +203,6 @@ export async function get<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await authFetch(path, init);
   if (!res.ok) throw await responseError(res);
   return res.json();
-}
-
-/**
- * The surface a write came from, when it is not this UI. The gateway allowlists
- * the values and drops anything else, so declaring one is audit colour and never
- * authority — it buys the caller a label on their own write, nothing more.
- */
-export type WriteOriginWire = "talk"
-
-function writeHeaders(origin?: WriteOriginWire): Record<string, string> {
-  return origin
-    ? { "Content-Type": "application/json", "X-Jinn-Origin": origin }
-    : { "Content-Type": "application/json" };
 }
 
 async function post<T>(path: string, body?: unknown, origin?: WriteOriginWire): Promise<T> {
@@ -827,7 +817,9 @@ export const api = {
   ...createConfigApi({
     responseError,
     conflict: (status, message, remedy) => new ApiError(status, message, "CONFIG_CONFLICT", undefined, remedy),
+    moment: momentResponse,
   }),
+  ...createMomentApi({ responseError }),
   reloadConnectors: () =>
     post<{ started: string[]; stopped: string[]; errors: string[] }>("/api/connectors/reload", {}),
   getLogs: (n?: number) =>

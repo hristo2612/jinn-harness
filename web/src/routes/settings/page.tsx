@@ -116,7 +116,7 @@ export default function SettingsPage() {
   const { voiceCapability, reloadVoiceCapability } = useVoiceCapability()
   const { saveState, commit, adoptRevision } = useConfigCommit({
     blocker: (next) => configSaveBlocker(next.engines, modelRegistry?.engines),
-    onSaved: reloadVoiceCapability,
+    onSaved: reloadVoiceCapability, onFolded: (folded) => { configRef.current = folded; setConfig(folded) },
     onConflict: setConflict,
   })
 

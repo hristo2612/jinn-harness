@@ -150,6 +150,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "ext-kit"
+version = "0.1.0"
+dependencies = [
+ "cron-kit",
+ "jinn-ext",
+ "serde_json",
+ "wasmparser",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -229,6 +239,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9229cfe53dfd69f0609a49f65461bd93001ea1ef889cd5529dd176593f5338a1"
 dependencies = [
  "foldhash",
+ "serde",
 ]
 
 [[package]]
@@ -330,10 +341,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "jinn-ext"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "jinn-plugins"
 version = "0.1.0"
 dependencies = [
  "harness-pin",
+ "jinn-ext",
  "jinn-settings",
  "serde",
  "serde_json",
@@ -371,6 +392,7 @@ dependencies = [
 name = "jinn-ui"
 version = "0.1.0"
 dependencies = [
+ "jinn-session",
  "serde",
  "serde_json",
  "sha2",
@@ -648,7 +670,9 @@ version = "0.1.0"
 dependencies = [
  "api-kit",
  "cron-kit",
+ "ext-kit",
  "jinn-cron",
+ "jinn-ext",
  "jinn-plugins",
  "jinn-ui",
  "plugin-kit",
@@ -712,6 +736,7 @@ dependencies = [
  "hashbrown 0.15.5",
  "indexmap",
  "semver",
+ "serde",
 ]
 
 [[package]]

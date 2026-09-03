@@ -538,3 +538,42 @@ fn an_active_entry_carries_the_incarnation_that_proves_it() {
     );
     assert_eq!(dark.incarnation, None);
 }
+
+// UI-2 (§9.7 amendment 8(d)): the attestation is the catalog's STABLE
+// reading of an extension entry — its declared origin and its source's
+// digest — so the page renders the breadcrumb from the entry, never from
+// a sliding history window. An entry declaring no origin attests nothing.
+#[test]
+fn an_extension_entry_attests_its_origin_and_its_source_digest_and_the_rest_attest_nothing() {
+    let declared = Catalog::parse_document(&serde_json::json!({ "entries": [
+        { "id": "ext-green", "package": "ext/jinn-ext-js-boa", "hash": "0",
+          "config": { "grants": [], "data": { "topics": [], "source": "(p) => p", "origin": "human" } } },
+        { "id": "jinn-api-http", "package": "api/jinn-api-http", "hash": "0" }
+    ] }))
+    .expect("readable");
+    let listing = Catalog::list(
+        "main",
+        "plugins/x",
+        &declared,
+        GrantSource::ProfileDocument,
+        &BTreeMap::new(),
+        &[],
+        window(),
+    );
+    let answer = serde_json::to_value(&listing).expect("encodes");
+    let entries = answer["entries"].as_array().expect("entries");
+    assert_eq!(
+        entries[0]["attestation"],
+        serde_json::json!({
+            "origin": "human",
+            "source": "sha256:6f6a800fb5cdf3bfe422dbaf81e4022968c2e91b1ee2e6553fb4c61e92dade42"
+        }),
+        "{}",
+        entries[0]
+    );
+    assert!(
+        entries[1].get("attestation").is_none(),
+        "no origin declared, no attestation field: {}",
+        entries[1]
+    );
+}

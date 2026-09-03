@@ -147,6 +147,7 @@ fn the_document_is_still_allowed_to_say_why_a_dark_entry_is_dark() {
         &Declared {
             id: "a".to_owned(),
             disabled: true,
+            origin: None,
             ..Declared::default()
         },
         GrantSource::ProfileDocument,

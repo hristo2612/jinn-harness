@@ -44,6 +44,15 @@ pub struct Declared {
     /// [`GrantSource`].
     #[serde(default)]
     pub disabled: bool,
+    /// `config.data.origin`, when the entry declares one (an extension's
+    /// attestation); read verbatim, never defaulted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub origin: Option<String>,
+    /// The digest of `config.data.source`, when the entry carries one
+    /// (`sha256:<hex>`, `jinn_ext::source_digest`): the source's
+    /// attestation, never the source itself.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 
 /// The `describe` answer: the entry, what it MAY do, and what it HAS
@@ -113,6 +122,14 @@ impl Catalog {
                         .get("disabled")
                         .and_then(serde_json::Value::as_bool)
                         .unwrap_or(false),
+                    origin: entry
+                        .pointer("/config/data/origin")
+                        .and_then(serde_json::Value::as_str)
+                        .map(ToOwned::to_owned),
+                    source: entry
+                        .pointer("/config/data/source")
+                        .and_then(serde_json::Value::as_str)
+                        .map(jinn_ext::source_digest),
                 })
             })
             .collect())
@@ -152,6 +169,13 @@ impl Catalog {
             provides: snapshot.map(|s| s.provisions.clone()).unwrap_or_default(),
             grants: Grants::read(source, declared.grants.clone()),
             lifecycle: Lifecycle::read(snapshot, no_fiber, failure),
+            attestation: declared
+                .origin
+                .clone()
+                .map(|origin| crate::entry::Attestation {
+                    origin,
+                    source: declared.source.clone(),
+                }),
             extra: Extensions::new(),
         }
     }

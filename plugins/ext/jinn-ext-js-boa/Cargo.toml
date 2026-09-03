@@ -1,0 +1,38 @@
+# The JS-in-WASM extension tier's first engine provider: a Boa guest
+# (`boa_engine`, pure Rust — the one JS engine that builds for the plugin
+# world today, docs/plans/ui-malleability-arc.md §5) that evaluates the
+# operator's source from its entry's config and folds every moment it is
+# granted. Its imports are exactly `types`, `effects`, `events` and
+# `services` of `jinn:plugin@0.10.0` (asserted by `tools/ext-kit`); its
+# only host call is one `jinn:clock` `now` per delivery. Compiles for
+# wasm32-unknown-unknown ONLY and is deliberately NOT a workspace member
+# (see the workspace manifest's note); `ext-kit` builds and encodes it.
+# The `getrandom` backend cfg travels in `.cargo/config.toml` beside it.
+[package]
+name = "jinn-ext-js-boa"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+jinn-ext = { path = "../jinn-ext" }
+boa_engine = { version = "0.22", default-features = false }
+# Pulled by Boa; the plugin world imports no entropy, so the guest
+# supplies the custom backend (`__getrandom_v03_custom`).
+getrandom = "0.4"
+serde_json = "1.0"
+# Guest-side bindings of the pinned plugin world (kernel-pin/wit).
+wit-bindgen = "0.43.0"
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]

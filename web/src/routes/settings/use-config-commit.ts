@@ -19,6 +19,15 @@ export interface ConfigCommitOptions {
   /** Why this document cannot be saved yet, or null — asked before the wire. */
   blocker: (config: Config) => string | null
   onSaved: () => void
+  /**
+   * The document as the daemon answered the write. UI-2 (§9.7 amendment 8(d)):
+   * a save is a moment first and an extension may FOLD the patch, so the page
+   * replaces its draft with this rather than saying "Saved" over what it sent.
+   * Not called when a newer edit is already queued: that write goes out next
+   * and brings its own answer, and replacing the draft under it would clobber
+   * the very edit about to be written.
+   */
+  onFolded: (config: Config) => void
   onConflict: (conflict: { message: string; remedy?: string }) => void
 }
 
@@ -70,8 +79,11 @@ function drain(
     .updateConfig(next, queue.revision || undefined)
     .then((result) => {
       queue.revision = result?.revision ?? ""
-      setSaveState({ phase: "saved" })
-      options.onSaved()
+      if (queue.pending === null) {
+        if (result?.config) options.onFolded(result.config as Config)
+        setSaveState({ phase: "saved" })
+        options.onSaved()
+      }
     })
     .catch((err) => {
       const failure = failureFor(err)

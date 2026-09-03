@@ -45,6 +45,28 @@ gating the card assumed stops at the string lane) — measured in
 A bundle whose bytes do not match its manifest fails the transport's
 activation and nothing else (proof 5).
 
+**UI-2 (plan §9):** the profile also mounts ONE extension, `ext-green`
+(`ext/jinn-ext-js-boa`, the operator's example from §6: `hello` becomes
+`hello 🟢` on `jinn:ui/before-send`; `origin: "human"`), granted its
+topic and `jinn:clock` and nothing else, and the transport is granted the
+three moment topics it emits (`mount_moments_on`). The extension's
+component is built by `ext-kit` inside the same run and pinned by hash
+like every other entry. Installing a second extension is, at this pin, a
+profile edit (the K23 split, plan §9.5); editing an installed one's
+`source`, `origin` or granted `topics` is `PATCH /v1/profile/entries/{id}`.
+The proofs live in `tests/composition/tests/moments.rs`.
+
+**UI-2 (plan §9):** the profile also mounts ONE extension, `ext-green`
+(`ext/jinn-ext-js-boa`, the operator's example from §6: `hello` becomes
+`hello 🟢` on `jinn:ui/before-send`; `origin: "human"`), granted its
+topic and `jinn:clock` and nothing else, and the transport is granted the
+three moment topics it emits (`mount_moments_on`). The extension's
+component is built by `ext-kit` inside the same run and pinned by hash
+like every other entry. Installing a second extension is, at this pin, a
+profile edit (the K23 split, plan §9.5); editing an installed one's
+`source`, `origin` or granted `topics` is `PATCH /v1/profile/entries/{id}`.
+The proofs live in `tests/composition/tests/moments.rs`.
+
 The real-composition proofs for this tree live in
 `tests/composition/tests/ui.rs`; the door's (`tests/composition/tests/auth.rs`)
 hold on it unchanged.

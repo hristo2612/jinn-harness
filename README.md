@@ -13,6 +13,36 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
+Phase UI-2 — kernel pin `a53a352`, UNCHANGED. **A moment is one walk,
+and an extension is a listener.** The second packet of the UI
+malleability arc (`docs/plans/ui-malleability-arc.md` §9): an
+authenticated `POST /v1/moments/<domain>/<topic>` is ONE `waterfall`
+walk on the `jinn:ui/<topic>` the path names — three closed topics
+(`before-send`, `before-create-session`, `before-patch-settings`) —
+answered with the payload as the listeners folded it, and FAIL-CLOSED
+when the kernel refuses the walk whole (a typed `503` naming
+`restarting`/`gone`/`suspended`/`stalled`/`cycle`, never the unmodified
+payload). The listeners are the JS-in-WASM extension tier
+(`plugins/ext/`): the operator's JS is the entry's `config.data` with
+its `origin` attested, run by a Boa guest whose component imports
+exactly the four plugin-world interfaces and whose only host call is one
+`jinn:clock` read per delivery; a syntax error is a `failed` fiber on the
+record with the breadcrumbs it wrote, a throw is a contained failure the
+walk continues past (R9), `undefined` is a pass-through. The Settings
+page's save dispatches `before-patch-settings` first, sends the
+FOLDED patch and shows the document the daemon answered — never "Saved"
+over the draft it sent; the plugins page shows each extension's `origin`
+and the digest of its source from the catalog's attestation, and the
+tier's NOT-YET items as disabled pills carrying their finding numbers
+(#37, #47, #48). Proven
+through the pinned daemon in `tests/composition/tests/moments.rs`
+(`docs/notes/2026-09-03-a-moment-is-one-walk.md`). What it is NOT: a
+per-delivery budget — a looping extension spends the walk's guest
+deadline, and what that costs the TRANSPORT is proof 7's transcript
+(#48); a moment inside an extension's restart window is answered
+unmodified by the kernel, not refused (#47); install/remove/disable/topic-widening of an extension from the
+UI (the K23 split, plan §9.5); the chat topics' client call sites (UI-6).
+
 Pin-bump 7 — kernel pin `a53a352` (M2-K24). **A declared dependency is a
 kernel gate, not a subscription.** The `ui` profile's transport entry
 declares `injects: ["jinn:ui-bundle"]` beside its grants, and the kernel
@@ -387,6 +417,7 @@ iteration channel — kernel changes are never made here).
 | `tools/todo-kit` | Builds the todos profile: the two Todo stores above the two session stores |
 | `tools/workflow-kit` | Builds the workflows profile: the two run stores above the two Todo stores |
 | `tools/plugin-kit` | Builds the plugins profile: the two catalogs beside the api trio, plus the disabled and misbound entries the honesty proofs need |
+| `tools/ext-kit` | Builds the JS-in-WASM extension tier's engine provider (Boa) and holds the extension entry shape; `tests/imports.rs` asserts the component imports exactly the four plugin-world interfaces |
 | `tools/ui-kit` | Builds the `ui` profile: the web client built by its pinned toolchain, archived into the embedded bundle provider beside the plugins profile; `tests/verbatim.rs` is the byte-for-byte gate over `web/port-map.txt` |
 | `web/` | The TypeScript client (not a Cargo member): jinn `43e8647`'s shell, Settings and plugins page, ported verbatim; Node and pnpm pinned by `web/.npmrc` and `packageManager`; the node lane in CI |
 | `plugins/` | First-party plugin crates (wasm components) — land per phase, one seam triple at a time |
@@ -624,6 +655,52 @@ Its own README carries these in full; the load-bearing ones:
   lands on the plugin splat.
 - **The service worker is dropped** (plan §8, question 4), so the UI is
   not installable and has no offline shell in this packet.
+
+### UI-2 — Moments and the extension tier
+
+- **A moment inside an extension's restart window is answered UNMODIFIED,
+  not refused** (#47): the kernel withdraws a listener's `listen` with the
+  old incarnation's suspension BEFORE the replacement commits, so a walk
+  in the window (~500 ms per source edit) selects nobody and M2-K9's
+  `restarting` never fires. The transport's half of fail-closed holds; the
+  kernel's does not. Proof 5 lands NOT-YET on it.
+- **A bad extension KILLS the transport, not its own slot** (#48): at this
+  pin every guest call is one `settle(deadline)` and `emit` awaits each
+  delivery inside the emitter's call, so a listener that loops spends the
+  transport's 5 s deadline — proof 7 measured the transport's instance
+  dying on it, the operator API gone until a daemon restart, its port
+  still accepting, and its fiber left without a transition. The
+  per-delivery budget is a kernel card (jinnd M2-K25); proof 7 lands
+  NOT-YET. No `budget` field exists on the entry because nothing could
+  honor it.
+- **`emit` is not gated by a topic grant** (#49): the transport is granted
+  the three topics it emits so the profile READS as the kernel will one
+  day enforce it, but at `a53a352` any guest can emit any unreserved
+  topic; the grants are a statement, not yet an authority.
+- **A contained delivery failure is a count on the emitter's trace and
+  nothing on the listener's history** (#51): the plugins page shows a
+  throwing extension `active` with a clock read and no failure. Proof 4
+  asserts `failures: 1` on the emitter's trace and the ABSENCE on the
+  listener by name, so the pin that writes the row flips the proof.
+- **The guest's memory is not a reading the kernel exposes** (#50): the
+  cost of one moment is measured (3.3 ms per walk, a fresh Boa context
+  each) and no context reuse is designed; the memory high-water mark is
+  not on `jinn:introspect` 0.6.0.
+- **Listener order across siblings is what the boot dealt. (named here)**
+  Two extensions on one topic fold in an order nothing declares and no
+  reading exposes: the walk's order and the `listen` rows' order
+  disagreed in two runs of three at one head (FINDINGS #52; KG-3, the
+  kernel's answer to sibling order covers declared injections only).
+  Proof 3 names both orders and asserts neither is the other's witness.
+- **Installing, removing, disabling an extension, widening its topics or
+  swapping its engine are profile edits, not clicks** (#37; the K23 split,
+  plan §9.5), rendered DISABLED on the extension's row with the finding
+  beside the two kernel NOT-YET items (#47, #48) — never silently absent.
+  Editing an installed extension's `source`, `origin` or
+  already-granted `topics` IS `PATCH /v1/profile/entries/{id}` today.
+- **The two chat topics are dispatchable and proven, and reached by no
+  ported surface. (named here)** The ported shell has no composer (UI-6);
+  `before-patch-settings` is the one moment an operator can click.
 
 ### What is not here at all
 

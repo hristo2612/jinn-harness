@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use jinn_ui::{encode_bundle, manifest_for, Manifest, BUNDLE_CONTRACT};
+use jinn_ui::{encode_bundle, manifest_for, Manifest, BUNDLE_CONTRACT, MOMENT_TOPICS};
 
 /// The bundle entry's id — the ONE entry a UI swap edits.
 pub const BUNDLE_ID: &str = "jinn-ui-bundle";
@@ -46,6 +46,18 @@ pub fn mount_bundle_on(transport: &mut serde_json::Value) {
     grants.push(serde_json::json!(BUNDLE_CONTRACT));
     transport["config"]["injects"] = serde_json::json!([BUNDLE_CONTRACT]);
     transport["config"]["data"]["ui-bundle-entry"] = serde_json::json!(BUNDLE_ID);
+}
+
+/// Tells the transport's entry it EMITS the moments: the three topic
+/// names as grants — the profile's statement of what it dispatches,
+/// written now so the profile already reads as the kernel will one day
+/// enforce it (at pin `a53a352` `events.emit` checks only the reserved-
+/// topic refusal and no topic grant; FINDINGS.md #49, KG-6).
+pub fn mount_moments_on(transport: &mut serde_json::Value) {
+    let grants = transport["config"]["grants"]
+        .as_array_mut()
+        .expect("grants");
+    grants.extend(MOMENT_TOPICS.iter().map(|topic| serde_json::json!(topic)));
 }
 
 /// Every regular file under `dir`, as `(relative /-path, bytes)`, sorted.
@@ -187,5 +199,30 @@ mod tests {
             "no workaround grant: {grants:?}"
         );
         assert_eq!(transport["config"]["data"]["ui-bundle-entry"], BUNDLE_ID);
+    }
+
+    /// The transport is granted exactly the three moment topics it emits
+    /// (UI-2 §9.2) and no other topic.
+    #[test]
+    fn the_transport_entry_is_granted_the_three_moment_topics_it_emits() {
+        let mut transport = serde_json::json!({
+            "id": "jinn-api-http",
+            "config": { "grants": ["jinn:net"], "data": {} }
+        });
+        mount_moments_on(&mut transport);
+        let grants: Vec<&str> = transport["config"]["grants"]
+            .as_array()
+            .expect("grants")
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .collect();
+        for topic in MOMENT_TOPICS {
+            assert!(grants.contains(&topic), "{topic} granted");
+        }
+        assert_eq!(
+            grants.iter().filter(|g| g.starts_with("jinn:ui/")).count(),
+            3,
+            "exactly the three: {grants:?}"
+        );
     }
 }
