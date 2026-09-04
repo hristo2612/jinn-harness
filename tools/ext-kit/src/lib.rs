@@ -59,7 +59,7 @@ pub fn build(artifacts: &Path) -> (String, usize) {
     (hash, bytes.len())
 }
 
-/// A component's TOP-LEVEL imports, by name (`jinn:plugin/types@0.11.0`
+/// A component's TOP-LEVEL imports, by name (`jinn:plugin/types@0.12.0`
 /// and so on), in declaration order — the §5.3 `imports` program. The
 /// encoder nests a shim component whose own imports are the export glue
 /// (`import-func-activate`, …); those are depth 1 and not the host

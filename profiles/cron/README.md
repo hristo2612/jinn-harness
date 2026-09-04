@@ -1,7 +1,10 @@
 # The cron profile
 
 The cron seam's plugin tree, two entries: `cron-scheduler` (the `jinn:cron`
-provider, granted `jinn:cron`, `jinn:fs`, and `jinn:clock`) and
+provider, granted `jinn:cron`, `jinn:fs`, `jinn:clock`, and every job
+topic it fires — `cron:health` in the shipped table; since pin `138fdce`
+an emit is covered by the topic's own grant, and the kit derives these
+from the job table) and
 `health-snapshot` (the first real job, granted `cron:health`, `jinn:cron`,
 `jinn:fs`). Entry shapes, grants, and the default job table live in the kit
 builder (`tools/cron-kit`, `profile()`), which writes the document with the

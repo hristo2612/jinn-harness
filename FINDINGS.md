@@ -3012,7 +3012,9 @@ refresh in place was a fact only in the transport's memory
 
 ## 47. A listener's config restart withdraws its listen BEFORE the replacement commits, so a reply-expecting walk inside the window selects nobody and answers the payload UNMODIFIED — M2-K9's `restarting` never fires for it
 
-**Grade: reproducible WITH A TRANSCRIPT, measured, packet-card-ready —
+**Grade: ANSWERED at pin `138fdce` (jinnd M2-K26, harness pin-bump 9) —
+fixed at pin 138fdce, transcript at the end of this entry. When raised:
+reproducible WITH A TRANSCRIPT, measured, packet-card-ready —
 Blocker-class for any waterfall that means "validate before you act".**
 Hit in harness packet UI-2 (PLA-353) at pin `a53a352`, proof 5 of
 `tests/composition/tests/moments.rs`, every run.
@@ -3093,6 +3095,46 @@ holds at the transport and is broken by the kernel in the window, and
 proof 5 lands NOT-YET on "a moment inside an extension's restart is
 refused typed"; the proof prints the window, counts the unmodified
 answers, and asserts the transport's half only.
+
+**ANSWERED — what changed, and the evidence.** jinnd M2-K26 (a)–(d)
+(`docs/packets/M2-K26.md` in the kernel repo; `plugin.wit` 0.12.0,
+prose-only): a `listen` registration SURVIVES its instance's suspension
+as a refusing registration — the same row, no delivery target — for
+exactly as long as the fiber owes a transition; a reply-expecting walk
+that selects it is refused `restarting` by M2-K9's existing rule for the
+whole window, `Pending` and `Loading` alike; the replacement's activation
+runs as a staging seat and its commit is the Mode-1 swap's `rebind`
+under one topic-table lock, so no walk ever sees "neither". Proof 5 was
+flipped to its intended assertion FIRST, red against the `b1dbe8f`
+daemon on the merge-base:
+
+```
+proof 5: after the edit — 9 answers with the OLD fold, 0 REFUSED typed `restarting` (first at None), 50 answered the payload UNMODIFIED (fail-open; first at Some(356.923834ms)), the new fold landed at 3.529190084s; walks with listeners=0 on the ledger: 50; refusal rows: []; the old incarnation's suspension to the new one's Active: Some(1603) ms
+thread 'a_restarting_extension_refuses_the_moment_typed_and_nothing_is_sent' panicked at tests/composition/tests/moments.rs:810:5:
+the window was hit: 9 old answers before it, landed at 3.529190084s
+```
+
+(The failing assertion is `!refused.is_empty()` — zero refusals in a
+window the client hit; its message names the old answers before the
+window and the landing after it.)
+
+and green at pin `138fdce` with no harness change but the pin:
+
+```
+proof 5: after the edit — 9 answers with the OLD fold, 63 REFUSED typed `restarting` (first at Some(346.760792ms)), 0 answered the payload UNMODIFIED (fail-open; first at None), the new fold landed at 3.554579833s; walks with listeners=0 on the ledger: 0; refusal rows: ["{"DispatchRefused":{"topic":"jinn:ui/before-send","mode":"Waterfall","target":"ext-green","incarnation":13,"owed":"Reload"}}", "{"DispatchRefused":{"topic":"jinn:ui/before-send","mode":"Waterfall","target":"ext-green","incarnation":13,"owed":"Reload"}}", … 65 rows in all]; the old incarnation's suspension to the new one's Active: Some(1614) ms
+proof 5: every moment inside the window was refused typed `restarting`, none answered unmodified (FINDINGS #47 closed at this pin)
+```
+
+Read against the original transcript: the same edit, the same slow
+source, the same client posting every ~5 ms — and every send inside the
+window is a typed `503` naming `restarting`, zero answered unmodified,
+zero `listeners: 0` walks on the ledger, one `DispatchRefused` row per
+refused send, the new fold landing after the commit. The proof keeps
+printing the window. What this entry does NOT close: an `emit`-mode
+notification inside the window is still lost and traced `listeners: 0`
+(the card's named limit, §Out); whether a transport should refuse sends
+while its validator is `failed` is the harness's policy (UI-2's open
+question), not the kernel's.
 
 ## 48. A looping listener spends the emitter's guest deadline too — what the transport's own instance does on a listener that never returns (KG-2, measured)
 
@@ -3212,7 +3254,9 @@ row. What is NOT closed here: a budget for `services.call` (the card's
 
 ## 49. `events.emit` is not gated by the topic's grant — a guest may emit on any unreserved topic, granted or not (KG-6, verified on the ledger)
 
-**Grade: reproducible WITH A TRANSCRIPT, packet-card-ready.** Hit in
+**Grade: ANSWERED at pin `138fdce` (jinnd M2-K26 (e), harness pin-bump
+9) — fixed at pin 138fdce, transcript at the end of this entry. When
+raised: reproducible WITH A TRANSCRIPT, packet-card-ready.** Hit in
 harness packet UI-2 (PLA-353) at pin `a53a352`; the probe
 `an_emit_is_not_gated_by_the_topics_grant_at_this_pin` in
 `tests/composition/tests/moments.rs`.
@@ -3243,6 +3287,101 @@ nothing but `jinn:net` dispatched a topic and had its listeners run.
 topic's grant exactly as `listen` is — `check_grant(grant_for(topic))`
 before dispatch, the refusal a `GrantRefused` row. Every first-party
 emitter in this distribution already carries the grant it would need.
+
+**ANSWERED — what changed, and the evidence.** jinnd M2-K26 (e): `emit`
+checks `check_grant(grant_for(topic))` after the reservation refusal and
+before selection; the refusal is the broker's own `GrantRefused` row and
+the guest's `grant-refused`. The KG-6 probe was flipped FIRST to
+`an_entry_emitting_off_its_topic_grant_is_refused_on_the_record`, red
+against the `b1dbe8f` daemon on the merge-base:
+
+```
+KG-6: the transport with NO topic grant posted a moment — status 200, error null, walks 1, GrantRefused rows [], the extension's rows after the send ["{\"ContractCall\":{\"contract\":\"jinn:clock\",\"operation\":\"now\"}}"]
+thread 'an_entry_emitting_off_its_topic_grant_is_refused_on_the_record' panicked at tests/composition/tests/moments.rs:1498:5:
+  left: 200
+ right: 502
+```
+
+and green at pin `138fdce`:
+
+```
+KG-6: the transport with NO topic grant posted a moment — status 502, error {"code":"refused","detail":"emit refused: grant refused: jinn:ui/before-send"}, walks 0, GrantRefused rows [(Some("jinn-api-http"), "{"GrantRefused":{"contract":"jinn:ui/before-send","reason":"NotGranted","detail":null}}")], the extension's rows after the send []
+KG-6: an emit without the topic's grant is refused on the record (FINDINGS #49 closed at this pin)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 106.81s
+```
+
+The transport with its three `jinn:ui/*` grants stripped is refused on
+the emitter's own row, the row naming the topic as the grant it lacks;
+the answer is the seam's typed `refused` class (`502`, `emit refused:
+…`), never the unmodified payload; no `DispatchTrace`; the extension
+never ran. The same transport WITH its grants is proof 2's fold,
+unchanged.
+
+**The sentence above was wrong, and the pin-bump's audit found it.**
+"Every first-party emitter in this distribution already carries the
+grant it would need" held for ONE emitter, the `ui` profile's transport
+(UI-2 wrote its three topics into the profile on purpose). The other
+nine did not: the engine providers (`jinn:engine/event`), the session,
+todo and workflow stores (`jinn:session/event`, `jinn:todo/event`,
+`jinn:workflow/event`), the settings provider (`jinn:settings/changed`,
+`jinn:settings/refused`) and the cron scheduler (its job topics,
+`cron:health` in the shipped table) all emitted under no topic grant,
+and at pin `138fdce` every one of those emits is refused. Red first, in
+the kits' own tests (six, one per builder) and on the composition boot
+at the pin commit before the grants were written:
+
+```
+thread 'tests::the_settings_provider_is_granted_the_two_topics_it_emits' panicked at tools/api-kit/src/lib.rs:92:13:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+thread 'tests::the_scheduler_is_granted_every_job_topic_it_fires' panicked at tools/cron-kit/src/lib.rs:189:13:
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+thread 'tests::a_provider_entry_is_granted_the_event_topic_it_emits' panicked at tools/engine-kit/src/lib.rs:230:9:
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+thread 'tests::a_store_entry_is_granted_the_event_topic_it_emits' panicked at tools/session-kit/src/lib.rs:139:13:
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+thread 'tests::a_store_entry_is_granted_the_event_topic_it_emits' panicked at tools/todo-kit/src/lib.rs:150:13:
+test result: FAILED. 3 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+thread 'tests::a_store_entry_is_granted_the_event_topic_it_emits' panicked at tools/workflow-kit/src/lib.rs:151:13:
+test result: FAILED. 4 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+```
+$ cargo test -p composition --test cron
+test a_stop_landing_mid_tick_lands_the_whole_tick ... FAILED
+test restart_rerequests_the_alarm_fires_once_and_records_the_gap ... FAILED
+test reschedules_on_config_edit_through_reconcile ... FAILED
+test fires_on_schedule_from_kernel_wakes_and_records_the_run ... FAILED
+test an_edit_landing_before_readiness_is_applied ... FAILED
+test a_clean_shutdown_suspends_and_a_restart_resumes_the_schedule ... FAILED
+test corrupt_persisted_state_is_quarantined_and_recorded ... FAILED
+test run_history_is_append_backed_and_the_consumer_sees_the_wider_surface ... FAILED
+timed out waiting for a settled fire
+timed out waiting for the first fire
+timed out waiting for a fire on the halved schedule
+timed out waiting for the first fire to land in the consumer report
+timed out waiting for the first fire to settle in the history log
+timed out waiting for two settled fires
+$ cargo test -p composition --test settings
+test declare_resolve_and_patch_on_both_paths_with_the_c5_c6_transcript ... FAILED
+test swapping_the_settings_provider_by_profile_edit_leaves_the_consumers_untouched ... FAILED
+test a_patch_the_schema_refuses_is_typed_and_on_the_record ... FAILED
+test a_patch_reports_exactly_what_the_next_get_resolves_in_both_orders ... FAILED
+assertion `left == right` failed: the scheduler holds the patched table: HTTP/1.1 200 OK
+timed out waiting for the refusals to land on the record
+timed out waiting for the refusal to land on the record
+test result: FAILED. 0 passed; 4 failed; 1 ignored; 0 measured; 0 filtered out; finished in 119.52s
+```
+
+Each kit builder now writes the topic the entry EMITS beside the
+contract it provides (`tools/engine-kit`, `tools/session-kit`,
+`tools/todo-kit`, `tools/workflow-kit`, `tools/api-kit`'s settings
+provider; `tools/cron-kit` derives the scheduler's topic grants from its
+job table so the two cannot drift), and the four composition fixtures
+that hand-build an emitting entry carry theirs. A transport in a profile
+WITHOUT the UI is NOT granted the moment topics: a `POST /v1/moments/…`
+there is refused `refused` on the record, which is what the profile
+says. Ten consecutive fresh boots of the `ui` profile stay deterministic
+at the pin (UI-1 proof 5b).
 
 ## 50. The cost of one moment is 3.3 ms on the spike's shape, and the guest's memory high-water mark is not a reading the kernel exposes (KG-7, measured)
 
@@ -3384,6 +3523,28 @@ names the fold order and the row order side by side, and carries a
 NOT-YET assertion on the reading's absence (the trace has no
 `deliveries`/`order` field): a pin that names its deliveries fails it
 and the proof is flipped to assert the fold against that reading.
+
+**Re-measured at pin `138fdce` (jinnd M2-K26, harness pin-bump 9) —
+OPEN, unchanged.** M2-K26 names listener order as a declaration out of
+scope ("registration order stays activation order") and adds no field to
+`DispatchTrace`. Proof 3 at the pin, three solo runs:
+
+```
+run 1:
+proof 3: two extensions folded — answer "hello 🔵 🟢", fold order ["ext-blue", "ext-green"], listen rows ["ext-green", "ext-blue"] (KG-3 / FINDINGS #52: the order across siblings is what the boot dealt, and the listen rows are not its witness)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 105.64s
+run 2:
+proof 3: two extensions folded — answer "hello 🔵 🟢", fold order ["ext-blue", "ext-green"], listen rows ["ext-green", "ext-blue"] (KG-3 / FINDINGS #52: the order across siblings is what the boot dealt, and the listen rows are not its witness)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 94.29s
+run 3:
+proof 3: two extensions folded — answer "hello 🔵 🟢", fold order ["ext-blue", "ext-green"], listen rows ["ext-blue", "ext-green"] (KG-3 / FINDINGS #52: the order across siblings is what the boot dealt, and the listen rows are not its witness)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 98.94s
+```
+
+The order across two siblings is still what the boot dealt, the listen
+rows are still not its witness, and the trace still carries counts
+only; the NOT-YET assertion stands as written. Card candidate unchanged
+(KG-3's declaration; the trace naming its deliveries).
 
 **The capability shape that would retire it.** Either half of KG-3's
 candidate (§9.6: an ordinal on `listen`, or profile order honored and

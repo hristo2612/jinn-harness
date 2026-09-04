@@ -13,6 +13,38 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
+Pin-bump 9 — kernel pin `138fdce` (M2-K26). **A registration is
+replaced, never absent — and an emit is covered by its topic's grant.**
+The `ui` profile's restart window is closed to moments: while an
+extension's `source` edit activates its replacement (UI-2 proof 5, the
+#47 shape: a slow activation by construction, a client posting every
+~5 ms across the edit), every send inside the window is refused typed
+`503 unavailable` naming `restarting` — one `DispatchRefused` row per
+refused send on the ledger, ZERO answered unmodified, ZERO `listeners:
+0` walks (the round-1 measurement was 53 unvalidated sends per edit) —
+and the new fold lands after the replacement's atomic commit. And
+`events.emit` is now the authority the profile already read as: a walk
+is covered by the grant of the topic's own name exactly as a
+subscription is, so the KG-6 probe flips to an on-the-record refusal
+(the transport with its three `jinn:ui/*` grants stripped is refused on
+its own row, `GrantRefused` naming the topic, no walk traced, the
+extension never run). The pin-bump's audit found the harness's own
+claim false — only the `ui` transport carried its emit grants — so
+every first-party emitter is granted its topic in the kits now: the
+engine providers, the session/todo/workflow stores, the settings
+provider, and the cron scheduler (derived from its job table), red-first
+in each kit's own test and on the composition boot at the pin.
+`jinn:plugin` is 0.12.0 (prose only, additive); `jinn:introspect` stays
+0.6.0 with a fix under it (`entry.unserved` answers `restarting`
+mid-`Loading`). FINDINGS #47 and #49 close at the pin with the
+transcripts; #52 re-measured and open; the plugins page drops the #47
+pill and keeps #37
+(`docs/notes/2026-09-04-a-registration-is-replaced-never-absent.md`).
+What it is NOT: an `emit`-mode notification inside the window (still
+lost, traced `listeners: 0` — the card's named limit); a transport
+policy for a `failed` validator; #51's non-fatal half; #52's reading;
+the soak, untouched on `3a8e5c03` until the 2026-09-04 audit.
+
 Pin-bump 8 — kernel pin `b1dbe8f` (M2-K25). **A delivery spends its
 listener's clock, and a dead instance is a failed fiber.** The `ui`
 profile's looping extension (UI-2 proof 7, the #48 shape: `while (true)
@@ -34,7 +66,7 @@ declaring entry's own row, and the `ui` profile mounts `ext-green` under
 `ext_kit::GREEN_BUDGET`. `jinn:plugin` is 0.11.0 (additive);
 `jinn:introspect` stays 0.6.0. FINDINGS #48 closes at the pin with
 proof 7's transcript and #51's fatal half with it; the plugins page
-drops the #48 pill and keeps #37/#47
+drops the #48 pill and keeps #37/#47 (#47 answered at pin `138fdce` by pin-bump 9)
 (`docs/notes/2026-09-04-a-delivery-spends-its-listeners-clock.md`).
 What it is NOT: #51's non-fatal `DeliveryFailed` row (a throwing
 extension still has no row of its own); a budget for `services.call`;
@@ -686,12 +718,17 @@ Its own README carries these in full; the load-bearing ones:
 
 ### UI-2 — Moments and the extension tier
 
-- **A moment inside an extension's restart window is answered UNMODIFIED,
-  not refused** (#47): the kernel withdraws a listener's `listen` with the
-  old incarnation's suspension BEFORE the replacement commits, so a walk
-  in the window (~500 ms per source edit) selects nobody and M2-K9's
-  `restarting` never fires. The transport's half of fail-closed holds; the
-  kernel's does not. Proof 5 lands NOT-YET on it.
+- **A moment inside an extension's restart window WAS answered UNMODIFIED,
+  not refused** (#47, answered at pin `138fdce`, jinnd M2-K26, pin-bump 9):
+  at `a53a352` the kernel withdrew a listener's `listen` with the old
+  incarnation's suspension BEFORE the replacement committed, so a walk in
+  the window (~500 ms per source edit) selected nobody and M2-K9's
+  `restarting` never fired. Now the registration survives the suspension
+  as a refusing registration until the replacement's atomic commit: every
+  send in the window is `503` naming `restarting`, none unmodified, and
+  proof 5 asserts both halves of fail-closed. What stays open is the
+  card's named limit: an `emit`-mode notification inside the window is
+  still lost and traced `listeners: 0`.
 - **A bad extension KILLED the transport, not its own slot** (#48,
   answered at pin `b1dbe8f`, jinnd M2-K25, pin-bump 8): at `a53a352`
   every guest call was one `settle(deadline)` and `emit` awaited each
@@ -702,10 +739,15 @@ Its own README carries these in full; the load-bearing ones:
   row; the entry's `budget` is honored as `listen-within`. What stays
   open is #51's non-fatal half: a throwing extension's contained failure
   is still only a count on the emitter's trace.
-- **`emit` is not gated by a topic grant** (#49): the transport is granted
-  the three topics it emits so the profile READS as the kernel will one
-  day enforce it, but at `a53a352` any guest can emit any unreserved
-  topic; the grants are a statement, not yet an authority.
+- **`emit` WAS not gated by a topic grant** (#49, answered at pin
+  `138fdce`, jinnd M2-K26 (e), pin-bump 9): at `a53a352` any guest could
+  emit any unreserved topic and the transport's three topic grants were a
+  statement, not an authority. Now a walk is covered by the grant of the
+  topic's own name exactly as a subscription is — the stripped transport
+  is refused on its own row — and every first-party emitter in the kits
+  carries its topic (the audit found only the `ui` transport did). A
+  transport in a profile WITHOUT the UI is not granted the moment topics:
+  a moment there is refused `refused` on the record.
 - **A contained delivery failure is a count on the emitter's trace and
   nothing on the listener's history** (#51): the plugins page shows a
   throwing extension `active` with a clock read and no failure. Proof 4
@@ -724,8 +766,8 @@ Its own README carries these in full; the load-bearing ones:
 - **Installing, removing, disabling an extension, widening its topics or
   swapping its engine are profile edits, not clicks** (#37; the K23 split,
   plan §9.5), rendered DISABLED on the extension's row with the finding
-  beside the one kernel NOT-YET item left (#47; #48 is answered at pin
-  `b1dbe8f`, and its pill went with pin-bump 8) — never silently absent.
+  (#48 is answered at pin `b1dbe8f` and its pill went with pin-bump 8;
+  #47 at pin `138fdce` with pin-bump 9) — never silently absent.
   Editing an installed extension's `source`, `origin` or
   already-granted `topics` IS `PATCH /v1/profile/entries/{id}` today.
 - **The two chat topics are dispatchable and proven, and reached by no

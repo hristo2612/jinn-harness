@@ -3,9 +3,10 @@
 The api trio and the settings pair mounted beside the cron seam, seven
 entries: `cron-scheduler` and `health-snapshot` exactly as `profiles/cron`
 mounts them (one home: `cron-kit`'s `cron_entries`; the scheduler holds
-`jinn:settings` and the `jinn:settings/changed` listen grant in both
-profiles — in the cron-only profile the resolve answers
-missing-dependency and the entry layer is the whole truth),
+`jinn:settings`, the `jinn:settings/changed` listen grant and its job
+topics' emit grants in both profiles — in the cron-only profile the
+resolve answers missing-dependency and the entry layer is the whole
+truth),
 `jinn-settings-profile` (granted `jinn:settings` to provide,
 `jinn:settings-store`, and `jinn:profile` scoped to exactly the entries
 it may patch: every namespace owner and the store) and
