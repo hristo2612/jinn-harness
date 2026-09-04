@@ -304,6 +304,56 @@ first submission — the grants audit, proof 5's flip, the KG-6 probe,
 the #47 pill, the kit tests — stands as committed; the whole
 composition suite is re-run at `cb08683` below.
 
+## The composition suite at the adopted pin
+
+Every suite, in sequence on one cargo lane, against the daemon built
+from `git archive cb08683` (the kit's cache marker reads `cb08683`),
+from a tree whose only difference to the pin commit `b7960ae` is
+documentation (`git diff --stat b7960ae -- . ':!*.md'` is empty):
+
+```text
+$ cargo test -p composition --test engines
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 305.93s
+$ cargo test -p composition --test moments -- --test-threads=1 --nocapture
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 799.30s
+$ cargo test -p composition --test cron
+test result: ok. 15 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 60.77s
+$ cargo test -p composition --test settings
+test result: ok. 4 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 68.18s
+$ cargo test -p composition --test api
+test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 94.54s
+$ cargo test -p composition --test auth
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 34.89s
+$ cargo test -p composition --test plugins
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 156.87s
+$ cargo test -p composition --test plugins_lifecycle
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 49.75s
+$ cargo test -p composition --test sessions
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 369.16s
+$ cargo test -p composition --test todos
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 487.18s
+$ cargo test -p composition --test ui
+test a_fresh_boot_is_deterministic ... ok
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 688.41s
+$ cargo test -p composition --test workflows
+test result: ok. 16 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 718.55s
+```
+
+The ui suite's `a_fresh_boot_is_deterministic` is UI-1 proof 5b, the
+ten consecutive fresh boots (its per-boot timings are printed only
+under `--nocapture`; the suite ran captured, 688 s for the six cases).
+The settings suite's one `ignored` case is the standing ignore it
+carried at `b1dbe8f`.
+
+## Meter, re-read at the resubmission
+
+The resubmission changes one line of `KERNEL-PIN.md` and documentation:
+`git diff --numstat main -- '*.rs'` is the first submission's diff
+exactly, so the UI-2 meter's reading is unchanged — **39 production
+Rust net** (2 on the meter's paths, 37 declared beside it), the delta
+this round **0**, the card's ≤ 150 met. The meter section below is the
+first submission's and still describes the head.
+
 ## What did not move
 
 - **An `emit`-mode notification inside the window is still lost** and
