@@ -38,6 +38,7 @@
 
 mod door;
 mod moments;
+mod profile_admin;
 mod ui;
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -594,6 +595,14 @@ fn dispatch(method: &str, path: &str, query: serde_json::Value, body: &[u8]) -> 
     // And the moments: a topic the path names, one walk, the fold.
     if is_moments_path(path) {
         return moments::dispatch(method, path, body);
+    }
+    // And the composition's shape: an admin write on the entries
+    // collection (pin `f8b285b`); a config patch on the same path falls
+    // through to the static table's `jinn:api-profile` route.
+    if jinn_api::profile_admin::is_entries_path(path) {
+        if let Some(response) = profile_admin::dispatch(method, path, body) {
+            return response;
+        }
     }
     let Some((route, id)) = route(method, path) else {
         return route_miss(

@@ -80,15 +80,12 @@ fn the_five_writes_are_shaped_by_method_path_and_body() {
 #[test]
 fn a_config_patch_is_not_an_admin_write_and_a_mixed_body_is_invalid() {
     // The config route's own body: `None` — the static route answers it.
-    assert_eq!(
-        admin_route(
-            "PATCH",
-            "/v1/profile/entries/x",
-            &serde_json::json!({ "config": { "data": {} } })
-        )
-        .expect("shaped"),
-        None
-    );
+    assert!(admin_route(
+        "PATCH",
+        "/v1/profile/entries/x",
+        &serde_json::json!({ "config": { "data": {} } })
+    )
+    .is_none());
     // One write per call: a body carrying two is `invalid` before any kernel call.
     let mixed = admin_route(
         "PATCH",

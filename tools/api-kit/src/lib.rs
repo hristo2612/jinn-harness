@@ -16,7 +16,11 @@ pub const STORE_ID: &str = "jinn-settings-store";
 /// kernel's readiness wakes), and it holds `jinn:auth` BARE — the door
 /// (packet 2.8): the bundle declares no scope, a scoped grant would
 /// refuse at admission, and without the grant the provider cannot ask
-/// and answers every request `refused`; the status consumer holds the read-only
+/// and answers every request `refused` — and, at pin `f8b285b` (jinnd
+/// M2-K23, FINDINGS #37), `jinn:profile-admin` over EVERY entry (the scope
+/// WRITTEN: a bare grant administers nothing): the transport is the
+/// operator's delegate by the operator's own document, and each admin
+/// route is one call on it; the status consumer holds the read-only
 /// kernel contracts (`jinn:introspect`, `jinn:ledger`) and reads the
 /// document of record through a `jinn:profile` grant attenuated to
 /// `ops: ["document"]` — a viewer that CANNOT patch (FINDINGS.md #24
@@ -38,6 +42,7 @@ pub fn api_entries(http: &str, status: &str, edit: &str, port: u16) -> Vec<serde
           "config": { "grants": [
                           { "contract": "jinn:net", "scope": { "bind": [port, port] } },
                           jinn_api::AUTH_CONTRACT,
+                          { "contract": jinn_api::profile_admin::ADMIN_CONTRACT, "scope": ["*"] },
                           jinn_api::STATUS_CONTRACT, jinn_api::PROFILE_CONTRACT,
                           jinn_settings::SETTINGS_CONTRACT ],
                       "data": { "port": port } } }),
