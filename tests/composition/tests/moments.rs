@@ -25,7 +25,7 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
-use composition::api::{get, listening, post, request, request_as, Response};
+use composition::api::{get, post, request, request_as, Response};
 use composition::daemon::{jinnd_source, pinned_commit, pinned_daemon};
 use composition::kit::{
     artifact_hash, entry_mut, fresh_ui_root, suite_credential, Daemon, LedgerRow,
