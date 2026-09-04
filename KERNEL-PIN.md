@@ -8,7 +8,7 @@ itself in agreement.
 
 ```
 repo: https://github.com/hristo2612/jinnd
-commit: 138fdcec1952569bcfc1de41306a505301518531
+commit: cb0868393208e3f919d281122772f9a1e728d01c
 wit-hash: sha256:89692baa86656d3ff975ee9e7ddd60c91b5b5ab6d8c7362e82928882064ae197
 contracts-hash: sha256:c60d7485ffa0bd8b060ccdd09154484ee4929e4cd60a173221399faed2d4777c
 ```
