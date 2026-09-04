@@ -72,6 +72,20 @@ describe('an extension row', () => {
     expect(document.body.textContent).not.toContain('#37')
   })
 
+  it("stands every action and form control at the settings page's 34 px control height, no hairline at rest", () => {
+    renderRow(row({}))
+
+    const actions = within(screen.getByTestId('plugin-actions-ext-green')).getAllByRole('button')
+    fireEvent.click(actions[0])
+    const form = screen.getByTestId('plugin-action-form-ext-green')
+    const controls = [...actions, ...within(form).getAllByRole('button'), ...within(form).getAllByRole('textbox')]
+    expect(controls).toHaveLength(4 + 2 + 5)
+    for (const control of controls) {
+      expect(control.className).toContain('h-[34px]')
+      expect(control.className).not.toMatch(/h-\[(22|30)px\]|shadow-\[inset/)
+    }
+  })
+
   it('swaps the engine as one write: package and hash through PATCH', async () => {
     admin.swapPlugin.mockResolvedValue({ 'api-version': '0.3.0', id: 'ext-green', write: 'swap-plugin', 'administered-seq': 9 })
     renderRow(row({}))
