@@ -13,6 +13,7 @@
 use std::collections::BTreeSet;
 
 use composition::api::{get, patch};
+use composition::kit::{Daemon, LedgerRow};
 use composition::plugins::{booted, described, entry, history, listing, state, MAIN, PARKED};
 
 const LIVE_ID: &str = "jinn-plugins-live";
@@ -487,33 +488,137 @@ fn describe_says_what_a_plugin_may_do_what_it_has_done_and_what_may_happen_next(
     daemon.interrupt();
 }
 
-/// FINDINGS #37, driven rather than argued: `jinn:profile.patch-entry`
-/// writes ONE subtree, so the package-and-hash swap every other seam
-/// proves by editing the profile FILE is not expressible through the
-/// surface an operator or an agent actually has.
+/// FINDINGS #37, CLOSED at pin `f8b285b` (jinnd M2-K23, harness pin-bump
+/// 10). The swap every seam from 2.3 onward proves by a file edit is now
+/// ONE operator-API write: `PATCH /v1/profile/entries/{id} { package,
+/// hash }` is `jinn:profile-admin.swap-plugin` from the transport — a
+/// `ProfileAdministered { write: SwapPlugin }` row under the transport,
+/// the old incarnation DISPOSED (`ExplicitDispose`, never suspended:
+/// the bundle's stated 0.1.0 limit, carded as jinnd M2-K27) and a
+/// successor fiber live under the same id on the other package. The
+/// window between the two is asserted in the shape the kernel pins:
+/// zero `DispatchRefused` rows in it (a walk in the window is dropped,
+/// never refused `restarting`). The config route beside it still
+/// applies a config patch, so the two routes are proven to coexist.
 #[test]
-fn the_operator_api_cannot_change_what_a_plugin_is_only_what_it_is_configured_with() {
+fn the_operator_api_swaps_what_a_plugin_is_and_the_old_incarnation_is_disposed_until_m2_k27() {
     let Some((daemon, port)) = booted("plugins-package-swap") else {
         return;
     };
-    let before = entry(&listing(port, MAIN), FIXED_ID);
+    let before = status_entry(port, FIXED_ID);
     assert_eq!(before["package"], FIXED_PACKAGE, "{before}");
+    let old = before["fiber"].as_u64().expect("the appliance runs");
+    let live_hash = status_entry(port, LIVE_ID)["hash"].clone();
+    let baseline = daemon.ledger_rows().last().map_or(0, |row| row.seq);
 
-    // The swap every seam from 2.3 onward proves by file edit, attempted
-    // through the API: point this entry at the other package.
-    let attempt = patch(
+    // THE SWAP, through the API: one write, no file edit.
+    let swap = patch(
         port,
         &format!("/v1/profile/entries/{FIXED_ID}"),
-        &serde_json::json!({ "package": LIVE_PACKAGE }),
+        &serde_json::json!({ "package": LIVE_PACKAGE, "hash": live_hash }),
     );
     println!(
-        "FINDINGS #37 transcript — PATCH /v1/profile/entries/{FIXED_ID} {{\"package\": \"{LIVE_PACKAGE}\"}}\n{}",
-        attempt.raw.trim()
+        "FINDINGS #37 transcript — PATCH /v1/profile/entries/{FIXED_ID} {{\"package\": \"{LIVE_PACKAGE}\", \"hash\": …}}\n{}",
+        swap.raw.trim()
     );
-    // The precondition that makes the assertion below mean something: a
-    // CONFIG patch on this very entry, through this very route, IS
-    // applied. So what follows is the reach of the operation and not a
-    // broken route, a bad grant or a typo.
+    assert_eq!(swap.status, 200, "{}", swap.raw);
+    assert_eq!(swap.body["write"], "swap-plugin", "{}", swap.raw);
+    let seq = swap.body["administered-seq"]
+        .as_u64()
+        .expect("the row's sequence");
+    let row = daemon
+        .ledger_rows()
+        .into_iter()
+        .find(|row| row.seq == seq)
+        .expect("the intent row");
+    let (name, fields) = row.kind_of();
+    assert_eq!(name, "ProfileAdministered", "{}", row.kind);
+    assert_eq!(
+        row.entry.as_deref(),
+        Some(API_ID),
+        "under the caller: {row:?}"
+    );
+    assert_eq!(fields["write"], "SwapPlugin", "{fields}");
+    assert_eq!(fields["entry"], FIXED_ID, "{fields}");
+    assert!(
+        fields["prior"]
+            .as_str()
+            .is_some_and(|prior| prior.contains(FIXED_PACKAGE)),
+        "the inverse write's payload: {fields}"
+    );
+
+    // THE OLD INCARNATION IS DISPOSED, not suspended — the stated limit.
+    daemon.eventually("the old incarnation to rest", || {
+        transition_of(&daemon, baseline, old, "Disposed").is_some()
+    });
+    let (disposed_at, cause) = transition_of(&daemon, baseline, old, "Disposed").expect("rested");
+    assert_eq!(
+        cause, "\"ExplicitDispose\"",
+        "the limit: disposed, not suspended"
+    );
+    assert!(
+        !daemon.ledger_rows().iter().any(|row| {
+            row.seq > baseline && row.fiber == Some(old) && row.kind.contains("FiberSuspended")
+        }),
+        "no seat was suspended for the swap"
+    );
+
+    // THE SUCCESSOR IS LIVE under the same id, on the other package.
+    daemon.eventually("the successor to activate", || {
+        let entry = status_entry(port, FIXED_ID);
+        entry["state"] == "active" && entry["fiber"].as_u64().is_some_and(|fiber| fiber != old)
+    });
+    let after = status_entry(port, FIXED_ID);
+    let successor = after["fiber"].as_u64().expect("a fiber");
+    assert_eq!(after["package"], LIVE_PACKAGE, "{after}");
+    let (activated_at, _) =
+        transition_of(&daemon, disposed_at, successor, "Active").expect("activated");
+    let document = get(port, "/v1/profile").body["profile"]["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .find(|entry| entry["id"] == FIXED_ID)
+        .cloned()
+        .expect("in the document");
+    assert_eq!(document["package"], LIVE_PACKAGE, "{document}");
+
+    // THE WINDOW, by the record: between the old rest and the successor's
+    // activation, no walk was refused (`restarting` is M2-K27's), and
+    // every trace in it is named in the transcript with its listener
+    // count — this fixture lands no reply-expecting walk on the swapped
+    // entry's topic, so "selects nobody" is the kernel's own case
+    // (`a_swap_disposes_the_old_incarnation_a_stated_limit_until_m2_k27`)
+    // and the harness pins what it can: the shape, not the drop.
+    let window: Vec<LedgerRow> = daemon
+        .ledger_rows()
+        .into_iter()
+        .filter(|row| row.seq > disposed_at && row.seq < activated_at)
+        .collect();
+    let refused = window
+        .iter()
+        .filter(|row| row.kind_of().0 == "DispatchRefused")
+        .count();
+    let traces: Vec<String> = window
+        .iter()
+        .filter_map(|row| {
+            let (name, fields) = row.kind_of();
+            (name == "DispatchTrace")
+                .then(|| format!("{} listeners {}", fields["topic"], fields["listeners"]))
+        })
+        .collect();
+    println!(
+        "swap window rows {}..{}: {} rows, {refused} DispatchRefused, traces {traces:?}",
+        disposed_at,
+        activated_at,
+        window.len()
+    );
+    assert_eq!(
+        refused, 0,
+        "the limit: a walk in the window is dropped, never refused"
+    );
+
+    // The config route BESIDE it still applies a config patch: the two
+    // routes coexist, and `config.data` stays the patch route's own.
     let config = patch(
         port,
         &format!("/v1/profile/entries/{FIXED_ID}"),
@@ -521,20 +626,35 @@ fn the_operator_api_cannot_change_what_a_plugin_is_only_what_it_is_configured_wi
     );
     assert_eq!(config.status, 200, "{}", config.raw);
     assert_eq!(config.body["entry"]["config"]["data"]["ledger-limit"], 64);
-
-    // And the package is untouched: the operator API can change what a
-    // plugin is CONFIGURED with, never what a plugin IS.
     assert_eq!(
-        config.body["entry"]["package"], FIXED_PACKAGE,
-        "the package moved through an operation that may only write `config`: {}",
+        config.body["entry"]["package"], LIVE_PACKAGE,
+        "{}",
         config.raw
     );
-    daemon.eventually("the config patch to land", || {
-        entry(&listing(port, MAIN), FIXED_ID)["package"] == FIXED_PACKAGE
-    });
-    assert_eq!(
-        entry(&listing(port, MAIN), FIXED_ID)["package"],
-        FIXED_PACKAGE
-    );
     daemon.interrupt();
+}
+
+/// One entry of the status report (`jinn:introspect` laid over the
+/// document): package, hash, fiber, state, incarnation.
+fn status_entry(port: u16, id: &str) -> serde_json::Value {
+    let status = get(port, "/v1/status");
+    status.body["entries"]
+        .as_array()
+        .unwrap_or_else(|| panic!("entries: {}", status.raw))
+        .iter()
+        .find(|entry| entry["id"] == id)
+        .cloned()
+        .unwrap_or_else(|| panic!("entry {id:?} in the status: {}", status.raw))
+}
+
+/// The sequence and cause of `fiber` reaching `to` after `after`.
+fn transition_of(daemon: &Daemon, after: u64, fiber: u64, to: &str) -> Option<(u64, String)> {
+    daemon.ledger_rows().iter().find_map(|row| {
+        let (name, fields) = row.kind_of();
+        (row.seq > after
+            && name == "FiberTransition"
+            && fields["fiber"] == fiber
+            && fields["to"] == to)
+            .then(|| (row.seq, fields["cause"].to_string()))
+    })
 }

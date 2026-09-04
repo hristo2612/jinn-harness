@@ -1070,6 +1070,22 @@ pub struct LedgerRow {
     pub kind: String,
 }
 
+impl LedgerRow {
+    /// The row's kind as `(name, fields)`: the one-key object the ledger
+    /// writes for a struct variant, the bare string for a unit one.
+    #[must_use]
+    pub fn kind_of(&self) -> (String, serde_json::Value) {
+        match serde_json::from_str::<serde_json::Value>(&self.kind) {
+            Ok(serde_json::Value::Object(object)) if object.len() == 1 => {
+                let (name, fields) = object.into_iter().next().expect("one key");
+                (name, fields)
+            }
+            Ok(serde_json::Value::String(unit)) => (unit, serde_json::Value::Null),
+            _ => (self.kind.clone(), serde_json::Value::Null),
+        }
+    }
+}
+
 /// Every ledger row of a root (live or stopped) in sequence order — a
 /// plain WAL reader running SELECTs only (see [`Daemon::ledger_kinds`]).
 #[must_use]

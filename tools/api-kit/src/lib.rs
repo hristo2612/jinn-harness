@@ -82,6 +82,34 @@ pub fn settings_entries(provider: &str, store: &str, owners: &[&str]) -> Vec<ser
 mod tests {
     use super::*;
 
+    /// Pin-bump 10 (jinnd M2-K23, FINDINGS #37): the transport is the
+    /// operator's delegate by the operator's own document — its entry
+    /// carries `{ contract: "jinn:profile-admin", scope: ["*"] }`, the
+    /// scope WRITTEN (a bare grant administers nothing), in every profile
+    /// that mounts the api trio.
+    #[test]
+    fn the_transport_is_granted_profile_admin_over_every_entry() {
+        let entries = api_entries("http", "status", "edit", 7000);
+        let transport = &entries[0];
+        assert_eq!(transport["id"], PROVIDER_ID);
+        let grants = transport["config"]["grants"].as_array().expect("grants");
+        assert!(
+            grants
+                .contains(&serde_json::json!({ "contract": "jinn:profile-admin", "scope": ["*"] })),
+            "the transport holds jinn:profile-admin over every entry, scope written: {grants:?}"
+        );
+        for other in &entries[1..] {
+            let held = other["config"]["grants"].as_array().expect("grants");
+            assert!(
+                !held
+                    .iter()
+                    .any(|grant| grant["contract"] == "jinn:profile-admin"),
+                "only the transport administers: {} holds {held:?}",
+                other["id"]
+            );
+        }
+    }
+
     /// The settings provider EMITS `jinn:settings/changed` after a landed
     /// patch and `jinn:settings/refused` after a refused one; at pin
     /// `138fdce` (jinnd M2-K26 (e); FINDINGS #49) an emit is covered by the

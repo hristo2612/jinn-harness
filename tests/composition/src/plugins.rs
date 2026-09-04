@@ -40,8 +40,29 @@ pub fn gate() -> Option<&'static PathBuf> {
 /// If the daemon boots and does not answer its own health route.
 #[must_use]
 pub fn booted(name: &str) -> Option<(Daemon, u16)> {
+    booted_with(name, |_| {})
+}
+
+/// A booted plugins profile whose document was EDITED before the boot —
+/// the shape a refusal proof needs (an entry stripped of a grant), booted
+/// through the real loader like every other.
+///
+/// # Panics
+///
+/// If the daemon boots and does not answer its own health route.
+#[must_use]
+pub fn booted_with(name: &str, edit: impl FnOnce(&mut serde_json::Value)) -> Option<(Daemon, u16)> {
     let binary = gate()?;
     let (root, port) = fresh_plugins_root(name);
+    let path = root.join("profile.json");
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("profile")).expect("profile parses");
+    edit(&mut document);
+    std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&document).expect("encodes"),
+    )
+    .expect("profile");
     let daemon = Daemon::boot_operator(binary, &root);
     daemon.await_ready();
     let health = get(port, "/v1/health");
