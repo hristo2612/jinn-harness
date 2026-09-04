@@ -89,13 +89,16 @@ function Header({ installed, enabled, busy }: {
   )
 }
 
-export default function PluginsSettingsPage() {
-  const inventory = useCatalog()
-  useInventoryFollowsDisk()
+/** The switch: one `set-disabled` write per toggle; the kernel's refusal of
+ *  the last toggle rides on the row itself, because the list is a verbatim
+ *  port and takes no extra prop. */
+function useToggleOnRows(inventory: ReturnType<typeof useCatalog>) {
   const toggle = useTogglePlugin()
   const [refusals, setRefusals] = useState<Record<string, string>>({})
-
-  const plugins = inventory.data ?? []
+  const withRefusals = {
+    ...inventory,
+    data: inventory.data?.map((plugin) => ({ ...plugin, refusal: refusals[plugin.id] })),
+  } as typeof inventory
   const onToggle = (id: string, enabled: boolean) => {
     setRefusals(({ [id]: _cleared, ...rest }) => rest)
     toggle.mutate(
@@ -103,6 +106,15 @@ export default function PluginsSettingsPage() {
       { onError: (error) => setRefusals((held) => ({ ...held, [id]: error.message })) },
     )
   }
+  return { withRefusals, onToggle }
+}
+
+export default function PluginsSettingsPage() {
+  const inventory = useCatalog()
+  useInventoryFollowsDisk()
+  const { withRefusals, onToggle } = useToggleOnRows(inventory)
+
+  const plugins = inventory.data ?? []
 
   return (
     <PageLayout>
@@ -119,7 +131,7 @@ export default function PluginsSettingsPage() {
         <div>
 
           <div className="mt-[22px]">
-            <PluginList inventory={inventory} onToggle={onToggle} onReveal={() => {}} refusals={refusals} />
+            <PluginList inventory={withRefusals} onToggle={onToggle} onReveal={() => {}} />
             <p className="mt-3.5 px-1 text-[length:var(--text-caption1)] leading-relaxed text-[var(--text-tertiary)]">
               An enabled plugin runs with the same authority the dashboard and the gateway have. Enable only the ones
               you trust, the way you would a shell script.

@@ -23,6 +23,9 @@ export type CatalogRow = PluginInventoryRow & {
   /** The entry's grants as the catalog reads them — what "widen topics" and
    *  "install" start from. */
   grants?: unknown[]
+  /** The kernel's refusal of the last toggle on this row, when it refused
+   *  (pin-bump 10) — carried on the row so the verbatim list stays verbatim. */
+  refusal?: string
   /** UI-2 (§9.2 item 14): the entry's declared `origin`, when it has one, and
    *  the digest of its source (§9.7 amendment 8(d)). */
   attestation?: { origin: string; source?: string }
@@ -236,19 +239,17 @@ function RowControls({
  * One plugin. Everything an operator needs to decide about it is on the row:
  * what it is, what it can reach, whether it is running, and why not when it is
  * not — and, since pin `f8b285b`, what to do about it: the four actions and
- * the switch each cost one ledgered write. `refusal` is the switch's, when the
- * kernel refused the last toggle. The history opens.
+ * the switch each cost one ledgered write; `plugin.refusal` is the switch's,
+ * when the kernel refused the last toggle. The history opens.
  */
 export function PluginRow({
   plugin,
   onToggle,
   onReveal,
-  refusal,
 }: {
   plugin: CatalogRow
   onToggle: (enabled: boolean) => void
   onReveal: () => void
-  refusal?: string
 }) {
   const [historyOpen, setHistoryOpen] = useState(false)
 
@@ -265,7 +266,7 @@ export function PluginRow({
         onToggle={onToggle}
         onReveal={onReveal}
       />
-      <RowActions plugin={plugin} refusal={refusal} />
+      <RowActions plugin={plugin} refusal={plugin.refusal} />
       {historyOpen && (
         <div className="basis-full pl-1 text-[length:var(--text-caption1)] leading-relaxed text-[var(--text-secondary)]">
           <PluginHistory id={plugin.id} />
