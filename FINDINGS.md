@@ -62,7 +62,12 @@ parsed file rather than by eye
 (`docs/notes/2026-09-02-a-mirror-is-checked-by-a-parser.md`). Packet
 2.8 (the door, `jinn:auth` consumed at the HTTP provider) opened NO
 entry: the contract was sufficient at the door as written, and what held
-is recorded in the section at the bottom.
+is recorded in the section at the bottom. Entry **48** — the transport
+dying on a looping listener's walk — is **closed** as of the `b1dbe8f`
+pin bump (jinnd M2-K25; harness pin-bump 8, plugin world 0.10.0 →
+0.11.0), with proof 7's green transcript appended in place, and entry
+**51**'s FATAL half closes with it (a dead instance is now a row on the
+fiber that died); 51's non-fatal half stays open.
 
 ## 1. No clock or timer capability — time cannot enter the system
 
@@ -3091,7 +3096,9 @@ answers, and asserts the transport's half only.
 
 ## 48. A looping listener spends the emitter's guest deadline too — what the transport's own instance does on a listener that never returns (KG-2, measured)
 
-**Grade: reproducible WITH A TRANSCRIPT, measured, packet-card-ready —
+**Grade: ANSWERED at pin `b1dbe8f` (jinnd M2-K25, harness pin-bump 8) —
+fixed at pin b1dbe8f, transcript at the end of this entry. When raised:
+reproducible WITH A TRANSCRIPT, measured, packet-card-ready —
 BLOCKER-CLASS by the ruling's NOT-YET clause (PLA-353 ruling 4): the
 transport's own instance dies on the walk's deadline, the operator API
 is gone with it, and the kernel records no transition for it.** Hit in
@@ -3165,6 +3172,43 @@ refused typed when exceeded — and a stated rule for the emitter's clock
 during a walk (the emitter's own deadline paused, or its remaining
 budget the walk's bound, but never silently shared). No `budget` field
 exists on the extension entry at this pin because nothing could honor it.
+
+**Fixed at pin `b1dbe8f` (2026-09-04, harness pin-bump 8, PLA-361) —
+the transcript.** The same shape, the same source, a plain `listen`:
+proof 7 flipped to its intended assertion
+(`a_looping_extension_costs_its_own_slot_and_not_the_transport`), red
+first against the `a53a352` daemon on the merge-base — the transport
+still died and the client's 60 s bound was what ended the wait
+(`the walk costs the listener's guest deadline and no more:
+60.00220725s`) — and green at the pin with NO harness change but the
+pin itself:
+
+```
+proof 7: the looping walk took 5.000880667s (guest deadline 5s); the moment answered Some(200) unmodified with {"emitter":3,"failures":1,"listeners":1,"mode":"Waterfall","topic":"jinn:ui/before-send"}
+  the transport after the walk: GET /v1/health Some(200) in 6.585958ms, incarnation Number(12) → Number(12), its rows (all NetAccepted/read/verify/write/NetClosed of the moment and the health check; no FiberTransition): [181 NetClosed, 182 NetReadable, 184 NetAccepted, 192 AuthDecided, 294 DispatchTrace {failures: 1, listeners: 1}, 298 NetClosed, 313 NetAccepted, 321 AuthDecided, 332 NetClosed, 335 NetAccepted, 343 AuthDecided, …]
+  ext-looping after the walk: errors ["guest exceeded its call deadline"], transitions [("Active", "Unloading", "BodyFaulted"), ("Unloading", "Failed", "BodyFaulted")]
+  deadline rows: [(295, Some("ext-looping"), "{\"ErrorRecorded\":{\"error\":{\"code\":\"PluginFailed\",\"message\":\"guest exceeded its call deadline\",\"fiber\":12}}}")]
+proof 7: the transport survived the walk — a bad extension costs its own slot (FINDINGS #48 closed at this pin)
+```
+
+Read in order against the original. The walk cost the LISTENER's
+deadline and nothing more: the emitter's clock was parked for the walk
+(M2-K25 (a)). The transport answered the moment — `200`, the payload
+unmodified, `failures: 1` on its trace — and its next `GET /v1/health`
+inside two seconds; its fiber has no transition and the same
+incarnation. The deadline row names the listener and never the
+transport, and the looping extension's fiber went `Active → Unloading →
+Failed` under the additive `BodyFaulted` — the row this entry's defect
+(2) said no fiber had, now on the fiber that died (M2-K25 (c)), which is
+also #51's fatal half. Defect (3) falls out of it: the dead instance's
+kernel registrations are released with its seat. The extension entry
+gains the `budget` field the UI-2 card withheld (`plugins/ext/jinn-ext`,
+`{ "fuel": <u64> }`), translated by the Boa provider into
+`events.listen-within` — proof 7b: a budgeted looping delivery dies far
+under the deadline on `guest exhausted its delivery fuel budget`, and a
+zero budget is refused at `listen`, `invalid`, on the declaring entry's
+row. What is NOT closed here: a budget for `services.call` (the card's
+§Out) and #51's non-fatal half.
 
 ## 49. `events.emit` is not gated by the topic's grant — a guest may emit on any unreserved topic, granted or not (KG-6, verified on the ledger)
 
@@ -3276,6 +3320,16 @@ the walk is its clock read and no failure row (plan §9.7 amendment
 fails with this number in its message and the proof is flipped to
 require it. jinnd M2-K25 (`da74c67`) closes only the FATAL half of this
 finding; the non-fatal row is a later card.
+
+**Pin-bump 8 (2026-09-04, pin `b1dbe8f`): the FATAL half is closed, the
+non-fatal half stays open.** An instance the kernel ends after
+activation — a deadline, a trap, an exhausted delivery budget — is now
+ONE `ErrorRecorded` on the fiber that died, then its `Active → Unloading
+→ Failed` under `BodyFaulted` (proof 7's transcript under #48; proof 7b
+for the budget's message). A listener's CONTAINED failure — the throwing
+extension of proof 4 — is still `failures: 1` on the emitter's trace and
+nothing on its own history; proof 4's NOT-YET assertion citing this
+entry stands as written, and the `DeliveryFailed` row is a later card.
 
 ## 52. The order a `waterfall` walks two sibling listeners on one topic is not their `listen` rows' order, and no reading exposes the order the walk took — "listeners in registration order" is not observable at this pin (KG-3, measured)
 

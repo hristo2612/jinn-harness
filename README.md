@@ -13,6 +13,34 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
+Pin-bump 8 — kernel pin `b1dbe8f` (M2-K25). **A delivery spends its
+listener's clock, and a dead instance is a failed fiber.** The `ui`
+profile's looping extension (UI-2 proof 7, the #48 shape: `while (true)
+{}` on `jinn:ui/before-send`, a plain `listen`) now costs ITS OWN slot:
+the walk ends at the listener's 5 s deadline, the transport that emitted
+inside its own `handle-event` is charged nothing — it answers the moment
+with the payload unmodified and `failures: 1` folded out, its next
+`GET /v1/health` within bound, no transition and the same incarnation —
+and the looping extension is `failed` on the record with its own row
+(`guest exceeded its call deadline`, then `Active → Unloading → Failed`
+under the additive `BodyFaulted`; its `listen` released). The
+`jinn-ext` entry gains the `budget` field the UI-2 card withheld —
+`{ "fuel": <u64> }`, the kernel's `delivery-budget` record spelled on
+the entry — and the Boa provider translates it into
+`events.listen-within`: a budgeted looping delivery dies at its fuel far
+under the deadline (`guest exhausted its delivery fuel budget`, proof
+7b), a budgeted fold folds, a zero budget is refused typed on the
+declaring entry's own row, and the `ui` profile mounts `ext-green` under
+`ext_kit::GREEN_BUDGET`. `jinn:plugin` is 0.11.0 (additive);
+`jinn:introspect` stays 0.6.0. FINDINGS #48 closes at the pin with
+proof 7's transcript and #51's fatal half with it; the plugins page
+drops the #48 pill and keeps #37/#47
+(`docs/notes/2026-09-04-a-delivery-spends-its-listeners-clock.md`).
+What it is NOT: #51's non-fatal `DeliveryFailed` row (a throwing
+extension still has no row of its own); a budget for `services.call`;
+#47 (M2-K26); the soak, untouched on `3a8e5c03` until the 2026-09-04
+audit.
+
 Phase UI-2 — kernel pin `a53a352`, UNCHANGED. **A moment is one walk,
 and an extension is a listener.** The second packet of the UI
 malleability arc (`docs/plans/ui-malleability-arc.md` §9): an
@@ -34,12 +62,12 @@ FOLDED patch and shows the document the daemon answered — never "Saved"
 over the draft it sent; the plugins page shows each extension's `origin`
 and the digest of its source from the catalog's attestation, and the
 tier's NOT-YET items as disabled pills carrying their finding numbers
-(#37, #47, #48). Proven
+(#37, #47, and #48 until pin-bump 8 answered it). Proven
 through the pinned daemon in `tests/composition/tests/moments.rs`
-(`docs/notes/2026-09-03-a-moment-is-one-walk.md`). What it is NOT: a
-per-delivery budget — a looping extension spends the walk's guest
-deadline, and what that costs the TRANSPORT is proof 7's transcript
-(#48); a moment inside an extension's restart window is answered
+(`docs/notes/2026-09-03-a-moment-is-one-walk.md`). What it was NOT at
+`a53a352`: a per-delivery budget — a looping extension spent the walk's
+guest deadline, and what that cost the TRANSPORT was proof 7's
+transcript (#48, answered at pin `b1dbe8f` by pin-bump 8); a moment inside an extension's restart window is answered
 unmodified by the kernel, not refused (#47); install/remove/disable/topic-widening of an extension from the
 UI (the K23 split, plan §9.5); the chat topics' client call sites (UI-6).
 
@@ -664,15 +692,16 @@ Its own README carries these in full; the load-bearing ones:
   in the window (~500 ms per source edit) selects nobody and M2-K9's
   `restarting` never fires. The transport's half of fail-closed holds; the
   kernel's does not. Proof 5 lands NOT-YET on it.
-- **A bad extension KILLS the transport, not its own slot** (#48): at this
-  pin every guest call is one `settle(deadline)` and `emit` awaits each
-  delivery inside the emitter's call, so a listener that loops spends the
+- **A bad extension KILLED the transport, not its own slot** (#48,
+  answered at pin `b1dbe8f`, jinnd M2-K25, pin-bump 8): at `a53a352`
+  every guest call was one `settle(deadline)` and `emit` awaited each
+  delivery inside the emitter's call, so a listener that looped spent the
   transport's 5 s deadline — proof 7 measured the transport's instance
-  dying on it, the operator API gone until a daemon restart, its port
-  still accepting, and its fiber left without a transition. The
-  per-delivery budget is a kernel card (jinnd M2-K25); proof 7 lands
-  NOT-YET. No `budget` field exists on the entry because nothing could
-  honor it.
+  dying on it. Now the walk spends the LISTENER's bound, the transport is
+  charged nothing, and the extension that looped is `failed` on its own
+  row; the entry's `budget` is honored as `listen-within`. What stays
+  open is #51's non-fatal half: a throwing extension's contained failure
+  is still only a count on the emitter's trace.
 - **`emit` is not gated by a topic grant** (#49): the transport is granted
   the three topics it emits so the profile READS as the kernel will one
   day enforce it, but at `a53a352` any guest can emit any unreserved
@@ -695,7 +724,8 @@ Its own README carries these in full; the load-bearing ones:
 - **Installing, removing, disabling an extension, widening its topics or
   swapping its engine are profile edits, not clicks** (#37; the K23 split,
   plan §9.5), rendered DISABLED on the extension's row with the finding
-  beside the two kernel NOT-YET items (#47, #48) — never silently absent.
+  beside the one kernel NOT-YET item left (#47; #48 is answered at pin
+  `b1dbe8f`, and its pill went with pin-bump 8) — never silently absent.
   Editing an installed extension's `source`, `origin` or
   already-granted `topics` IS `PATCH /v1/profile/entries/{id}` today.
 - **The two chat topics are dispatchable and proven, and reached by no

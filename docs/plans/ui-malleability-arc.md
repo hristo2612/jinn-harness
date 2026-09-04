@@ -1447,8 +1447,25 @@ extension. Every ledger claim is read from `Daemon::ledger_rows`
    `jinn:ui/before-send` only, whose source is registered on the topic,
    receives NO delivery for `before-create-session` (the payload selects
    listeners by topic; nothing else selects).
-7. `a_looping_extension_costs_the_walk_the_guest_deadline_and_the_transport_s_fate_is_recorded`
-   - a `while(true){}` source; the moment answers after the deadline,
+7. `a_looping_extension_costs_its_own_slot_and_not_the_transport` - AT PIN
+   `b1dbe8f` (jinnd M2-K25, adopted by pin-bump 8, PLA-361; flipped from
+   the NOT-YET of §9.7 amendment 8(c)): the same `while(true){}` source
+   under a plain `listen`; the walk costs the LISTENER's 5 s deadline and
+   no more, the transport answers the moment `200` with the payload
+   unmodified and `failures: 1` folded out, its next `GET /v1/health`
+   answers within bound, its fiber has NO transition and the same
+   incarnation, every deadline row names the listener, and the looping
+   extension is `failed` on the record with its own row (`guest exceeded
+   its call deadline`, then `Active → Unloading → Failed` under
+   `BodyFaulted`). Proof 7b beside it: the entry's `budget` (`{ fuel }`,
+   the kernel's `delivery-budget` record) is translated by the provider
+   into `events.listen-within` - a budgeted looping delivery dies far
+   under the deadline on `guest exhausted its delivery fuel budget`, a
+   budgeted fold folds, the walk continues, and a zero budget is refused
+   at `listen`, `invalid`, on the declaring entry's own row. Before the
+   pin-bump this item read
+   (`a_looping_extension_costs_the_walk_the_guest_deadline_and_the_transport_s_fate_is_recorded`):
+   a `while(true){}` source; the moment answers after the deadline,
    MEASURED and printed (`lane::DEADLINE` 5 s at `a53a352`,
    `crates/jinnd-wasm/src/lane.rs`). Then the honest half: the kernel
    wraps EACH guest call in one `settle(deadline, ...)` (`crates/jinnd-wasm/src/instance.rs`)
@@ -1579,7 +1596,8 @@ enumerated adaptations.
 ### 9.6 Kernel findings this packet is likely to file
 
 - **KG-2, sharpened (per-delivery budget) - Blocker-class if proof 7 lands
-  as read.** At `a53a352` a guest call is one `settle(deadline, ...)`
+  as read.** Landed as read: FINDINGS #48, carded as jinnd M2-K25 and
+  ANSWERED at pin `b1dbe8f` (pin-bump 8). At `a53a352` a guest call is one `settle(deadline, ...)`
   (`crates/jinnd-wasm/src/instance.rs`; `lane::DEADLINE` 5 s) and `emit`
   awaits each delivery inside the emitter's call; a listener that spends
   the deadline spends the EMITTER's too. Candidate: a per-listen fuel or
