@@ -20,8 +20,6 @@ const FIXED_PACKAGE: &str = "plugins/jinn-plugins-static";
 const ADDED_ID: &str = "jinn-plugins-added";
 const ADDED_CATALOG: &str = "added";
 
-// ------------------------------------------------------------ readings
-
 /// One entry of the status report (`jinn:introspect` laid over the
 /// document): id, package, hash, grants, fiber, state, incarnation.
 fn status_entry(port: u16, id: &str) -> Option<serde_json::Value> {
@@ -107,8 +105,6 @@ fn accepted(
     );
     (seq, fields)
 }
-
-// ------------------------------------------------------------ the writes
 
 #[test]
 fn add_entry_through_the_api_lands_the_row_and_the_entry_live() {
@@ -331,8 +327,6 @@ fn set_grants_through_the_api_lands_only_via_the_restart() {
     );
     daemon.interrupt();
 }
-
-// ------------------------------------------------------------ the refusals
 
 /// M2-K23 (d) and the grant: a transport WITHOUT `jinn:profile-admin`
 /// cannot reshape the composition — every admin route answers a typed
