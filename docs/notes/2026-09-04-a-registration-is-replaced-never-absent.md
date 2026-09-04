@@ -188,7 +188,8 @@ needs, and the closures.
    the pin, with the grants:
 
    ```text
-__TEN_BOOTS__
+   proof 5b: 10/10 fresh boots reached transport active + listening + document served; boot-to-served [60.448884666s, 64.396083417s, 64.402474667s, 60.5249385s, 60.6062165s, 60.193415209s, 60.519599833s, 60.53093525s, 60.308801541s, 60.289520958s]
+   test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 652.45s
    ```
 
 4. **The page and the record** (`b5ddf32`, this note's commit). The
@@ -209,7 +210,7 @@ __TEN_BOOTS__
 | 5 the restart window is closed | `0 REFUSED, 50 answered UNMODIFIED, walks with listeners=0: 50, refusal rows: []` |    `63 REFUSED typed restarting (first at 347 ms), 0 answered UNMODIFIED, walks with listeners=0: 0, one DispatchRefused { owed: Reload } per refused send, the new fold at 3.55 s, window 1.6 s` |
 | KG-6 an off-grant emit is refused | `status 200, walks 1, GrantRefused rows []` |    `status 502 refused "emit refused: grant refused: jinn:ui/before-send", walks 0, GrantRefused { contract: jinn:ui/before-send, reason: NotGranted } on jinn-api-http, the extension’s rows []` |
 | six kit tests, the emitters' grants | six panics, one per builder | six green, the grants written |
-| 5b ten boots deterministic | (unchanged proof) | __ROW5B__ |
+| 5b ten boots deterministic | (unchanged proof) | `10/10 fresh boots reached transport active + listening + document served (652 s in all)` |
 
 ## #52, re-measured
 
