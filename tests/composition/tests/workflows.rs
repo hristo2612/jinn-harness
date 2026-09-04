@@ -963,6 +963,7 @@ fn a_third_run_store_joins_a_live_daemon_by_a_profile_edit_alone() {
                 "config": {
                     "grants": [
                         format!("jinn:workflow.{SCRATCH_STORE}"),
+                        jinn_workflow::EVENT_TOPIC,
                         "jinn:clock",
                         todo_grant
                     ],

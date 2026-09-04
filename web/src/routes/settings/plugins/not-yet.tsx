@@ -6,6 +6,9 @@
  * that answers its finding lands — "A bad extension costs its own slot · #48"
  * left at pin b1dbe8f (jinnd M2-K25, harness pin-bump 8): a looping delivery
  * now ends the extension's own instance, and the entry may declare a budget.
+ * "Refuse a moment mid-restart · #47" left at pin 138fdce (jinnd M2-K26,
+ * harness pin-bump 9): a moment inside an extension's restart window is
+ * refused typed `restarting`, never answered unmodified.
  */
 export const NOT_YET: ReadonlyArray<{ label: string; reason: string }> = [
   {
@@ -32,11 +35,6 @@ export const NOT_YET: ReadonlyArray<{ label: string; reason: string }> = [
     label: "Swap engine · #37",
     reason:
       "FINDINGS #37 / KG-1 (PLA-348): an engine swap changes the entry's package and hash. Waits on jinnd M2-K23.",
-  },
-  {
-    label: "Refuse a moment mid-restart · #47",
-    reason:
-      "FINDINGS #47: at this pin a moment posted inside an extension's restart window is answered UNMODIFIED, never refused. Waits on jinnd M2-K26.",
   },
 ]
 

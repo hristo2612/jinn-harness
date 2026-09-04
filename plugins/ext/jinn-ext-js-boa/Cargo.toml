@@ -3,7 +3,7 @@
 # world today, docs/plans/ui-malleability-arc.md §5) that evaluates the
 # operator's source from its entry's config and folds every moment it is
 # granted. Its imports are exactly `types`, `effects`, `events` and
-# `services` of `jinn:plugin@0.11.0` (asserted by `tools/ext-kit`); its
+# `services` of `jinn:plugin@0.12.0` (asserted by `tools/ext-kit`); its
 # only host call is one `jinn:clock` `now` per delivery. Compiles for
 # wasm32-unknown-unknown ONLY and is deliberately NOT a workspace member
 # (see the workspace manifest's note); `ext-kit` builds and encodes it.

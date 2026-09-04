@@ -16,7 +16,7 @@
 //! — its own fiber, its own row — when a delivery exceeds it (M2-K25).
 //!
 //! The JS has NO host calls: the only imports of this component are
-//! `types`, `effects`, `events` and `services` of `jinn:plugin@0.11.0`
+//! `types`, `effects`, `events` and `services` of `jinn:plugin@0.12.0`
 //! (asserted by `tools/ext-kit`), and the one `services.call` targets a
 //! kernel host provider, never a guest — so #4/#32's wait cycle has no
 //! target here.

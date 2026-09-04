@@ -90,8 +90,12 @@ pub struct Provider<'a> {
 /// One provider entry: grants on the left, its own knowledge on the right.
 #[must_use]
 pub fn provider_entry(provider: &Provider<'_>) -> serde_json::Value {
+    // The topic it EMITS on (every run event) beside the contract it
+    // provides: at pin `138fdce` a walk is covered by the topic's own
+    // grant exactly as a subscription is (jinnd M2-K26 (e); FINDINGS #49).
     let mut grants = vec![
         serde_json::json!(jinn_engine::engine_contract(provider.engine)),
+        serde_json::json!(jinn_engine::EVENT_TOPIC),
         serde_json::json!(jinn_cron::CLOCK_CONTRACT),
         serde_json::json!({ "contract": "jinn:keystore",
                             "scope": [KEYSTORE_PREFIX], "ops": ["get"] }),
@@ -206,6 +210,31 @@ mod tests {
         assert_eq!(entry["config"]["data"]["poll-ms"], 250);
         assert_eq!(entry["config"]["data"]["default-model"], "echo-1");
         assert!(entry["config"]["data"].get("command").is_none());
+    }
+
+    /// The provider EMITS `jinn:engine/event` (every run event), and at
+    /// pin `138fdce` (jinnd M2-K26 (e); FINDINGS #49) a walk is covered by
+    /// the grant of the topic's own name exactly as a subscription is —
+    /// so the entry carries the topic it publishes, beside the contract
+    /// it provides.
+    #[test]
+    fn a_provider_entry_is_granted_the_event_topic_it_emits() {
+        let entry = provider_entry(&Provider {
+            id: DEFAULT_ID,
+            package: "engines/jinn-engine-echo",
+            hash: "abc",
+            engine: DEFAULT_ENGINE,
+            command: None,
+            also_exec: &[],
+            env: &[],
+            models: &["echo-1"],
+            data: serde_json::json!({}),
+        });
+        let grants = entry["config"]["grants"].as_array().expect("grants");
+        assert!(
+            grants.contains(&serde_json::json!(jinn_engine::EVENT_TOPIC)),
+            "the emitter is granted its topic: {grants:?}"
+        );
     }
 
     #[test]

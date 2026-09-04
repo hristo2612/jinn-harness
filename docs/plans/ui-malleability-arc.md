@@ -1432,14 +1432,25 @@ extension. Every ledger claim is read from `Daemon::ledger_rows`
    `undefined` yields EMPTY output and the payload passes unchanged,
    `failures: 0`.
 5. `a_restarting_extension_refuses_the_moment_typed_and_nothing_is_sent` -
-   `PATCH /v1/profile/entries/ext-green` with a new `source` whose
+   AT PIN `cb08683` (jinnd M2-K26 + amendment 2, adopted by pin-bump 9, PLA-364;
+   flipped from the NOT-YET of §9.7 amendment 8(c)): the operator's edit
+   lands through the profile document (the lane the watcher serves, so
+   the transport stays free to take moments while the extension
+   restarts — through `PATCH /v1/profile/entries` the transport awaits
+   the restart inside its own request, #26) with a new `source` whose
    ACTIVATION is slow by construction (a bounded counting loop of about
-   one second under fuel, so the restart window is wide enough to hit
-   deterministically, never `while(true)`); a moment posted inside the
-   window answers `503` with `detail` naming `restarting`; on the ledger
-   the walk's refusal row and NO `DispatchTrace` with a delivery; after
-   the restart lands the same moment answers `200` with the NEW source's
-   fold. The client's retry is not proven here (UI-6).
+   1.5 s under fuel, so the restart window is wide enough to hit
+   deterministically, never `while(true)`); EVERY moment posted inside
+   the window answers `503` with `detail` naming `restarting`, none the
+   unmodified payload; on the ledger one `DispatchRefused` row per
+   refused send and NO `DispatchTrace` with `listeners: 0`; after the
+   restart lands the same moment answers `200` with the NEW source's
+   fold; the window (the old incarnation's suspension to the new one's
+   `Active`) is measured on the record and printed. The client's retry
+   is not proven here (UI-6). As first written (a moment inside the
+   window "answers `503`"), landed NOT-YET at `a53a352`: the kernel
+   withdrew the listen at the suspension and answered 53 sends
+   unmodified per edit (FINDINGS #47).
 6. `an_extension_is_granted_its_topic_and_nothing_else` - an entry whose
    `data.topics` names `jinn:ui/before-send` but whose `config.grants`
    does not; `GrantRefused` on its history, the fiber `failed`, and a
@@ -1620,7 +1631,12 @@ enumerated adaptations.
   the profile states. Candidate: `emit` covered by the topic's grant like
   `listen` (constitution 01 §Grants, "every topic is its own grant name").
   The card grants the transport its topics NOW so the profile already reads
-  as the kernel will one day enforce it.
+  as the kernel will one day enforce it. Landed as read: FINDINGS #49,
+  carded as jinnd M2-K26 (e) and ANSWERED at pin `cb08683` (pin-bump 9,
+  PLA-364): the probe flips to an on-the-record refusal, and the
+  pin-bump's audit found that ONLY the transport had been granted its
+  emit topics — every other first-party emitter is granted its topic in
+  the kits now.
 - **KG-7 (the cost of one moment)** - only if proof 2's number is a
   problem: a Boa context per delivery under fuel metering, on the record,
   with the memory high-water mark the kernel does not yet expose (0.6.0
@@ -1649,7 +1665,13 @@ enumerated adaptations.
   M2-K25 closes only #51's fatal half; the non-fatal row is a later card.
   (c) Proof 5 lands NOT-YET on FINDINGS #47 (jinnd M2-K26) once the
   verifier reproduces it at the pin; proof 7 lands NOT-YET on #48 (jinnd
-  M2-K25) per §8 ruling 4. (d) Proof 11 is a harness Blocker as found:
+  M2-K25) per §8 ruling 4. [Restated at pin `b1dbe8f`, pin-bump 8
+  (PLA-361): #48 is answered and proof 7 asserts the transport survives.
+  Restated at pin `cb08683`, pin-bump 9 (PLA-364; the first candidate
+  `138fdce` was held on FINDINGS #53, closed at `cb08683`): #47 is answered and
+  proof 5 asserts every send inside the restart window is refused
+  `restarting`, none unmodified; #49 is answered and the KG-6 probe
+  asserts the off-grant emit is refused on the record.] (d) Proof 11 is a harness Blocker as found:
   the page shows the FOLDED value after a moment, and the extension's
   source breadcrumb renders from the entry's catalog attestation, never
   from a sliding history window. (e) Red-first evidence: the proofs

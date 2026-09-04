@@ -62,8 +62,12 @@ pub struct Store<'a> {
 /// One store entry: grants on the left, its own knowledge on the right.
 #[must_use]
 pub fn store_entry(store: &Store<'_>) -> serde_json::Value {
+    // The topic it EMITS on beside the contract it provides: at pin
+    // `138fdce` an emit is covered by the topic's own grant (jinnd M2-K26
+    // (e); FINDINGS #49).
     let mut grants = vec![
         serde_json::json!(jinn_session::store_contract(store.store)),
+        serde_json::json!(jinn_session::EVENT_TOPIC),
         serde_json::json!(jinn_cron::CLOCK_CONTRACT),
     ];
     grants.extend(
@@ -118,6 +122,29 @@ mod tests {
             .expect("an fs grant");
         assert_eq!(fs["scope"], "sessions");
         assert_eq!(entry["config"]["data"]["dir"], "sessions");
+    }
+
+    /// The store EMITS `jinn:session/event`; at pin `138fdce` (jinnd
+    /// M2-K26 (e); FINDINGS #49) an emit is covered by the topic's own
+    /// grant, so every store entry — durable or not — carries it.
+    #[test]
+    fn a_store_entry_is_granted_the_event_topic_it_emits() {
+        for dir in [Some("sessions"), None] {
+            let entry = store_entry(&Store {
+                id: DEFAULT_ID,
+                package: FS_PACKAGE,
+                hash: "abc",
+                store: DEFAULT_STORE,
+                dir,
+                engines: &["default"],
+                poll_ms: 250,
+            });
+            let grants = entry["config"]["grants"].as_array().expect("grants");
+            assert!(
+                grants.contains(&serde_json::json!(jinn_session::EVENT_TOPIC)),
+                "the emitter is granted its topic (dir {dir:?}): {grants:?}"
+            );
+        }
     }
 
     #[test]

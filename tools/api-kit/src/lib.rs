@@ -54,9 +54,12 @@ pub fn api_entries(http: &str, status: &str, edit: &str, port: u16) -> Vec<serde
 }
 
 /// The settings seam's entries: the provider (granted `jinn:settings` to
-/// provide, `jinn:settings-store` to read the overlay, and `jinn:profile`
-/// scoped to exactly the entries it may patch — every namespace owner
-/// and the store) and the store (granted only what it provides). The
+/// provide, `jinn:settings-store` to read the overlay, the two topics it
+/// EMITS — `jinn:settings/changed` and `jinn:settings/refused`; at pin
+/// `138fdce` an emit is covered by the topic's own grant, jinnd M2-K26
+/// (e), FINDINGS #49 — and `jinn:profile` scoped to exactly the entries
+/// it may patch — every namespace owner and the store) and the store
+/// (granted only what it provides). The
 /// store's `overlays` is the hot layer's home in the document; the kit
 /// writes it empty.
 #[must_use]
@@ -66,10 +69,34 @@ pub fn settings_entries(provider: &str, store: &str, owners: &[&str]) -> Vec<ser
     vec![
         serde_json::json!({ "id": SETTINGS_ID, "package": "settings/jinn-settings-profile", "hash": provider,
           "config": { "grants": [jinn_settings::SETTINGS_CONTRACT, jinn_settings::STORE_CONTRACT,
+                                 jinn_settings::CHANGED_TOPIC, jinn_settings::REFUSED_TOPIC,
                                  { "contract": jinn_api::KERNEL_PROFILE_CONTRACT, "scope": scope }],
                       "data": { "store": STORE_ID } } }),
         serde_json::json!({ "id": STORE_ID, "package": "settings/jinn-settings-store", "hash": store,
           "config": { "grants": [jinn_settings::STORE_CONTRACT],
                       "data": { "overlays": {} } } }),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The settings provider EMITS `jinn:settings/changed` after a landed
+    /// patch and `jinn:settings/refused` after a refused one; at pin
+    /// `138fdce` (jinnd M2-K26 (e); FINDINGS #49) an emit is covered by the
+    /// topic's own grant, so the provider entry carries both topics.
+    #[test]
+    fn the_settings_provider_is_granted_the_two_topics_it_emits() {
+        let entries = settings_entries("abc", "def", &["cron-scheduler"]);
+        let provider = &entries[0];
+        assert_eq!(provider["id"], SETTINGS_ID);
+        let grants = provider["config"]["grants"].as_array().expect("grants");
+        for topic in [jinn_settings::CHANGED_TOPIC, jinn_settings::REFUSED_TOPIC] {
+            assert!(
+                grants.contains(&serde_json::json!(topic)),
+                "the provider is granted {topic}, a topic it emits: {grants:?}"
+            );
+        }
+    }
 }

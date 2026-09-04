@@ -113,11 +113,15 @@ pub fn build(artifacts: &Path, seam: &str, name: &str) -> String {
     hash
 }
 
-/// The cron seam's two profile entries with their grants. The listen
-/// grant (the job topic) and contract grants (`jinn:cron`, `jinn:fs`,
-/// `jinn:clock` — a bare clock grant holds the kernel's default 250 ms
-/// resolution floor) are the profile side's authority decisions —
-/// requests are not grants.
+/// The cron seam's two profile entries with their grants. The topic
+/// grants (the job topic: the scheduler's to FIRE, the consumer's to
+/// listen — at pin `138fdce` an emit is covered by the topic's own grant
+/// exactly as a subscription is, jinnd M2-K26 (e), FINDINGS #49) and
+/// contract grants (`jinn:cron`, `jinn:fs`, `jinn:clock` — a bare clock
+/// grant holds the kernel's default 250 ms resolution floor) are the
+/// profile side's authority decisions — requests are not grants. The
+/// scheduler's topic grants are DERIVED from its job table, so the two
+/// cannot drift.
 #[must_use]
 pub fn cron_entries(
     scheduler: &str,
@@ -125,6 +129,22 @@ pub fn cron_entries(
     every_ms: u64,
     tick_ms: u64,
 ) -> Vec<serde_json::Value> {
+    let jobs = serde_json::json!([
+        { "id": "health", "every-ms": every_ms, "topic": "cron:health" }
+    ]);
+    let mut scheduler_grants = vec![
+        serde_json::json!(jinn_cron::CRON_CONTRACT),
+        serde_json::json!("jinn:fs"),
+        serde_json::json!(jinn_cron::CLOCK_CONTRACT),
+        serde_json::json!(jinn_settings::SETTINGS_CONTRACT),
+        serde_json::json!(jinn_settings::CHANGED_TOPIC),
+    ];
+    scheduler_grants.extend(
+        jobs.as_array()
+            .expect("jobs")
+            .iter()
+            .map(|job| job["topic"].clone()),
+    );
     vec![
         // `jinn:settings` and the changed-topic listen: the scheduler
         // consumes its job table through the settings seam where one is
@@ -132,11 +152,8 @@ pub fn cron_entries(
         // resolve answers missing-dependency and the entry layer is the
         // whole truth. `entry-id` names this entry to the seam.
         serde_json::json!({ "id": "cron-scheduler", "package": "cron/cron-scheduler", "hash": scheduler,
-          "config": { "grants": [jinn_cron::CRON_CONTRACT, "jinn:fs", jinn_cron::CLOCK_CONTRACT,
-                                 jinn_settings::SETTINGS_CONTRACT, jinn_settings::CHANGED_TOPIC],
-                      "data": { "entry-id": "cron-scheduler", "tick-ms": tick_ms, "jobs": [
-                          { "id": "health", "every-ms": every_ms, "topic": "cron:health" }
-                      ] } } }),
+          "config": { "grants": scheduler_grants,
+                      "data": { "entry-id": "cron-scheduler", "tick-ms": tick_ms, "jobs": jobs } } }),
         serde_json::json!({ "id": "health-snapshot", "package": "cron/health-snapshot", "hash": snapshot,
           "config": { "grants": ["cron:health", jinn_cron::CRON_CONTRACT, "jinn:fs"],
                       "data": { "topic": "cron:health", "dir": "health", "nonce": 0 } } }),
@@ -161,4 +178,35 @@ pub fn flag(args: &[String], name: &str, usage: fn() -> !) -> Option<u64> {
     let position = args.iter().position(|arg| arg == name)?;
     let value = args.get(position + 1).unwrap_or_else(|| usage());
     Some(value.parse().unwrap_or_else(|_| usage()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The scheduler EMITS on every job's topic (the job table is operator
+    /// data, `cron:<job-id>` by default); at pin `138fdce` (jinnd M2-K26
+    /// (e); FINDINGS #49) an emit is covered by the topic's own grant, so
+    /// the scheduler entry carries every topic its table fires — derived
+    /// from the table, never a second list to drift.
+    #[test]
+    fn the_scheduler_is_granted_every_job_topic_it_fires() {
+        let entries = cron_entries("abc", "def", 60_000, 1_000);
+        let scheduler = &entries[0];
+        assert_eq!(scheduler["id"], "cron-scheduler");
+        let grants = scheduler["config"]["grants"].as_array().expect("grants");
+        let topics: Vec<&str> = scheduler["config"]["data"]["jobs"]
+            .as_array()
+            .expect("jobs")
+            .iter()
+            .map(|job| job["topic"].as_str().expect("a topic"))
+            .collect();
+        assert!(!topics.is_empty(), "the shipped table has a job");
+        for topic in topics {
+            assert!(
+                grants.contains(&serde_json::json!(topic)),
+                "the scheduler is granted {topic}, the topic it fires: {grants:?}"
+            );
+        }
+    }
 }
