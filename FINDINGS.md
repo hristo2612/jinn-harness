@@ -3554,3 +3554,95 @@ entry per delivery, with its outcome — which also carries #51's
 non-fatal half for free). Until then "registration order" is a sentence
 in a README, not a fact on the ledger.
 
+## 53. A replacement incarnation stays a STAGING seat after its commit, so every registration it makes AFTER activation — an `alarm-at` armed on a later call — is recorded, never routed: no row, no wake, and a run that polls its child never settles (found adopting M2-K26 at `138fdce`)
+
+**Grade: reproducible WITH A TRANSCRIPT, code-cited at the pin,
+packet-card-ready — Blocker-class for every provider that registers an
+effect after a config restart.** Hit in harness packet pin-bump 9
+(PLA-364) at pin `138fdce`, `tests/composition/tests/engines.rs`
+`a_child_sees_only_the_environment_its_grant_admits` and
+`a_child_writing_far_past_its_budget_puts_at_most_the_budget_on_the_wire`,
+every run, alone or under the workspace gate; both cases restart the
+spawn provider by a config edit and then start a run.
+
+The provider (`plugins/engines/jinn-engine-echo`, the spawning shape)
+spawns the child, records the run as started, and arms ONE `alarm-at`
+at `now + poll-ms` to drain and wait on it (`lib.rs`, the spawn path
+after `close-stdin`). Before the restart that is what the record shows
+in every other engines proof. After a `ConfigChanged` restart of the
+same entry, at `138fdce`, the run's rows are:
+
+```
+seq  entry              kind
+113  jinn-engine-spawn  FiberTransition { fiber: 9, Active → Unloading, ConfigChanged }
+114  jinn-engine-spawn  ServiceWithdrawn { service: jinn:engine.spawn }
+115  jinn-engine-spawn  FiberSuspended { retained: 0 }
+116  jinn-engine-spawn  FiberTransition { Unloading → Pending, ConfigChanged }
+117  jinn-engine-spawn  FiberTransition { Pending → Loading, ConfigChanged }
+118  jinn-engine-spawn  EffectRegistered { label: "jinn-engine-echo on duty" }   ← recorded at the commit (staged)
+119  jinn-engine-spawn  ServiceProvided { service: jinn:engine.spawn }           ← recorded at the commit (staged)
+120  jinn-engine-spawn  FiberTransition { Loading → Active, ConfigChanged }
+163  jinn-engine-spawn  ContractCall { contract: jinn:clock, operation: now }
+164  jinn-engine-spawn  ContractCall { contract: jinn:process, operation: spawn }
+165  jinn-engine-spawn  ProcessSpawned { handle: 1, command: "/usr/bin/env", pid: … }
+166  jinn-engine-spawn  ContractCall { contract: jinn:process, operation: close-stdin }
+186  jinn-engine-spawn  ProcessExited { handle: 1, code: 0 }
+…    (9,473 rows in all; not one more row for jinn-engine-spawn — no `EffectRegistered { label: "alarm at …" }`, no `AlarmWake`)
+
+thread 'a_child_sees_only_the_environment_its_grant_admits' panicked at tests/composition/tests/engines.rs:104:9:
+run spawn-1 on spawn never settled (last state "running")
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 12 filtered out; finished in 152.74s
+```
+
+The child ran and exited (`ProcessExited`, code 0). The provider's
+`alarm-at` after the spawn left NOTHING: no `EffectRegistered { "alarm
+at …" }`, no refusal, no wake — a healthy `alarm-at` is a registration
+row and then an `AlarmWake`, as every cron proof shows. So
+`poll_children` never ran, the run stayed `running`, and the proof's
+90 s deadline ended it. The same case at pin `b1dbe8f` (harness `main`)
+settles — `test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 12 filtered out; finished in 168.81s`, the harness `main` checkout at pin `b1dbe8f`, the same daemon build lane.
+
+**The mechanism, by code at `138fdce` (a reading, standing order 1).**
+M2-K26 (b) makes a replacement's activation a STAGING seat:
+`crates/jinnd-wasm/src/lane.rs:167,182` — `let replacing =
+self.slot.ever_installed(); … Seat { …, staging: replacing }`. The flag
+is a plain field of the `Seat`, and NOTHING clears it after the commit:
+no assignment to `staging` exists anywhere in `crates/jinnd-wasm/src`
+besides that construction. Every registration surface branches on it
+for the LIFE of the instance — `crates/jinnd-wasm/src/hostcaps.rs:192`
+(an alarm under `staging` is pushed onto the activation outcome and
+answered `Ok(0)`, never armed), `crates/jinnd-wasm/src/surfaces.rs:75`
+(`listen`) and `:135` (`provide`, recorded, not routed). At the commit
+the activation OUTCOME's registrations are installed (the "on duty" and
+`ServiceProvided` rows above land there), which is why a provider that
+registers everything in `activate` — the cron scheduler's
+`alarm-every`, the settings provider's `provide`, the transport's
+`listen`s — is unaffected and the cron, settings, sessions, todos,
+workflows and ui suites pass at the pin. A provider that registers on a
+LATER call — the echo/spawn engine's per-run poll alarm, the claude and
+codex providers' per-run alarms (`jinn-engine-claude`,
+`jinn-engine-codex`: `alarm_at` in `run`), any guest that `listen`s or
+`provide`s on demand — silently loses every registration it makes after
+a config restart. A FIRST activation is unchanged (`replacing` is
+false), which is why a fresh boot never shows it.
+
+**Why this is Blocker-class.** R9, verbatim: no silent replacement. The
+guest is answered `Ok(0)` for an alarm the kernel will never fire, and
+the record shows nothing — not a refusal, not a registration. Law 2 is
+broken on the one path that M2-K26 exists to make honest, and the
+window is not a window: it is the rest of the incarnation's life.
+Every config edit of an engine provider (a model list, a poll period, a
+CLI path — `PATCH /v1/profile/entries/<engine>`) leaves that provider
+unable to finish a run until the daemon restarts.
+
+**The capability shape that would retire it.** The staged seat goes
+LIVE at the commit: `commit_staged` clears the seat's `staging` (or the
+flag lives on the slot/outcome and is consulted only while the
+activation outcome is open), so a registration after `activate` routes
+exactly as on a first activation. A verifier case: a replacement
+incarnation arms an alarm in a post-activation call and the wake lands
+(the M2-K26 lane's fixture, one more step). Until then: the two engines
+proofs are RED at this pin by the kernel and stay red — the harness
+does not weaken a proof of a working seam into a NOT-YET on its own
+authority; the ruling (adopt with the red named, or hold the pin for
+the fix) is the COO's.

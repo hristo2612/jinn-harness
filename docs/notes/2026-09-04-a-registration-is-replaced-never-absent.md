@@ -224,6 +224,28 @@ names the order taken. M2-K26 names sibling order out of scope and adds
 nothing to `DispatchTrace`; #52 stays open, its NOT-YET assertion as
 written.
 
+## What the pin broke — FINDINGS #53
+
+The final gate at the packet head is RED on two engines proofs
+(`a_child_sees_only_the_environment_its_grant_admits`,
+`a_child_writing_far_past_its_budget_puts_at_most_the_budget_on_the_wire`):
+each restarts the spawn provider by a config edit and then runs a
+child, and the run never settles. The ledger shows the child exit
+(`ProcessExited { code: 0 }`) and NOT ONE row for the provider's
+`alarm-at` after the spawn — no registration, no refusal, no wake. By
+code at `138fdce`: a replacement activates as a staging seat (M2-K26
+(b), `lane.rs:182 staging: replacing`) and nothing clears the flag at
+the commit, so every registration surface (`hostcaps.rs:192` alarms,
+`surfaces.rs:75` listen, `:135` provide) records-not-routes for the
+rest of the incarnation's life. Providers that register everything in
+`activate` are unaffected (cron, settings, the transport — their suites
+are green); a provider that arms an alarm per run loses it after any
+config edit. Filed as FINDINGS #53, Blocker-class, with the transcript
+and the citations; not patched, not vendored, not worked around
+(standing order 1). The two proofs stay red at this head — turning a
+proof of a working seam into a NOT-YET is a ruling, not an
+implementer's call — so the packet lands or holds on the COO's word.
+
 ## What did not move
 
 - **An `emit`-mode notification inside the window is still lost** and

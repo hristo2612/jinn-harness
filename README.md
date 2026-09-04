@@ -43,7 +43,13 @@ pill and keeps #37
 What it is NOT: an `emit`-mode notification inside the window (still
 lost, traced `listeners: 0` — the card's named limit); a transport
 policy for a `failed` validator; #51's non-fatal half; #52's reading;
-the soak, untouched on `3a8e5c03` until the 2026-09-04 audit.
+the soak, untouched on `3a8e5c03` until the 2026-09-04 audit. **What
+the pin BROKE, filed as FINDINGS #53 (Blocker-class):** a replacement
+incarnation stays a staging seat after its commit, so an `alarm-at`
+armed on a later call is recorded and never fired — the two engines
+proofs that restart the spawn provider by a config edit and then run a
+child are RED at this pin (`run never settled`), by the kernel, and
+stay red until the fix lands.
 
 Pin-bump 8 — kernel pin `b1dbe8f` (M2-K25). **A delivery spends its
 listener's clock, and a dead instance is a failed fiber.** The `ui`
