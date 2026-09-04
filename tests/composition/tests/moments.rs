@@ -1,5 +1,6 @@
 //! THE MOMENTS and the JS-in-WASM extension tier (harness packet UI-2,
-//! PLA-353; `docs/plans/ui-malleability-arc.md` §9.3, proofs 1–8 and 10).
+//! PLA-353; `docs/plans/ui-malleability-arc.md` §9.3, proofs 1–8 and 10;
+//! proof 7 flipped and proof 7b added by pin-bump 8, PLA-361).
 //! Every proof boots the `ui` profile through the REAL pinned daemon
 //! (AGENTS.md standing order 3) — the kit-built profile mounting the Boa
 //! engine provider as `ext-green` (§6) — and drives the transport over
@@ -76,6 +77,16 @@ const UNDEFINED_SOURCE: &str = "(p) => undefined";
 const BROKEN_SOURCE: &str = "(p) => { this is not javascript";
 /// A source that loops forever on delivery (proof 7).
 const LOOPING_SOURCE: &str = "(p) => { while (true) {} }";
+const LOOPING_ID: &str = "ext-looping";
+/// An entry declaring a zero budget (proof 7b, second half).
+const ZERO_ID: &str = "ext-zero";
+/// The budgets proof 7b declares, in the store's own fuel (the kernel's
+/// `delivery-budget { fuel }` at pin `b1dbe8f`, M2-K25 (b)): generous on
+/// the fold, small on the looping listener.
+const GREEN_FUEL: u64 = 4_000_000_000;
+const LOOPING_FUEL: u64 = 50_000_000;
+/// Half the guest deadline: a budgeted death lands far under it.
+const BUDGET_BOUND: Duration = Duration::from_millis(2_500);
 
 /// A source whose ACTIVATION is slow by construction: a bounded counting
 /// loop under fuel, run when the source expression is evaluated, then
@@ -113,6 +124,14 @@ fn ext_entry(
                         "config": { "grants": grants,
                                     "data": { "topics": topics, "source": source,
                                               "origin": origin } } })
+}
+
+/// The entry's `budget`: the kernel's `delivery-budget` record spelled on
+/// `config.data` (`{ "fuel": <u64> }`), which the provider translates into
+/// `events.listen-within` for every topic it listens on (pin-bump 8).
+fn budgeted(mut entry: serde_json::Value, fuel: u64) -> serde_json::Value {
+    entry["config"]["data"]["budget"] = serde_json::json!({ "fuel": fuel });
+    entry
 }
 
 /// A NOT-YET assertion (§9.7 amendment 8(b)): asserts the pinned kernel's
@@ -371,21 +390,22 @@ fn one_trace(daemon: &Daemon, seq: u64, topic: &str) -> serde_json::Value {
 }
 
 /// A request that tolerates the transport dying mid-answer or never
-/// answering: the elapsed time and the status line if one came, `None`
-/// on a closed socket, a refused connect, or `wait` elapsing.
+/// answering: the elapsed time, the status line if one came (`None` on a
+/// closed socket, a refused connect, or `wait` elapsing), and the raw
+/// wire as far as it got.
 fn tolerant(
     port: u16,
     method: &str,
     path: &str,
     body: &str,
     wait: Duration,
-) -> (Duration, Option<u16>) {
+) -> (Duration, Option<u16>, String) {
     use std::io::{Read as _, Write as _};
     let started = Instant::now();
     let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
     let Ok(mut stream) = std::net::TcpStream::connect_timeout(&address, Duration::from_secs(2))
     else {
-        return (started.elapsed(), None);
+        return (started.elapsed(), None, String::new());
     };
     stream.set_read_timeout(Some(wait)).expect("read timeout");
     let wire = format!(
@@ -394,15 +414,16 @@ fn tolerant(
         body.len()
     );
     if stream.write_all(wire.as_bytes()).is_err() {
-        return (started.elapsed(), None);
+        return (started.elapsed(), None, String::new());
     }
     let mut raw = Vec::new();
     let _ = stream.read_to_end(&mut raw);
-    let status = String::from_utf8_lossy(&raw)
+    let raw = String::from_utf8_lossy(&raw).into_owned();
+    let status = raw
         .strip_prefix("HTTP/1.1 ")
         .and_then(|rest| rest.get(..3))
         .and_then(|code| code.parse().ok());
-    (started.elapsed(), status)
+    (started.elapsed(), status, raw)
 }
 
 #[test]
@@ -865,86 +886,319 @@ fn an_extension_is_granted_its_topic_and_nothing_else() {
     daemon.interrupt();
 }
 
-/// Proof 7 is a MEASUREMENT with a NOT-YET clause (ruling 4): the walk
-/// costs the guest deadline, and what happens to the TRANSPORT — which
-/// emits inside its own `handle-event`, on the same clock — is recorded,
-/// never asserted in advance. If its instance dies on the walk's
-/// deadline, that transcript is KG-2's and the packet lands NOT-YET on
-/// "a bad extension costs its own slot, not the transport".
+/// Proof 7, FLIPPED at pin `b1dbe8f` (jinnd M2-K25; harness pin-bump 8):
+/// the #48 shape exactly — a `while (true) {}` source on
+/// `jinn:ui/before-send`, plain `listen`, no budget — and the intended
+/// assertion at last. The walk costs the LISTENER's guest deadline and
+/// the transport is charged nothing (M2-K25 (a)): it answers the moment
+/// with the payload unmodified and `failures: 1` folded out, its next
+/// `GET /v1/health` answers within bound, its fiber has NO transition
+/// and its incarnation is what it was. The looping extension is `failed`
+/// on the record with its OWN row — the deadline named under its
+/// attribution, then `Active → Unloading → Failed` under `BodyFaulted`
+/// (M2-K25 (c); the fatal half of #51). R11 in both halves.
 #[test]
-fn a_looping_extension_costs_the_walk_the_guest_deadline_and_the_transport_s_fate_is_recorded() {
+fn a_looping_extension_costs_its_own_slot_and_not_the_transport() {
     let Some(binary) = gate() else { return };
     let (root, port) = fresh_ui_root("moments-loop");
-    let looping = extension(&root, "ext-looping", &[TOPIC_BEFORE_SEND], LOOPING_SOURCE);
+    let looping = extension(&root, LOOPING_ID, &[TOPIC_BEFORE_SEND], LOOPING_SOURCE);
     edit_before_boot(&root, |document| {
         remove_entry(document, GREEN_ID);
         push_entry(document, looping);
     });
     let daemon = Daemon::boot_operator(binary, &root);
     daemon.await_ready();
-    daemon.eventually("ext-looping to settle", || settled(&daemon, "ext-looping"));
-    let (_, transport_before) = {
-        let read = get(port, &format!("/v1/plugins/{CATALOG}/{TRANSPORT}"));
-        (state(&read.body), read.body["incarnation"].as_u64())
-    };
+    daemon.eventually(&format!("{LOOPING_ID} to settle"), || {
+        settled(&daemon, LOOPING_ID)
+    });
+    let transport_before = get(port, &format!("/v1/plugins/{CATALOG}/{TRANSPORT}")).body;
+    assert_eq!(state(&transport_before), "active");
     let baseline = last_seq(&daemon);
 
-    let (elapsed, status) = tolerant(port, "POST", SEND_PATH, SEND_BODY, Duration::from_secs(60));
-    // Let the kernel finish whatever it is doing to both fibers.
-    std::thread::sleep(Duration::from_secs(2));
+    let (elapsed, status, raw) =
+        tolerant(port, "POST", SEND_PATH, SEND_BODY, Duration::from_secs(60));
+    // The walk costs the listener's deadline — its bound under a plain
+    // `listen` — and nothing beyond it: the emitter's clock was parked.
+    assert!(
+        elapsed >= GUEST_DEADLINE - Duration::from_millis(500)
+            && elapsed < GUEST_DEADLINE + Duration::from_secs(5),
+        "the walk costs the listener's guest deadline and no more: {elapsed:?}"
+    );
+    assert_eq!(
+        status,
+        Some(200),
+        "the transport answered the moment: {raw}"
+    );
+    let body = raw.split_once("\r\n\r\n").map_or("", |(_, body)| body);
+    assert_eq!(
+        body, SEND_BODY,
+        "the only listener failed contained, so the payload is answered unmodified"
+    );
+    daemon.eventually("the walk on the ledger", || {
+        !traces(&daemon, baseline).is_empty()
+    });
+    let trace = one_trace(&daemon, baseline, TOPIC_BEFORE_SEND);
+    assert_eq!(trace["listeners"], 1, "{trace}");
+    assert_eq!(
+        trace["failures"], 1,
+        "one contained failure folded out: {trace}"
+    );
+
+    // The transport after the walk: answering within bound, no
+    // transition, no deadline row, the same incarnation.
+    let (health_elapsed, health_status, _) =
+        tolerant(port, "GET", "/v1/health", "", Duration::from_secs(10));
+    assert_eq!(health_status, Some(200), "GET /v1/health after the walk");
+    assert!(
+        health_elapsed < Duration::from_secs(2),
+        "the transport answers within bound after the walk: {health_elapsed:?}"
+    );
+    daemon.eventually(&format!("{LOOPING_ID} to fail on the record"), || {
+        state(&get(port, &format!("/v1/plugins/{CATALOG}/{LOOPING_ID}")).body) == "failed"
+    });
     let rows = daemon.ledger_rows();
-    let after = |id: &str| -> Vec<String> {
+    let after = |id: &str| -> Vec<(u64, String, serde_json::Value)> {
         rows.iter()
             .filter(|row| row.seq > baseline && row.entry.as_deref() == Some(id))
-            .map(|row| format!("{:>5} {}", row.seq, row.kind))
+            .map(|row| {
+                let (name, fields) = kind_of(row);
+                (row.seq, name, fields)
+            })
             .collect()
     };
     let transport_rows = after(TRANSPORT);
-    let looping_rows = after("ext-looping");
-    let deadline_rows: Vec<String> = rows
+    assert!(
+        !transport_rows
+            .iter()
+            .any(|(_, name, _)| name == "FiberTransition"),
+        "the transport's fiber has no transition: {transport_rows:?}"
+    );
+    let deadline_rows: Vec<(u64, Option<String>, String)> = rows
         .iter()
         .filter(|row| row.seq > baseline && row.kind.to_ascii_lowercase().contains("deadline"))
-        .map(|row| format!("{:>5} {:?} {}", row.seq, row.entry, row.kind))
+        .map(|row| (row.seq, row.entry.clone(), row.kind.clone()))
         .collect();
-    let transport_failed = transport_rows
+    assert!(
+        !deadline_rows.is_empty()
+            && deadline_rows
+                .iter()
+                .all(|(_, entry, _)| entry.as_deref() == Some(LOOPING_ID)),
+        "every deadline row names the listener and never the transport: {deadline_rows:?}"
+    );
+    let transport_after = get(port, &format!("/v1/plugins/{CATALOG}/{TRANSPORT}")).body;
+    assert_eq!(state(&transport_after), "active");
+    assert_eq!(
+        transport_after["incarnation"], transport_before["incarnation"],
+        "the transport's incarnation is what it was"
+    );
+
+    // The listener: its own row, then failed under the new cause.
+    let looping_rows = after(LOOPING_ID);
+    let errors: Vec<String> = looping_rows
         .iter()
-        .any(|row| row.contains(r#""to":"Failed""#) || row.contains(r#""to":"Unloading""#));
-    // Nothing after the walk trusts the transport to answer: the socket
-    // may accept (the kernel holds the listener) while no incarnation
-    // serves it, so every read here is bounded and the state comes off
-    // the LEDGER, not off the API.
-    let still_listening = listening(port);
-    let health = tolerant(port, "GET", "/v1/health", "", Duration::from_secs(10));
-    let transport_state: Vec<String> = rows
+        .filter(|(_, name, _)| name == "ErrorRecorded")
+        .map(|(_, _, fields)| fields["error"]["message"].as_str().unwrap_or("").to_owned())
+        .collect();
+    assert!(
+        errors
+            .iter()
+            .any(|message| message == "guest exceeded its call deadline"),
+        "the deadline is the listener's own row: {looping_rows:?}"
+    );
+    let transitions: Vec<(String, String, String)> = looping_rows
         .iter()
-        .filter(|row| row.seq > baseline && row.entry.as_deref() == Some(TRANSPORT))
-        .filter(|row| row.kind.contains("FiberTransition"))
-        .map(|row| row.kind.clone())
+        .filter(|(_, name, _)| name == "FiberTransition")
+        .map(|(_, _, fields)| {
+            (
+                fields["from"].as_str().unwrap_or("").to_owned(),
+                fields["to"].as_str().unwrap_or("").to_owned(),
+                fields["cause"].as_str().unwrap_or("").to_owned(),
+            )
+        })
         .collect();
-    let transport_after = (still_listening, health, transport_state);
-    let log_deadlines: Vec<String> = daemon
-        .log()
-        .lines()
-        .filter(|line| line.to_ascii_lowercase().contains("deadline"))
-        .map(ToOwned::to_owned)
-        .collect();
+    assert_eq!(
+        transitions,
+        [
+            ("Active".to_owned(), "Unloading".to_owned(), "BodyFaulted".to_owned()),
+            ("Unloading".to_owned(), "Failed".to_owned(), "BodyFaulted".to_owned()),
+        ],
+        "the listener's fiber fails its own cell under BodyFaulted, and rests there (R9): {looping_rows:?}"
+    );
     println!(
-        "proof 7: the looping walk took {elapsed:?} (guest deadline {GUEST_DEADLINE:?}); the moment's answer: {status:?}\n  after the walk (listening, a bounded GET /v1/health as (elapsed, status), the transport's transitions): {transport_after:?} (before: incarnation {transport_before:?})\n  transport rows after the walk:\n    {}\n  ext-looping rows after the walk:\n    {}\n  deadline rows: {deadline_rows:?}\n  daemon log lines naming a deadline: {log_deadlines:?}",
-        transport_rows.join("\n    "),
-        looping_rows.join("\n    ")
+        "proof 7: the looping walk took {elapsed:?} (guest deadline {GUEST_DEADLINE:?}); the moment answered {status:?} unmodified with {trace}\n  the transport after the walk: GET /v1/health {health_status:?} in {health_elapsed:?}, incarnation {:?} → {:?}, its rows: {transport_rows:?}\n  {LOOPING_ID} after the walk: errors {errors:?}, transitions {transitions:?}\n  deadline rows: {deadline_rows:?}\nproof 7: the transport survived the walk — a bad extension costs its own slot (FINDINGS #48 closed at this pin)",
+        transport_before["incarnation"], transport_after["incarnation"]
+    );
+    daemon.interrupt();
+}
+
+/// Proof 7b (pin-bump 8, the K25 card's harness consequence 2): the
+/// entry's `budget` — `config.data.budget: { fuel }`, the kernel's
+/// `delivery-budget` record spelled on the entry — is translated by the
+/// Boa provider into `events.listen-within`, so a delivery that burns
+/// past it ends the LISTENER's instance deterministically and far under
+/// the deadline, on its own row (`guest exhausted its delivery fuel
+/// budget`); a budgeted fold under its budget folds exactly as before,
+/// and the walk continues past the contained death (R9). Second half:
+/// a zero budget is refused at `listen`, `invalid`, on the record,
+/// attributed to the declaring entry — the provider translates it
+/// faithfully and never clamps — and its siblings are untouched.
+#[test]
+fn an_extension_s_budget_is_a_listen_within_and_a_looping_delivery_ends_at_its_fuel() {
+    let Some(binary) = gate() else { return };
+    let (root, port) = fresh_ui_root("moments-budget");
+    let green = budgeted(
+        extension(&root, GREEN_ID, &[TOPIC_BEFORE_SEND], GREEN_SOURCE),
+        GREEN_FUEL,
+    );
+    let looping = budgeted(
+        extension(&root, LOOPING_ID, &[TOPIC_BEFORE_SEND], LOOPING_SOURCE),
+        LOOPING_FUEL,
+    );
+    edit_before_boot(&root, |document| {
+        remove_entry(document, GREEN_ID);
+        push_entry(document, green);
+        push_entry(document, looping);
+    });
+    let daemon = Daemon::boot_operator(binary, &root);
+    daemon.await_ready();
+    for id in [GREEN_ID, LOOPING_ID] {
+        daemon.eventually(&format!("{id} to settle"), || settled(&daemon, id));
+        let read = get(port, &format!("/v1/plugins/{CATALOG}/{id}"));
+        assert_eq!(
+            state(&read.body),
+            "active",
+            "a budget is accepted at activation: {}",
+            read.raw
+        );
+    }
+    // A budgeted registration is a listen on the record, the same rows.
+    let mut expected: Vec<String> = BREADCRUMBS.iter().map(|s| (*s).to_owned()).collect();
+    expected.push(source_breadcrumb(GREEN_SOURCE));
+    expected.push(format!("listen {TOPIC_BEFORE_SEND}"));
+    assert_eq!(labels(&daemon, GREEN_ID), expected);
+    let baseline = last_seq(&daemon);
+
+    let (elapsed, status, raw) =
+        tolerant(port, "POST", SEND_PATH, SEND_BODY, Duration::from_secs(60));
+    assert_eq!(
+        status,
+        Some(200),
+        "the transport answered the moment: {raw}"
+    );
+    let body: serde_json::Value =
+        serde_json::from_str(raw.split_once("\r\n\r\n").map_or("", |(_, body)| body))
+            .expect("a JSON answer");
+    assert_eq!(body["text"], "hello 🟢", "the budgeted fold folds: {raw}");
+    assert!(
+        elapsed < BUDGET_BOUND,
+        "a budgeted death lands far under the deadline ({GUEST_DEADLINE:?}): {elapsed:?}"
+    );
+    daemon.eventually("the walk on the ledger", || {
+        !traces(&daemon, baseline).is_empty()
+    });
+    let trace = one_trace(&daemon, baseline, TOPIC_BEFORE_SEND);
+    assert_eq!(trace["listeners"], 2, "{trace}");
+    assert_eq!(trace["failures"], 1, "{trace}");
+    daemon.eventually(&format!("{LOOPING_ID} to fail on the record"), || {
+        state(&get(port, &format!("/v1/plugins/{CATALOG}/{LOOPING_ID}")).body) == "failed"
+    });
+    let rows = daemon.ledger_rows();
+    let looping_rows: Vec<(String, serde_json::Value)> = rows
+        .iter()
+        .filter(|row| row.seq > baseline && row.entry.as_deref() == Some(LOOPING_ID))
+        .map(kind_of)
+        .collect();
+    let errors: Vec<String> = looping_rows
+        .iter()
+        .filter(|(name, _)| name == "ErrorRecorded")
+        .map(|(_, fields)| fields["error"]["message"].as_str().unwrap_or("").to_owned())
+        .collect();
+    assert_eq!(
+        errors,
+        ["guest exhausted its delivery fuel budget"],
+        "the budget's own message on the listener's own row: {looping_rows:?}"
     );
     assert!(
-        elapsed >= GUEST_DEADLINE - Duration::from_millis(500),
-        "the walk cost the guest deadline: {elapsed:?}"
+        looping_rows
+            .iter()
+            .any(|(name, fields)| name == "FiberTransition"
+                && fields["to"] == "Failed"
+                && fields["cause"] == "BodyFaulted"),
+        "failed under BodyFaulted: {looping_rows:?}"
     );
-    let transport_answers = transport_after.1 .1 == Some(200);
-    if transport_failed || !still_listening || !transport_answers {
-        println!(
-            "proof 7: THE TRANSPORT DIED ON THE WALK'S DEADLINE — KG-2 as read (M2-K25); the packet lands NOT-YET on \"a bad extension costs its own slot, not the transport\""
-        );
-    } else {
-        println!("proof 7: the transport survived the walk's deadline");
+    assert!(
+        !rows.iter().any(|row| row.seq > baseline
+            && row.entry.as_deref() == Some(TRANSPORT)
+            && row.kind.contains("FiberTransition")),
+        "the transport has no transition"
+    );
+    // The walk continued past the contained death, and the budgeted
+    // survivor is unaffected: the next moment folds with one listener.
+    let second = last_seq(&daemon);
+    let answer = send(port);
+    assert_eq!(answer.status, 200, "{}", answer.raw);
+    assert_eq!(answer.body["text"], "hello 🟢");
+    daemon.eventually("the second walk on the ledger", || {
+        !traces(&daemon, second).is_empty()
+    });
+    let second_trace = one_trace(&daemon, second, TOPIC_BEFORE_SEND);
+    assert_eq!(second_trace["listeners"], 1, "{second_trace}");
+    assert_eq!(second_trace["failures"], 0, "{second_trace}");
+    assert_eq!(
+        state(&get(port, &format!("/v1/plugins/{CATALOG}/{GREEN_ID}")).body),
+        "active"
+    );
+    println!(
+        "proof 7b: budgeted walk took {elapsed:?} (fuel {LOOPING_FUEL} on the looping listener, {GREEN_FUEL} on the fold); {trace}; {LOOPING_ID} rows {looping_rows:?}; the next walk {second_trace}"
+    );
+    daemon.interrupt();
+
+    // Second half: zero is refused at `listen`, typed, on the record,
+    // attributed to the entry that declared it; ext-green (unbudgeted)
+    // is untouched and the moment still folds.
+    let (root, port) = fresh_ui_root("moments-budget-zero");
+    let zero = budgeted(
+        extension(&root, ZERO_ID, &[TOPIC_BEFORE_SEND], GREEN_SOURCE),
+        0,
+    );
+    edit_before_boot(&root, |document| push_entry(document, zero));
+    let daemon = Daemon::boot_operator(binary, &root);
+    daemon.await_ready();
+    for id in [GREEN_ID, ZERO_ID] {
+        daemon.eventually(&format!("{id} to settle"), || settled(&daemon, id));
     }
+    let zero_read = get(port, &format!("/v1/plugins/{CATALOG}/{ZERO_ID}"));
+    assert_eq!(state(&zero_read.body), "failed", "{}", zero_read.raw);
+    let zero_errors: Vec<String> = daemon
+        .ledger_rows()
+        .iter()
+        .filter(|row| row.entry.as_deref() == Some(ZERO_ID))
+        .map(kind_of)
+        .filter(|(name, _)| name == "ErrorRecorded")
+        .map(|(_, fields)| fields["error"]["message"].as_str().unwrap_or("").to_owned())
+        .collect();
+    assert!(
+        zero_errors
+            .iter()
+            .any(|message| message == "delivery fuel budget must be non-zero"),
+        "the kernel's refusal, on the declaring entry's own row: {zero_errors:?}"
+    );
+    let crumbs = labels(&daemon, ZERO_ID);
+    assert!(
+        crumbs.contains(&"js evaluated".to_owned())
+            && !crumbs.iter().any(|label| label.starts_with("listen ")),
+        "the refusal is the listen's, after the source evaluated: {crumbs:?}"
+    );
+    assert_eq!(
+        state(&get(port, &format!("/v1/plugins/{CATALOG}/{GREEN_ID}")).body),
+        "active"
+    );
+    let answer = send(port);
+    assert_eq!(answer.status, 200, "{}", answer.raw);
+    assert_eq!(answer.body["text"], "hello 🟢", "the sibling folds");
+    println!(
+        "proof 7b (second half): a zero budget is refused at listen — {ZERO_ID} failed with {zero_errors:?}; ext-green folds beside it"
+    );
     daemon.interrupt();
 }
 
