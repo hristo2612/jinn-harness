@@ -18,10 +18,10 @@ fn the_boa_provider_imports_exactly_the_four_plugin_world_interfaces() {
     assert_eq!(
         sorted,
         [
-            "jinn:plugin/effects@0.11.0",
-            "jinn:plugin/events@0.11.0",
-            "jinn:plugin/services@0.11.0",
-            "jinn:plugin/types@0.11.0",
+            "jinn:plugin/effects@0.12.0",
+            "jinn:plugin/events@0.12.0",
+            "jinn:plugin/services@0.12.0",
+            "jinn:plugin/types@0.12.0",
         ],
         "the component's imports, in declaration order: {imports:?}"
     );
