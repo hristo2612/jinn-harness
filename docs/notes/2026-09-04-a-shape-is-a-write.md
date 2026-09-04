@@ -256,3 +256,60 @@ is"), none an addition. The TypeScript tree carries no line ceiling
   intents** — the bundle's own OUT list, unchanged.
 - **The soak and Hristo's instance** — untouched by this build; the
   refresh and the soak bump are the COO's separate steps after the land.
+
+## Round 2 — the two Taste fixes, and nothing else
+
+The verifier's round-1 verdict (REWORK, 0 Blockers, 2 Majors) named two
+Jinn Taste breaches on a functionally green head, and the COO ruled the
+round a DELTA of exactly those two. Neither touches the pin, a route, a
+proof, or a finding.
+
+**Taste §2 — `web/src/routes/settings/plugins/actions.tsx`.** The four
+action pills were a 22 px caption pill and the form's inputs a 30 px
+well with a 1 px inset shadow at rest. Both now wear the settings
+page's OWN tokens, nothing new: the 34 px pill button the page already
+uses for its actions (`config-conflict-notice.tsx`, `engines/legacy-row.tsx`)
+and `CONTROL_CLASS` from `routes/settings/shared.tsx` at the
+`h-[34px]` the model-map editor sets on it — no border, no shadow at
+rest, the accent focus ring its only ring. The Apply pill keeps its
+accent wash. Red-first, in `plugin-row.test.tsx` (the proof commit
+precedes the fix in git):
+
+```
+ FAIL  src/routes/settings/plugins/__tests__/plugin-row.test.tsx > an extension row > stands every action and form control at the settings page's 34 px control height, no hairline at rest
+AssertionError: expected 'inline-flex h-[22px] items-center rou…' to contain 'h-[34px]'
+ Test Files  1 failed (1)
+      Tests  1 failed | 7 passed (8)
+```
+
+Green after the fix: `Tests  8 passed (8)`. Measured in the live DOM on
+the suite's own kit served by the pinned archive-built daemon
+(`cargo run -p ui-kit -- kit`, a throwaway root, loopback port, torn
+down after), the ext-green row with its Install form open — every
+control `h=34.0`, `box-shadow: none`, `border: 0px`: the four action
+pills, the five inputs, Apply, Cancel; at 1440 × 900 and at 390 × 844,
+where `scrollWidth` is 390. The two screenshots are on the Todo
+(`round2-plugin-row-desktop-1440.png`, `round2-plugin-row-mobile-390.png`).
+
+**Taste §1 — `tests/composition/tests/profile_admin.rs`.** The three
+`// -----` section dividers (lines 23, 111, 335) are deleted, each with
+the blank line it left behind so rustfmt's one-blank-line bound holds;
+no other byte in the file moves. The suite re-run against the pinned
+daemon (`JINND_DIR` at a checkout holding `f8b285b`, the daemon
+materialised from `git archive` as always):
+
+```
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 68.33s
+```
+
+A first re-run with a RELATIVE `JINND_DIR` answered `5 passed` in
+0.01 s — the gate's loud SKIP, every proof vacuous — and is not
+evidence; it is named here so the next round does not mistake it for
+a pass.
+
+**Meter.** The UI-2 meter's paths are Rust production paths; the
+TypeScript tree and `tests/composition/**` are outside it by its rule.
+**Round-2 production delta on the UI-2 meter: 0** (360 binding, unchanged
+at 351 read). Beside the meter: `actions.tsx` +6 −3 (an import line, a
+two-line comment, the two token strings), `plugin-row.test.tsx` +14
+(the proof), `profile_admin.rs` −6.
