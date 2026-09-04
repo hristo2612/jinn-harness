@@ -8,39 +8,18 @@
  * now ends the extension's own instance, and the entry may declare a budget.
  * "Refuse a moment mid-restart · #47" left at pin 138fdce (jinnd M2-K26,
  * harness pin-bump 9): a moment inside an extension's restart window is
- * refused typed `restarting`, never answered unmodified.
+ * refused typed `restarting`, never answered unmodified. The five #37 items
+ * (install, remove, disable, widen topics, swap engine) left at pin f8b285b
+ * (jinnd M2-K23, harness pin-bump 10): each is one `jinn:profile-admin` write
+ * from the transport, live on the row (`actions.tsx`, the switch). The list
+ * is EMPTY at this pin; the mechanism stays for the next finding.
  */
-export const NOT_YET: ReadonlyArray<{ label: string; reason: string }> = [
-  {
-    label: "Install extension · #37",
-    reason:
-      "FINDINGS #37 / KG-1 (PLA-348): install needs adding an entry with grants. Waits on jinnd M2-K23.",
-  },
-  {
-    label: "Remove extension · #37",
-    reason:
-      "FINDINGS #37 / KG-1 (PLA-348): remove needs deleting an entry. Waits on jinnd M2-K23.",
-  },
-  {
-    label: "Disable extension · #37",
-    reason:
-      "FINDINGS #37 / KG-1 (PLA-348): disable needs changing the entry's disabled state. Waits on jinnd M2-K23.",
-  },
-  {
-    label: "Widen topics · #37",
-    reason:
-      "FINDINGS #37 / KG-1 (PLA-348): widening topics also widens grants. Waits on jinnd M2-K23.",
-  },
-  {
-    label: "Swap engine · #37",
-    reason:
-      "FINDINGS #37 / KG-1 (PLA-348): an engine swap changes the entry's package and hash. Waits on jinnd M2-K23.",
-  },
-]
+export const NOT_YET: ReadonlyArray<{ label: string; reason: string }> = []
 
 /** The tier's NOT-YET items for one extension row: disabled pills, the finding
  *  on each as its title, the number in the label so it is visible without one. */
 export function NotYet({ id }: { id: string }) {
+  if (NOT_YET.length === 0) return null
   return (
     <span data-testid={`plugin-not-yet-${id}`} className="flex flex-wrap items-center gap-1.5 pt-0.5">
       {NOT_YET.map((item) => (

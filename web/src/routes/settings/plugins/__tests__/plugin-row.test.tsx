@@ -14,13 +14,13 @@ import { PluginRow, type CatalogRow } from '../plugin-row'
  * mechanism stays for future items and is empty at this pin. */
 
 vi.mock('@/lib/api', () => ({ api: { pluginHistory: vi.fn() } }))
-const admin = {
+const admin = vi.hoisted(() => ({
   addEntry: vi.fn(),
   removeEntry: vi.fn(),
   setDisabled: vi.fn(),
   setGrants: vi.fn(),
   swapPlugin: vi.fn(),
-}
+}))
 vi.mock('@/lib/profile-admin', () => ({ profileAdmin: admin }))
 
 function row(overrides: Partial<CatalogRow>): CatalogRow {

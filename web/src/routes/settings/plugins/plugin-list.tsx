@@ -74,10 +74,13 @@ export function PluginList({
   inventory,
   onToggle,
   onReveal,
+  refusals = {},
 }: {
   inventory: UseQueryResult<PluginInventoryRow[]>
   onToggle: (id: string, enabled: boolean) => void
   onReveal: (id: string) => void
+  /** Per entry, the kernel's refusal of the last toggle, rendered on the row. */
+  refusals?: Record<string, string>
 }) {
   if (inventory.isLoading) return <ListSkeleton />
   if (inventory.isError) return <LoadFailed error={inventory.error} onRetry={() => void inventory.refetch()} />
@@ -93,6 +96,7 @@ export function PluginList({
           plugin={plugin}
           onToggle={(enabled) => onToggle(plugin.id, enabled)}
           onReveal={() => onReveal(plugin.id)}
+          refusal={refusals[plugin.id]}
         />
       ))}
     </div>
