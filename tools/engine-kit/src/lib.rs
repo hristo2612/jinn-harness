@@ -208,6 +208,31 @@ mod tests {
         assert!(entry["config"]["data"].get("command").is_none());
     }
 
+    /// The provider EMITS `jinn:engine/event` (every run event), and at
+    /// pin `138fdce` (jinnd M2-K26 (e); FINDINGS #49) a walk is covered by
+    /// the grant of the topic's own name exactly as a subscription is —
+    /// so the entry carries the topic it publishes, beside the contract
+    /// it provides.
+    #[test]
+    fn a_provider_entry_is_granted_the_event_topic_it_emits() {
+        let entry = provider_entry(&Provider {
+            id: DEFAULT_ID,
+            package: "engines/jinn-engine-echo",
+            hash: "abc",
+            engine: DEFAULT_ENGINE,
+            command: None,
+            also_exec: &[],
+            env: &[],
+            models: &["echo-1"],
+            data: serde_json::json!({}),
+        });
+        let grants = entry["config"]["grants"].as_array().expect("grants");
+        assert!(
+            grants.contains(&serde_json::json!(jinn_engine::EVENT_TOPIC)),
+            "the emitter is granted its topic: {grants:?}"
+        );
+    }
+
     #[test]
     fn a_cli_provider_may_spawn_one_executable_with_a_named_environment() {
         let entry = provider_entry(&Provider {

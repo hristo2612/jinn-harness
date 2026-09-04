@@ -73,3 +73,26 @@ pub fn settings_entries(provider: &str, store: &str, owners: &[&str]) -> Vec<ser
                       "data": { "overlays": {} } } }),
     ]
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The settings provider EMITS `jinn:settings/changed` after a landed
+    /// patch and `jinn:settings/refused` after a refused one; at pin
+    /// `138fdce` (jinnd M2-K26 (e); FINDINGS #49) an emit is covered by the
+    /// topic's own grant, so the provider entry carries both topics.
+    #[test]
+    fn the_settings_provider_is_granted_the_two_topics_it_emits() {
+        let entries = settings_entries("abc", "def", &["cron-scheduler"]);
+        let provider = &entries[0];
+        assert_eq!(provider["id"], SETTINGS_ID);
+        let grants = provider["config"]["grants"].as_array().expect("grants");
+        for topic in [jinn_settings::CHANGED_TOPIC, jinn_settings::REFUSED_TOPIC] {
+            assert!(
+                grants.contains(&serde_json::json!(topic)),
+                "the provider is granted {topic}, a topic it emits: {grants:?}"
+            );
+        }
+    }
+}

@@ -42,18 +42,20 @@ describe('an extension row', () => {
     renderRow(row({ attestation: { origin: 'human', source: 'sha256:5faf0000' } }))
 
     const notYet = within(screen.getByTestId('plugin-not-yet-ext-green')).getAllByRole('button')
-    expect(notYet).toHaveLength(6)
+    expect(notYet).toHaveLength(5)
     for (const item of notYet) {
       expect(item.getAttribute('aria-disabled')).toBe('true')
       expect((item as HTMLButtonElement).disabled).toBe(true)
     }
     const text = notYet.map((item) => `${item.textContent} ${item.getAttribute('title')}`).join('\n')
-    for (const item of ['Install extension · #37', 'Remove extension · #37', 'Disable extension · #37', 'Widen topics · #37', 'Swap engine · #37', 'Refuse a moment mid-restart · #47']) {
+    for (const item of ['Install extension · #37', 'Remove extension · #37', 'Disable extension · #37', 'Widen topics · #37', 'Swap engine · #37']) {
       expect(text).toContain(item)
     }
     // Pin-bump 8 (jinnd M2-K25): #48 is answered, so its pill is gone — never a
-    // disabled control for a limit that no longer exists.
+    // disabled control for a limit that no longer exists. Pin-bump 9 (jinnd
+    // M2-K26): #47 is answered the same way.
     expect(text).not.toContain('#48')
+    expect(text).not.toContain('#47')
   })
 })
 

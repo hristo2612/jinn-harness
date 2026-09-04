@@ -162,3 +162,34 @@ pub fn flag(args: &[String], name: &str, usage: fn() -> !) -> Option<u64> {
     let value = args.get(position + 1).unwrap_or_else(|| usage());
     Some(value.parse().unwrap_or_else(|_| usage()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The scheduler EMITS on every job's topic (the job table is operator
+    /// data, `cron:<job-id>` by default); at pin `138fdce` (jinnd M2-K26
+    /// (e); FINDINGS #49) an emit is covered by the topic's own grant, so
+    /// the scheduler entry carries every topic its table fires — derived
+    /// from the table, never a second list to drift.
+    #[test]
+    fn the_scheduler_is_granted_every_job_topic_it_fires() {
+        let entries = cron_entries("abc", "def", 60_000, 1_000);
+        let scheduler = &entries[0];
+        assert_eq!(scheduler["id"], "cron-scheduler");
+        let grants = scheduler["config"]["grants"].as_array().expect("grants");
+        let topics: Vec<&str> = scheduler["config"]["data"]["jobs"]
+            .as_array()
+            .expect("jobs")
+            .iter()
+            .map(|job| job["topic"].as_str().expect("a topic"))
+            .collect();
+        assert!(!topics.is_empty(), "the shipped table has a job");
+        for topic in topics {
+            assert!(
+                grants.contains(&serde_json::json!(topic)),
+                "the scheduler is granted {topic}, the topic it fires: {grants:?}"
+            );
+        }
+    }
+}

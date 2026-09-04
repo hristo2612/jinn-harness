@@ -695,17 +695,20 @@ fn a_throwing_extension_is_recorded_and_the_walk_continues() {
     daemon.interrupt();
 }
 
-/// Proof 5 is a MEASUREMENT with a NOT-YET clause, found in round 1: the
-/// card expected a moment posted inside an extension's restart window to
-/// be refused `restarting` (M2-K9). What the pinned kernel does on a
-/// ConfigChanged restart of a listener is WITHDRAW its listen with the
-/// old incarnation's suspension BEFORE the replacement commits, so a walk
-/// inside the window selects NOBODY and answers the payload UNMODIFIED —
-/// the fail-open the decision exists to prevent, at the kernel rather
-/// than at the transport (FINDINGS.md #47). The transport's own half is
-/// asserted (a refusal, when one comes, is typed and names its case;
-/// nothing else is answered but a delivered walk's fold); the kernel's
-/// half is recorded, counted, and printed, never asserted around.
+/// Proof 5: a moment posted inside an extension's restart window is
+/// refused typed `restarting` and NOTHING is answered unmodified — the
+/// card's intended assertion, answered at pin `138fdce` (jinnd M2-K26:
+/// a `listen` registration survives its instance's suspension as a
+/// refusing registration until the replacement commits atomically, so a
+/// reply-expecting walk in the window selects it and is refused whole;
+/// FINDINGS.md #47). Found NOT-YET in UI-2 round 1 at `a53a352`: the
+/// kernel withdrew the listen with the old incarnation's suspension
+/// BEFORE the replacement committed, so a walk in the window selected
+/// nobody and answered its own payload (53 unvalidated sends in one
+/// edit). Both halves are asserted now: the transport's (every refusal
+/// typed, naming `restarting`) and the kernel's (zero unmodified answers,
+/// zero `listeners: 0` walks, one `DispatchRefused` row per refused
+/// send); the window is still measured on the record and printed.
 #[test]
 fn a_restarting_extension_refuses_the_moment_typed_and_nothing_is_sent() {
     let Some((daemon, port)) = booted("moments-restart", |_, _| {}) else {
@@ -800,23 +803,41 @@ fn a_restarting_extension_refuses_the_moment_typed_and_nothing_is_sent() {
         open.len(),
         open.first()
     );
-    assert_eq!(
-        open.len(),
-        open_walks,
-        "every unmodified answer is a walk that selected nobody"
-    );
+    // The kernel's half, asserted (M2-K26 (a)/(b)): the window was hit
+    // and every send inside it was refused — none answered unmodified,
+    // no walk selected nobody, and each refusal is a `DispatchRefused`
+    // row on the record.
     assert!(
-        !refused.is_empty() || !open.is_empty(),
+        !refused.is_empty(),
         "the window was hit: {old} old answers before it, landed at {landed_at:?}\n{}",
         daemon.log()
     );
-    if !open.is_empty() {
-        println!(
-            "proof 5: NOT-YET — the kernel withdrew the listen with the old incarnation's suspension BEFORE the replacement committed, so a moment inside the restart window was answered UNMODIFIED with no refusal (FINDINGS.md #47); M2-K9's `restarting` never fired for a listener-only fiber's ConfigChanged restart"
-        );
-    } else {
-        println!("proof 5: every moment inside the window was refused typed, as the card expected");
-    }
+    assert!(
+        open.is_empty(),
+        "zero moments answered UNMODIFIED inside the restart window (FINDINGS #47): {} were, first at {:?}",
+        open.len(),
+        open.first()
+    );
+    assert_eq!(
+        open_walks, 0,
+        "zero walks selected nobody inside the window (FINDINGS #47)"
+    );
+    let dispatch_refused = refusal_rows
+        .iter()
+        .filter(|kind| kind.contains("DispatchRefused"))
+        .count();
+    assert_eq!(
+        dispatch_refused,
+        refused.len(),
+        "one DispatchRefused row per refused send: {refusal_rows:?}"
+    );
+    assert!(
+        window_ms.is_some(),
+        "the restart's window is on the record: a FiberSuspended and a ConfigChanged Active for {GREEN_ID}"
+    );
+    println!(
+        "proof 5: every moment inside the window was refused typed `restarting`, none answered unmodified (FINDINGS #47 closed at this pin)"
+    );
     daemon.interrupt();
 }
 
@@ -1426,13 +1447,18 @@ fn a_moment_is_the_door_then_one_walk_and_nothing_else() {
     daemon.interrupt();
 }
 
-/// KG-6, verified on the ledger rather than asserted from a read of
-/// `surfaces.rs`: at this pin `events.emit` is gated by the reserved-topic
-/// refusal only, not by the topic's grant. The transport is granted its
-/// three topics so the profile READS as the kernel will one day enforce
-/// it; this boot STRIPS those grants and shows the walk still lands.
+/// KG-6, answered at pin `138fdce` (jinnd M2-K26 (e); FINDINGS.md #49):
+/// `events.emit` is covered by the grant of the topic's own name exactly
+/// as `listen` is. The transport is the ONE first-party guest that emits
+/// on `jinn:ui/*` (an extension is a listener by construction — its Boa
+/// provider never calls `emit`), and its three topic grants were written
+/// into the `ui` profile by UI-2 so it would READ as the kernel now
+/// enforces. This boot STRIPS them and shows the walk is refused ON THE
+/// RECORD: a `GrantRefused` row naming the topic, the transport's typed
+/// `refused` answer, NO `DispatchTrace`, and the extension never ran.
+/// The same emitter WITH its grant is proof 2's fold, unchanged.
 #[test]
-fn an_emit_is_not_gated_by_the_topics_grant_at_this_pin() {
+fn an_entry_emitting_off_its_topic_grant_is_refused_on_the_record() {
     let Some((daemon, port)) = booted("moments-kg6", |_, document| {
         let transport = entry_mut(document, TRANSPORT);
         let grants = transport["config"]["grants"]
@@ -1450,22 +1476,52 @@ fn an_emit_is_not_gated_by_the_topics_grant_at_this_pin() {
     };
     let baseline = last_seq(&daemon);
     let answer = send(port);
-    let refusals: Vec<String> = daemon
+    let refusals: Vec<(Option<String>, String)> = daemon
         .ledger_rows()
         .iter()
         .filter(|row| row.seq > baseline && row.kind.contains("GrantRefused"))
+        .map(|row| (row.entry.clone(), row.kind.clone()))
+        .collect();
+    let walks = traces(&daemon, baseline).len();
+    let extension_rows: Vec<String> = daemon
+        .ledger_rows()
+        .iter()
+        .filter(|row| row.seq > baseline && row.entry.as_deref() == Some(GREEN_ID))
         .map(|row| row.kind.clone())
         .collect();
     println!(
-        "KG-6 probe: the transport with NO topic grant posted a moment — status {}, text {:?}, walks {}, GrantRefused rows {refusals:?}",
-        answer.status,
-        answer.body["text"],
-        traces(&daemon, baseline).len()
+        "KG-6: the transport with NO topic grant posted a moment — status {}, error {}, walks {walks}, GrantRefused rows {refusals:?}, the extension's rows after the send {extension_rows:?}",
+        answer.status, answer.body["error"]
     );
-    if answer.status == 200 && answer.body["text"] == "hello 🟢" {
-        println!("KG-6 probe: CONFIRMED on the ledger — emit is ungated by the topic grant at this pin (FINDINGS.md #49)");
-    } else {
-        println!("KG-6 probe: the kernel gated the emit — the finding is answered at this pin");
-    }
+    // The transport's half: the kernel's `grant-refused` is the seam's
+    // typed `refused` class, never the unmodified payload.
+    assert_eq!(answer.status, 502, "{}", answer.raw);
+    assert_eq!(answer.body["error"]["code"], "refused", "{}", answer.raw);
+    assert!(
+        answer.body["error"]["detail"]
+            .as_str()
+            .is_some_and(|detail| detail.starts_with("emit refused:")),
+        "{}",
+        answer.raw
+    );
+    // The kernel's half, on the record (Law 1, Law 2): the broker's own
+    // refusal row on the emitter, naming the topic as the grant it lacks;
+    // no walk traced; the listener never selected, never run.
+    assert_eq!(refusals.len(), 1, "one GrantRefused row: {refusals:?}");
+    let (entry, kind) = &refusals[0];
+    assert_eq!(entry.as_deref(), Some(TRANSPORT), "on the emitter's row: {kind}");
+    let row: serde_json::Value = serde_json::from_str(kind).expect("a JSON row");
+    assert_eq!(
+        row["GrantRefused"]["contract"], TOPIC_BEFORE_SEND,
+        "naming the topic as the grant it lacks: {kind}"
+    );
+    assert_eq!(walks, 0, "no DispatchTrace for a refused emit");
+    assert!(
+        extension_rows.is_empty(),
+        "the listener never ran: {extension_rows:?}"
+    );
+    println!(
+        "KG-6: an emit without the topic's grant is refused on the record (FINDINGS #49 closed at this pin)"
+    );
     daemon.interrupt();
 }
