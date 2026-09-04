@@ -54,9 +54,21 @@ impl Origin {
     }
 }
 
+/// The entry's per-delivery budget: the kernel's `delivery-budget`
+/// record (`plugin.wit` 0.11.0, M2-K25) spelled on the entry, in the
+/// listener store's own fuel — deterministic, so the same source exceeds
+/// the same budget at the same instruction on every machine. CLOSED like
+/// the config it sits in. Zero is carried as declared: the kernel
+/// refuses it at `listen`, `invalid`, on the record, and the provider
+/// never clamps what the operator wrote.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Budget {
+    pub fuel: u64,
+}
+
 /// The entry's `config.data`. CLOSED: an unknown field is an activation
-/// fault (R3; the settings seam's closed-surface law). No `budget` field
-/// — nothing at this pin can honor one (KG-2).
+/// fault (R3; the settings seam's closed-surface law).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "kebab-case")]
 pub struct ExtConfig {
@@ -68,6 +80,12 @@ pub struct ExtConfig {
     /// payload.
     pub source: String,
     pub origin: Origin,
+    /// The per-delivery bound every topic is listened on under
+    /// (`events.listen-within`); absent, a plain `listen` bounded by the
+    /// guest deadline alone. The field the UI-2 card withheld until a
+    /// kernel could honor it (FINDINGS.md #48, closed at pin `b1dbe8f`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub budget: Option<Budget>,
 }
 
 /// Reads the config the kernel hands `activate`: the closed schema, and

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 
 use api_kit::{api_entries, settings_entries, PROVIDER_ID};
 use cron_kit::{build, component, cron_entries, flag, write_artifact, write_profile};
-use ext_kit::{ext_entry, GREEN_ID, GREEN_SOURCE};
+use ext_kit::{ext_entry, GREEN_BUDGET, GREEN_ID, GREEN_SOURCE};
 use jinn_ext::Origin;
 use jinn_ui::TOPIC_BEFORE_SEND;
 use plugin_kit::{
@@ -66,13 +66,15 @@ fn kit(root: &Path, port: u16, every_ms: u64, tick_ms: u64) {
         port.wrapping_add(2),
     ));
     entries.push(bundle_entry(BUNDLE_PACKAGE, &bundle));
-    // The operator's example from §6: ONE extension, origin `human`.
+    // The operator's example from §6: ONE extension, origin `human`,
+    // under the budget the kernel honors since pin `b1dbe8f` (M2-K25).
     entries.push(ext_entry(
         GREEN_ID,
         &ext,
         &[TOPIC_BEFORE_SEND],
         GREEN_SOURCE,
         Origin::Human,
+        Some(GREEN_BUDGET),
     ));
 
     let catalogs = [MAIN_CATALOG, PARKED_CATALOG];

@@ -7,7 +7,7 @@
 
 use std::path::Path;
 
-use jinn_ext::{Origin, BOA_PACKAGE, CLOCK_CONTRACT};
+use jinn_ext::{Budget, Origin, BOA_PACKAGE, CLOCK_CONTRACT};
 
 /// The provider guest's crate name (its artifact basename).
 pub const BOA_GUEST: &str = "jinn-ext-js-boa";
@@ -15,12 +15,21 @@ pub const BOA_GUEST: &str = "jinn-ext-js-boa";
 pub const GREEN_ID: &str = "ext-green";
 /// See [`GREEN_ID`]: `hello` becomes `hello 🟢`.
 pub const GREEN_SOURCE: &str = "(p) => ({ ...p, text: p.text + ' 🟢' })";
+/// The budget the `ui` profile mounts `ext-green` under, in fuel: the
+/// operator's example declares its bound now that the kernel honors one
+/// (pin `b1dbe8f`, M2-K25). Sized from proof 2's measurement — one fold
+/// is a fresh Boa context plus the source, well under a hundredth of
+/// this — so the number bounds a runaway, never a fold.
+pub const GREEN_BUDGET: Budget = Budget {
+    fuel: 4_000_000_000,
+};
 
 /// The extension entry in §6's "Install" shape: `config.data` carries
-/// the topics, the source and the origin; `config.grants` is the topics
-/// (each topic is its own grant name) plus the ONE host provider the
-/// engine reads (`jinn:clock`); `injects` is absent — an extension
-/// injects no service.
+/// the topics, the source, the origin and — when the entry declares one
+/// — its per-delivery `budget`; `config.grants` is the topics (each
+/// topic is its own grant name) plus the ONE host provider the engine
+/// reads (`jinn:clock`); `injects` is absent — an extension injects no
+/// service.
 #[must_use]
 pub fn ext_entry(
     id: &str,
@@ -28,13 +37,17 @@ pub fn ext_entry(
     topics: &[&str],
     source: &str,
     origin: Origin,
+    budget: Option<Budget>,
 ) -> serde_json::Value {
     let mut grants: Vec<serde_json::Value> = topics.iter().map(|t| serde_json::json!(t)).collect();
     grants.push(serde_json::json!(CLOCK_CONTRACT));
+    let mut data = serde_json::json!({ "topics": topics, "source": source,
+                                       "origin": origin.as_str() });
+    if let Some(budget) = budget {
+        data["budget"] = serde_json::json!({ "fuel": budget.fuel });
+    }
     serde_json::json!({ "id": id, "package": BOA_PACKAGE, "hash": hash,
-                        "config": { "grants": grants,
-                                    "data": { "topics": topics, "source": source,
-                                              "origin": origin.as_str() } } })
+                        "config": { "grants": grants, "data": data } })
 }
 
 /// Builds and writes the Boa provider under `artifacts`; answers its pin
@@ -46,7 +59,7 @@ pub fn build(artifacts: &Path) -> (String, usize) {
     (hash, bytes.len())
 }
 
-/// A component's TOP-LEVEL imports, by name (`jinn:plugin/types@0.10.0`
+/// A component's TOP-LEVEL imports, by name (`jinn:plugin/types@0.11.0`
 /// and so on), in declaration order — the §5.3 `imports` program. The
 /// encoder nests a shim component whose own imports are the export glue
 /// (`import-func-activate`, …); those are depth 1 and not the host
