@@ -1,6 +1,8 @@
 import { useState, type FormEvent } from "react"
 import { useMutation, useQueryClient } from "@tanstack/react-query"
 import { profileAdmin, type AdministeredWire } from "@/lib/profile-admin"
+import { cn } from "@/lib/utils"
+import { CONTROL_CLASS } from "../shared"
 import { PLUGIN_INVENTORY_KEY } from "./inventory"
 import type { CatalogRow } from "./plugin-row"
 
@@ -23,11 +25,12 @@ const ACTIONS: ReadonlyArray<{ mode: Mode; label: string; title: string }> = [
   { mode: "swap", label: "Swap engine", title: "Re-pin this entry's package and hash (swap-plugin)" },
 ]
 
+// The settings page's own pill button (34 px, no hairline at rest) and its
+// control recipe (`CONTROL_CLASS`, the accent focus ring its only ring).
 const PILL =
-  "inline-flex h-[22px] items-center rounded-full bg-[var(--fill-tertiary)] px-2.5 text-[length:var(--text-caption2)] font-medium text-[var(--text-secondary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-[var(--text-primary)]"
+  "inline-flex h-[34px] cursor-pointer items-center rounded-full border-none bg-[var(--fill-tertiary)] px-4 text-[length:var(--text-footnote)] font-[var(--weight-medium)] text-[var(--text-secondary)] transition-colors hover:bg-[var(--fill-secondary)] hover:text-[var(--text-primary)]"
 
-const INPUT =
-  "h-[30px] min-w-0 flex-1 rounded-[8px] bg-[var(--bg-primary)] px-2 font-[family-name:var(--font-code)] text-[length:var(--text-caption1)] text-[var(--text-primary)] shadow-[inset_0_0_0_1px_var(--fill-tertiary)]"
+const INPUT = cn(CONTROL_CLASS, "h-[34px] min-w-0 flex-1 font-[family-name:var(--font-code)]")
 
 function splitList(text: string): string[] {
   return text
