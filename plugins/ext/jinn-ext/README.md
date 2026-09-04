@@ -26,9 +26,11 @@ discipline).
 
 `config.data` is CLOSED (`ExtConfig`, `deny_unknown_fields`): an unknown
 field is an activation fault naming it (R3; the settings seam's
-closed-surface law). There is deliberately NO `budget` field — nothing
-at this pin can honor one, and a declared field the guest cannot enforce
-is a lie on the record (KG-2, `FINDINGS.md`).
+closed-surface law). The UI-2 card withheld a `budget` field because
+nothing at pin `a53a352` could honor one, and a declared field the guest
+cannot enforce is a lie on the record (KG-2, `FINDINGS.md` #48); the
+kernel honors one since pin `b1dbe8f` (jinnd M2-K25), and the field is
+below.
 
 - `topics` — the topics the extension listens on. Each must ALSO be in
   `config.grants`: the grant is the authority the kernel enforces, the
@@ -38,6 +40,19 @@ is a lie on the record (KG-2, `FINDINGS.md`).
 - `source` — one JS expression evaluating to a function of the payload.
   The operator's code is DATA to a signed plugin (§8 ruling 1): its
   authority is the grant list and nothing else.
+- `budget` — optional, `{ "fuel": <u64> }`: the kernel's
+  `delivery-budget` record (`plugin.wit` 0.11.0) spelled on the entry.
+  When present, every topic is listened on with `events.listen-within`
+  and each delivery spends at most that much of the listener store's
+  own fuel — deterministic: the same source exceeds the same budget at
+  the same instruction on every machine. Exceeding it ends THIS
+  extension's instance and fails its own fiber on the record (`guest
+  exhausted its delivery fuel budget`, then `Active → Unloading →
+  Failed` under `BodyFaulted`); the walk continues past it as one
+  contained failure (R9). Absent, a plain `listen`: the guest deadline
+  is the bound. Zero is carried as declared and refused by the kernel at
+  `listen`, `invalid`, on the record — the provider never clamps. The
+  `ui` profile mounts `ext-green` under `ext_kit::GREEN_BUDGET`.
 - `origin` — `agent | human`: who wrote the source. Constitution 05's
   `[provenance] origin` restated for data; the operator's declaration on
   the entry, shown by the plugins page as the row's `attestation.origin`
@@ -64,9 +79,11 @@ says so by which was written last):
    error or a value that is not a function FAILS THE FIBER, never a
    silent no-op listener (R11).
 5. `source sha256:<hex>` — WHAT CODE RAN, on the record (Law 2).
-6. One `events.listen` per topic in `data.topics`. A listen the kernel
-   refuses (`GrantRefused` on the record) fails the activation; the guest
-   never swallows it. The kernel labels each listen `listen <topic>`.
+6. One `events.listen` per topic in `data.topics` — `events.listen-within`
+   under the entry's `budget` when it declares one. A listen the kernel
+   refuses (`GrantRefused`, or `invalid` for a zero budget, on the
+   record) fails the activation; the guest never swallows it. The kernel
+   labels each listen `listen <topic>`, budgeted or not.
 
 ## The delivery
 
@@ -91,6 +108,8 @@ and no reuse is designed before that number exists (§9.5).
 Call any seam (its component imports no `fs`, `net`, `process`,
 `keystore`; its one `services.call` targets a kernel host provider, so
 the #4/#32 wait cycle has no target); see any moment it is not granted;
-change a decision that is not a waterfall; outlive its entry. What it
-CAN do that the kernel does not yet bound is spend the walk's guest
-deadline (KG-2; proof 7 is the transcript).
+change a decision that is not a waterfall; outlive its entry; or, since
+pin `b1dbe8f`, spend anyone's clock but its own — a delivery that loops
+ends this extension's instance at its budget or its deadline, on its own
+row, and the transport that emitted is charged nothing (proof 7;
+`FINDINGS.md` #48, answered).

@@ -10,10 +10,13 @@
 //! reads `jinn:clock` `now` once for the context's clock, applies the
 //! source, and answers the folded JSON — or EMPTY bytes for `undefined`
 //! (the kernel leaves the payload unchanged), or a contained fault for a
-//! throw or a non-object (R9: recorded, the walk continues).
+//! throw or a non-object (R9: recorded, the walk continues). An entry
+//! that declares a `budget` is listened on with `events.listen-within`:
+//! the kernel bounds every delivery by that fuel and ends THIS instance
+//! — its own fiber, its own row — when a delivery exceeds it (M2-K25).
 //!
 //! The JS has NO host calls: the only imports of this component are
-//! `types`, `effects`, `events` and `services` of `jinn:plugin@0.10.0`
+//! `types`, `effects`, `events` and `services` of `jinn:plugin@0.11.0`
 //! (asserted by `tools/ext-kit`), and the one `services.call` targets a
 //! kernel host provider, never a guest — so #4/#32's wait cycle has no
 //! target here.
@@ -35,6 +38,7 @@ wit_bindgen::generate!({
 });
 
 use exports::jinn::plugin::lifecycle::{Guest, GuestFault};
+use jinn::plugin::types::DeliveryBudget;
 use jinn::plugin::{effects, events, services};
 
 /// Effect tokens: the breadcrumbs, the source row, the fault label, then
@@ -107,8 +111,17 @@ fn activate(config: Vec<u8>) -> Result<(), GuestFault> {
     effects::register(&source_breadcrumb(&config.source), SOURCE_TOKEN)
         .map_err(|error| fault("source breadcrumb", error))?;
     for (index, topic) in config.topics.iter().enumerate() {
-        events::listen(topic, LISTEN_TOKEN + index as u64)
-            .map_err(|error| fault(&format!("listen {topic}"), error))?;
+        let token = LISTEN_TOKEN + index as u64;
+        // The budget is the registration's (M2-K25 (b)): translated as
+        // declared, zero included — the kernel's refusal is the record.
+        match config.budget {
+            Some(budget) => events::listen_within(topic, token, DeliveryBudget { fuel: budget.fuel })
+                .map(drop)
+                .map_err(|error| fault(&format!("listen-within {topic}"), error))?,
+            None => events::listen(topic, token)
+                .map(drop)
+                .map_err(|error| fault(&format!("listen {topic}"), error))?,
+        }
     }
     *CONFIG.lock().unwrap() = Some(config);
     Ok(())

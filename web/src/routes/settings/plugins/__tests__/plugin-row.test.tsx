@@ -6,7 +6,8 @@ import { PluginRow, type CatalogRow } from '../plugin-row'
  * extension's row renders its source breadcrumb from the catalog's
  * attestation — a stable reading, never a sliding history window — and every
  * NOT-YET item of the tier is DISABLED on the row with its finding number,
- * never silently absent. */
+ * never silently absent; an answered finding's pill is gone (#48 at pin
+ * b1dbe8f, pin-bump 8). */
 
 vi.mock('@/lib/api', () => ({ api: { pluginHistory: vi.fn() } }))
 
@@ -41,15 +42,18 @@ describe('an extension row', () => {
     renderRow(row({ attestation: { origin: 'human', source: 'sha256:5faf0000' } }))
 
     const notYet = within(screen.getByTestId('plugin-not-yet-ext-green')).getAllByRole('button')
-    expect(notYet).toHaveLength(7)
+    expect(notYet).toHaveLength(6)
     for (const item of notYet) {
       expect(item.getAttribute('aria-disabled')).toBe('true')
       expect((item as HTMLButtonElement).disabled).toBe(true)
     }
     const text = notYet.map((item) => `${item.textContent} ${item.getAttribute('title')}`).join('\n')
-    for (const item of ['Install extension · #37', 'Remove extension · #37', 'Disable extension · #37', 'Widen topics · #37', 'Swap engine · #37', 'Refuse a moment mid-restart · #47', 'A bad extension costs its own slot · #48']) {
+    for (const item of ['Install extension · #37', 'Remove extension · #37', 'Disable extension · #37', 'Widen topics · #37', 'Swap engine · #37', 'Refuse a moment mid-restart · #47']) {
       expect(text).toContain(item)
     }
+    // Pin-bump 8 (jinnd M2-K25): #48 is answered, so its pill is gone — never a
+    // disabled control for a limit that no longer exists.
+    expect(text).not.toContain('#48')
   })
 })
 

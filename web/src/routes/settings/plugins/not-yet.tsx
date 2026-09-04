@@ -3,7 +3,9 @@
  * ruling wic_d919b13b976b item 5): what the extension tier cannot do yet, each
  * item rendered DISABLED on the extension's row with its finding number —
  * never silently absent. The list is closed: an item leaves it when the pin
- * that answers its finding lands.
+ * that answers its finding lands — "A bad extension costs its own slot · #48"
+ * left at pin b1dbe8f (jinnd M2-K25, harness pin-bump 8): a looping delivery
+ * now ends the extension's own instance, and the entry may declare a budget.
  */
 export const NOT_YET: ReadonlyArray<{ label: string; reason: string }> = [
   {
@@ -35,11 +37,6 @@ export const NOT_YET: ReadonlyArray<{ label: string; reason: string }> = [
     label: "Refuse a moment mid-restart · #47",
     reason:
       "FINDINGS #47: at this pin a moment posted inside an extension's restart window is answered UNMODIFIED, never refused. Waits on jinnd M2-K26.",
-  },
-  {
-    label: "A bad extension costs its own slot · #48",
-    reason:
-      "FINDINGS #48: at this pin a looping delivery spends the transport's deadline too. Waits on jinnd M2-K25 (per-delivery budget).",
   },
 ]
 
