@@ -49,10 +49,12 @@ pub fn mount_bundle_on(transport: &mut serde_json::Value) {
 }
 
 /// Tells the transport's entry it EMITS the moments: the three topic
-/// names as grants — the profile's statement of what it dispatches,
-/// written now so the profile already reads as the kernel will one day
-/// enforce it (at pin `a53a352` `events.emit` checks only the reserved-
-/// topic refusal and no topic grant; FINDINGS.md #49, KG-6).
+/// names as grants — the profile's statement of what it dispatches, and
+/// since pin `138fdce` the authority the kernel enforces: a walk is
+/// covered by the grant of the topic's own name exactly as a
+/// subscription is (jinnd M2-K26 (e); FINDINGS.md #49 closed). Written
+/// at UI-2 already, when `events.emit` checked only the reserved-topic
+/// refusal; the profile read then as the kernel enforces now.
 pub fn mount_moments_on(transport: &mut serde_json::Value) {
     let grants = transport["config"]["grants"]
         .as_array_mut()

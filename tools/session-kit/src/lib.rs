@@ -62,8 +62,12 @@ pub struct Store<'a> {
 /// One store entry: grants on the left, its own knowledge on the right.
 #[must_use]
 pub fn store_entry(store: &Store<'_>) -> serde_json::Value {
+    // The topic it EMITS on beside the contract it provides: at pin
+    // `138fdce` an emit is covered by the topic's own grant (jinnd M2-K26
+    // (e); FINDINGS #49).
     let mut grants = vec![
         serde_json::json!(jinn_session::store_contract(store.store)),
+        serde_json::json!(jinn_session::EVENT_TOPIC),
         serde_json::json!(jinn_cron::CLOCK_CONTRACT),
     ];
     grants.extend(

@@ -73,8 +73,12 @@ pub struct Store<'a> {
 /// right.
 #[must_use]
 pub fn store_entry(store: &Store<'_>) -> serde_json::Value {
+    // The topic it EMITS on beside the contract it provides: at pin
+    // `138fdce` an emit is covered by the topic's own grant (jinnd M2-K26
+    // (e); FINDINGS #49).
     let mut grants = vec![
         serde_json::json!(jinn_workflow::store_contract(store.store)),
+        serde_json::json!(jinn_workflow::EVENT_TOPIC),
         serde_json::json!(jinn_cron::CLOCK_CONTRACT),
     ];
     grants.extend(

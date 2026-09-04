@@ -442,7 +442,7 @@ fn a_third_store_joins_a_live_daemon_by_a_profile_edit_alone() {
                 "package": "sessions/jinn-session-memory",
                 "hash": ephemeral,
                 "config": {
-                    "grants": [format!("jinn:session.{SCRATCH_STORE}"), "jinn:clock", engine_grant],
+                    "grants": [format!("jinn:session.{SCRATCH_STORE}"), jinn_session::EVENT_TOPIC, "jinn:clock", engine_grant],
                     "data": { "store": SCRATCH_STORE, "poll-ms": 250 }
                 }
             }));

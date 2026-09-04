@@ -561,7 +561,7 @@ fn a_third_store_joins_a_live_daemon_by_a_profile_edit_alone() {
                 "package": "todos/jinn-todo-memory",
                 "hash": ephemeral,
                 "config": {
-                    "grants": [format!("jinn:todo.{SCRATCH_STORE}"), "jinn:clock", session_grant],
+                    "grants": [format!("jinn:todo.{SCRATCH_STORE}"), jinn_todo::EVENT_TOPIC, "jinn:clock", session_grant],
                     "data": { "store": SCRATCH_STORE, "poll-ms": 250 }
                 }
             }));

@@ -90,8 +90,12 @@ pub struct Provider<'a> {
 /// One provider entry: grants on the left, its own knowledge on the right.
 #[must_use]
 pub fn provider_entry(provider: &Provider<'_>) -> serde_json::Value {
+    // The topic it EMITS on (every run event) beside the contract it
+    // provides: at pin `138fdce` a walk is covered by the topic's own
+    // grant exactly as a subscription is (jinnd M2-K26 (e); FINDINGS #49).
     let mut grants = vec![
         serde_json::json!(jinn_engine::engine_contract(provider.engine)),
+        serde_json::json!(jinn_engine::EVENT_TOPIC),
         serde_json::json!(jinn_cron::CLOCK_CONTRACT),
         serde_json::json!({ "contract": "jinn:keystore",
                             "scope": [KEYSTORE_PREFIX], "ops": ["get"] }),

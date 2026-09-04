@@ -381,7 +381,7 @@ fn a_third_provider_joins_a_live_composition_by_profile_edit_alone() {
     daemon.edit_profile(|document| {
         let entry = serde_json::json!({
             "id": ECHO_ID, "package": "engines/jinn-engine-echo", "hash": echo_hash,
-            "config": { "grants": [ format!("jinn:engine.{ECHO_ENGINE}"), "jinn:clock",
+            "config": { "grants": [ format!("jinn:engine.{ECHO_ENGINE}"), "jinn:engine/event", "jinn:clock",
                                     { "contract": "jinn:keystore", "scope": ["engines/"],
                                       "ops": ["get"] } ],
                         "data": { "engine": ECHO_ENGINE, "models": ["echo-1"],

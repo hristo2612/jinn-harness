@@ -113,11 +113,15 @@ pub fn build(artifacts: &Path, seam: &str, name: &str) -> String {
     hash
 }
 
-/// The cron seam's two profile entries with their grants. The listen
-/// grant (the job topic) and contract grants (`jinn:cron`, `jinn:fs`,
-/// `jinn:clock` — a bare clock grant holds the kernel's default 250 ms
-/// resolution floor) are the profile side's authority decisions —
-/// requests are not grants.
+/// The cron seam's two profile entries with their grants. The topic
+/// grants (the job topic: the scheduler's to FIRE, the consumer's to
+/// listen — at pin `138fdce` an emit is covered by the topic's own grant
+/// exactly as a subscription is, jinnd M2-K26 (e), FINDINGS #49) and
+/// contract grants (`jinn:cron`, `jinn:fs`, `jinn:clock` — a bare clock
+/// grant holds the kernel's default 250 ms resolution floor) are the
+/// profile side's authority decisions — requests are not grants. The
+/// scheduler's topic grants are DERIVED from its job table, so the two
+/// cannot drift.
 #[must_use]
 pub fn cron_entries(
     scheduler: &str,
@@ -125,6 +129,22 @@ pub fn cron_entries(
     every_ms: u64,
     tick_ms: u64,
 ) -> Vec<serde_json::Value> {
+    let jobs = serde_json::json!([
+        { "id": "health", "every-ms": every_ms, "topic": "cron:health" }
+    ]);
+    let mut scheduler_grants = vec![
+        serde_json::json!(jinn_cron::CRON_CONTRACT),
+        serde_json::json!("jinn:fs"),
+        serde_json::json!(jinn_cron::CLOCK_CONTRACT),
+        serde_json::json!(jinn_settings::SETTINGS_CONTRACT),
+        serde_json::json!(jinn_settings::CHANGED_TOPIC),
+    ];
+    scheduler_grants.extend(
+        jobs.as_array()
+            .expect("jobs")
+            .iter()
+            .map(|job| job["topic"].clone()),
+    );
     vec![
         // `jinn:settings` and the changed-topic listen: the scheduler
         // consumes its job table through the settings seam where one is
@@ -132,11 +152,8 @@ pub fn cron_entries(
         // resolve answers missing-dependency and the entry layer is the
         // whole truth. `entry-id` names this entry to the seam.
         serde_json::json!({ "id": "cron-scheduler", "package": "cron/cron-scheduler", "hash": scheduler,
-          "config": { "grants": [jinn_cron::CRON_CONTRACT, "jinn:fs", jinn_cron::CLOCK_CONTRACT,
-                                 jinn_settings::SETTINGS_CONTRACT, jinn_settings::CHANGED_TOPIC],
-                      "data": { "entry-id": "cron-scheduler", "tick-ms": tick_ms, "jobs": [
-                          { "id": "health", "every-ms": every_ms, "topic": "cron:health" }
-                      ] } } }),
+          "config": { "grants": scheduler_grants,
+                      "data": { "entry-id": "cron-scheduler", "tick-ms": tick_ms, "jobs": jobs } } }),
         serde_json::json!({ "id": "health-snapshot", "package": "cron/health-snapshot", "hash": snapshot,
           "config": { "grants": ["cron:health", jinn_cron::CRON_CONTRACT, "jinn:fs"],
                       "data": { "topic": "cron:health", "dir": "health", "nonce": 0 } } }),
