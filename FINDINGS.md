@@ -3012,8 +3012,9 @@ refresh in place was a fact only in the transport's memory
 
 ## 47. A listener's config restart withdraws its listen BEFORE the replacement commits, so a reply-expecting walk inside the window selects nobody and answers the payload UNMODIFIED — M2-K9's `restarting` never fires for it
 
-**Grade: ANSWERED at pin `138fdce` (jinnd M2-K26, harness pin-bump 9) —
-fixed at pin 138fdce, transcript at the end of this entry. When raised:
+**Grade: ANSWERED at pin `cb08683` (jinnd M2-K26 at `138fdce`, adopted
+with its amendment 2 at `cb08683`, harness pin-bump 9) — fixed at pin
+cb08683, transcripts at the end of this entry. When raised:
 reproducible WITH A TRANSCRIPT, measured, packet-card-ready —
 Blocker-class for any waterfall that means "validate before you act".**
 Hit in harness packet UI-2 (PLA-353) at pin `a53a352`, proof 5 of
@@ -3254,9 +3255,9 @@ row. What is NOT closed here: a budget for `services.call` (the card's
 
 ## 49. `events.emit` is not gated by the topic's grant — a guest may emit on any unreserved topic, granted or not (KG-6, verified on the ledger)
 
-**Grade: ANSWERED at pin `138fdce` (jinnd M2-K26 (e), harness pin-bump
-9) — fixed at pin 138fdce, transcript at the end of this entry. When
-raised: reproducible WITH A TRANSCRIPT, packet-card-ready.** Hit in
+**Grade: ANSWERED at pin `cb08683` (jinnd M2-K26 (e) at `138fdce`,
+adopted with its amendment 2 at `cb08683`, harness pin-bump 9) — fixed
+at pin cb08683, transcripts at the end of this entry. When raised: reproducible WITH A TRANSCRIPT, packet-card-ready.** Hit in
 harness packet UI-2 (PLA-353) at pin `a53a352`; the probe
 `an_emit_is_not_gated_by_the_topics_grant_at_this_pin` in
 `tests/composition/tests/moments.rs`.
@@ -3556,9 +3557,11 @@ in a README, not a fact on the ledger.
 
 ## 53. A replacement incarnation stays a STAGING seat after its commit, so every registration it makes AFTER activation — an `alarm-at` armed on a later call — is recorded, never routed: no row, no wake, and a run that polls its child never settles (found adopting M2-K26 at `138fdce`)
 
-**Grade: reproducible WITH A TRANSCRIPT, code-cited at the pin,
-packet-card-ready — Blocker-class for every provider that registers an
-effect after a config restart.** Hit in harness packet pin-bump 9
+**Grade: ANSWERED at pin `cb08683` (jinnd M2-K26 amendment 2, harness
+pin-bump 9) — fixed at pin cb08683, transcript at the end of this
+entry. When raised: reproducible WITH A TRANSCRIPT, code-cited at the
+pin, packet-card-ready — Blocker-class for every provider that
+registers an effect after a config restart.** Hit in harness packet pin-bump 9
 (PLA-364) at pin `138fdce`, `tests/composition/tests/engines.rs`
 `a_child_sees_only_the_environment_its_grant_admits` and
 `a_child_writing_far_past_its_budget_puts_at_most_the_budget_on_the_wire`,
@@ -3646,3 +3649,66 @@ proofs are RED at this pin by the kernel and stay red — the harness
 does not weaken a proof of a working seam into a NOT-YET on its own
 authority; the ruling (adopt with the red named, or hold the pin for
 the fix) is the COO's.
+
+### CLOSED at pin `cb08683` — the staged seat goes LIVE at its commit
+
+The COO held pin-bump 9 on this entry (PLA-364 ruling: a pin that
+breaks cron after any config restart goes under neither the operator's
+instance nor the soak). jinnd M2-K26 amendment 2 (`ea7ee82` the red
+daemon test, `7bd8ea7` the fix — a staged seat's `staging` flag is
+cleared at `commit_staged`, so a registration made after `activate`
+routes exactly as on a first activation — merged as `89f48fa`, the
+verifier's invariant `cb6477f`/`ed1d0bc` landed as `cb08683`) is the
+capability shape named above, and the pin was re-targeted to `cb08683`
+(`wit/` and `contracts/` byte-identical to `138fdce`; only the commit
+line moved). The engines suite at that pin, no harness change but the
+pin, the same daemon build lane (`git archive cb08683`):
+
+```
+$ cargo test -p composition --test engines
+running 13 tests
+test a_child_writing_far_past_its_budget_puts_at_most_the_budget_on_the_wire ... ok
+test a_child_sees_only_the_environment_its_grant_admits ... ok
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 305.93s
+```
+
+The ledger of `a_child_sees_only_the_environment_its_grant_admits` at
+`cb08683` (the run's `ledger.sqlite`, `jinn-engine-spawn`'s rows), read
+against the `138fdce` rows above — the same restart, the same spawn,
+and now the wake:
+
+```
+seq  entry              kind
+120  jinn-engine-spawn  FiberTransition { fiber: 9, Active → Unloading, ConfigChanged }
+121  jinn-engine-spawn  ServiceWithdrawn { service: jinn:engine.spawn }
+122  jinn-engine-spawn  FiberSuspended { retained: 0 }
+123  jinn-engine-spawn  FiberTransition { Unloading → Pending, ConfigChanged }
+124  jinn-engine-spawn  FiberTransition { Pending → Loading, ConfigChanged }
+125  jinn-engine-spawn  EffectRegistered { label: "jinn-engine-echo on duty" }
+126  jinn-engine-spawn  ServiceProvided { service: jinn:engine.spawn }
+127  jinn-engine-spawn  FiberTransition { Loading → Active, ConfigChanged }
+163  jinn-engine-spawn  ContractCall { contract: jinn:clock, operation: now }
+164  jinn-engine-spawn  ContractCall { contract: jinn:process, operation: spawn }
+165  jinn-engine-spawn  ProcessSpawned { handle: 1, command: "/usr/bin/env", pid: … }
+166  jinn-engine-spawn  ContractCall { contract: jinn:process, operation: close-stdin }
+186  jinn-engine-spawn  ProcessExited { handle: 1, code: 0 }
+203  jinn-engine-spawn  AlarmWake { alarm: 4 }                                   ← the post-restart alarm FIRES
+205  jinn-engine-spawn  DispatchTrace { topic: jinn:engine/event, mode: Emit, listeners: 1, failures: 0 }
+206  jinn-engine-spawn  ContractCall { contract: jinn:process, operation: read }
+…    (a second ConfigChanged restart at 256–264, its run's ProcessExited at 323, its AlarmWake { alarm: 5 } at 347; 438 rows in all)
+```
+
+The replacement's `alarm-at` after the spawn wakes (`AlarmWake`), the
+provider drains the child and the run settles; the case that ended on
+its 90 s deadline at `138fdce` passes in the suite's ordinary time.
+One correction to the entry's own words: "a healthy `alarm-at` is a
+registration row and then an `AlarmWake`" holds for an alarm armed in
+`activate` (the cron scheduler's `alarm at …` row is written with the
+activation outcome); an `alarm-at` armed on a LATER call has no
+`EffectRegistered` row on ANY seat at this pin — a fresh seat's per-run
+alarm is `AlarmWake { alarm: 4 }` alone in every engines ledger
+(`engines-cancel`, `engines-extend`, this one). So the "no registration
+row" half of the `138fdce` reading was not the defect; the missing WAKE
+was. Noted here, not filed: whether a post-activation registration owes
+a row of its own is a Law-2 question for a card, and no harness proof
+depends on it.

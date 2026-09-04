@@ -1,8 +1,9 @@
 # A registration is replaced, never absent — and an emit is covered by its topic's grant
 
-*Harness pin-bump 9 (PLA-364) — adopting jinnd `138fdce` (M2-K26, the
-restart-window continuity and #49 riding on it; `jinn:plugin` 0.11.0 →
-0.12.0, prose only, additive). Kernel changes never here; this note is
+*Harness pin-bump 9 (PLA-364) — adopting jinnd `cb08683` (M2-K26 at
+`138fdce`, the restart-window continuity and #49 riding on it, plus its
+amendment 2 for FINDINGS #53 — the first candidate `138fdce` was held;
+`jinn:plugin` 0.11.0 → 0.12.0, prose only, additive). Kernel changes never here; this note is
 about what the harness could finally assert, and the nine emitters the
 adopting audit found ungranted.*
 
@@ -205,7 +206,7 @@ needs, and the closures.
 
 ## What the proofs say now
 
-| proof | red first (`b1dbe8f`) | green at `138fdce` |
+| proof | red first (`b1dbe8f`) | green at `138fdce` (first candidate) |
 |---|---|---|
 | 5 the restart window is closed | `0 REFUSED, 50 answered UNMODIFIED, walks with listeners=0: 50, refusal rows: []` |    `63 REFUSED typed restarting (first at 347 ms), 0 answered UNMODIFIED, walks with listeners=0: 0, one DispatchRefused { owed: Reload } per refused send, the new fold at 3.55 s, window 1.6 s` |
 | KG-6 an off-grant emit is refused | `status 200, walks 1, GrantRefused rows []` |    `status 502 refused "emit refused: grant refused: jinn:ui/before-send", walks 0, GrantRefused { contract: jinn:ui/before-send, reason: NotGranted } on jinn-api-http, the extension’s rows []` |
@@ -224,9 +225,10 @@ names the order taken. M2-K26 names sibling order out of scope and adds
 nothing to `DispatchTrace`; #52 stays open, its NOT-YET assertion as
 written.
 
-## What the pin broke — FINDINGS #53
+## What the first candidate pin broke — FINDINGS #53 (closed at `cb08683`)
 
-The final gate at the packet head is RED on two engines proofs
+The final gate at the first submission's head (`d2557ba`, pin
+`138fdce`) was RED on two engines proofs
 (`a_child_sees_only_the_environment_its_grant_admits`,
 `a_child_writing_far_past_its_budget_puts_at_most_the_budget_on_the_wire`):
 each restarts the spawn provider by a config edit and then runs a
@@ -245,6 +247,60 @@ and the citations; not patched, not vendored, not worked around
 (standing order 1). The two proofs stay red at this head — turning a
 proof of a working seam into a NOT-YET is a ruling, not an
 implementer's call — so the packet lands or holds on the COO's word.
+The COO held it; the fix landed; the closure is the next section.
+
+## The hold, and the re-targeted pin
+
+The COO held the bump on #53 (PLA-364 ruling: a pin that breaks cron
+after any config restart goes under neither the operator's instance
+nor the soak); the branch and its PR stayed intact, a kernel fix packet
+(M2-K26 amendment 2, jinnd PLA-366) ran on the kernel lane, and the
+bump resumed as a resubmission with the pin re-targeted to the fix's
+landed sha. jinnd `cb08683` = the fix `89f48fa` (a staged seat's
+`staging` flag is cleared at `commit_staged`, so a registration made
+after `activate` routes as on a first activation; the red daemon test
+`ea7ee82` precedes the fix `7bd8ea7`) plus the verifier's invariant
+(`cb6477f`, `ed1d0bc`). `wit/` and `contracts/` are byte-identical
+between `138fdce` and `cb08683` (`git diff --stat 138fdce cb08683 --
+wit contracts` is empty), so the pin commit (`b7960ae`, one commit on
+top — pushed history is never rewritten, so `c943ec2` stays in the
+branch's history as the superseded candidate) moves the commit line
+only: both hashes and the vendored trees are unchanged, checked
+byte-identical against `git archive cb08683 wit contracts`, and
+`jinn:plugin` stays 0.12.0.
+
+```text
+$ cargo test -p harness-pin
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.11s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.24s
+test result: ok. 39 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 5.21s
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+```
+
+(Gate 2 ran against the kernel checkout at `cb08683`; no skip line.)
+At the re-targeted pin the two engines proofs that were red by the
+kernel are green with no harness change but the pin, and the whole
+engines suite with them:
+
+```text
+$ cargo test -p composition --test engines
+test a_child_writing_far_past_its_budget_puts_at_most_the_budget_on_the_wire ... ok
+test a_child_sees_only_the_environment_its_grant_admits ... ok
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 305.93s
+```
+
+The run's ledger shows the post-restart `alarm-at` WAKING
+(`AlarmWake { alarm: 4 }` after the `ProcessExited`, then the drain and
+the `jinn:engine/event` trace; a second restart's run wakes on alarm 5)
+— the rows FINDINGS #53's closure carries. One correction the closure
+records: a post-activation `alarm-at` has no `EffectRegistered` row on
+ANY seat at this pin (a fresh seat's per-run alarm is an `AlarmWake`
+alone in every engines ledger), so the missing wake was the defect,
+never the missing row; noted, not filed. Everything else from the
+first submission — the grants audit, proof 5's flip, the KG-6 probe,
+the #47 pill, the kit tests — stands as committed; the whole
+composition suite is re-run at `cb08683` below.
 
 ## What did not move
 
