@@ -1517,7 +1517,11 @@ fn an_entry_emitting_off_its_topic_grant_is_refused_on_the_record() {
     // no walk traced; the listener never selected, never run.
     assert_eq!(refusals.len(), 1, "one GrantRefused row: {refusals:?}");
     let (entry, kind) = &refusals[0];
-    assert_eq!(entry.as_deref(), Some(TRANSPORT), "on the emitter's row: {kind}");
+    assert_eq!(
+        entry.as_deref(),
+        Some(TRANSPORT),
+        "on the emitter's row: {kind}"
+    );
     let row: serde_json::Value = serde_json::from_str(kind).expect("a JSON row");
     assert_eq!(
         row["GrantRefused"]["contract"], TOPIC_BEFORE_SEND,
