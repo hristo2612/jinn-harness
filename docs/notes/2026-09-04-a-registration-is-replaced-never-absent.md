@@ -206,12 +206,12 @@ needs, and the closures.
 
 ## What the proofs say now
 
-| proof | red first (`b1dbe8f`) | green at `138fdce` (first candidate) |
-|---|---|---|
-| 5 the restart window is closed | `0 REFUSED, 50 answered UNMODIFIED, walks with listeners=0: 50, refusal rows: []` |    `63 REFUSED typed restarting (first at 347 ms), 0 answered UNMODIFIED, walks with listeners=0: 0, one DispatchRefused { owed: Reload } per refused send, the new fold at 3.55 s, window 1.6 s` |
-| KG-6 an off-grant emit is refused | `status 200, walks 1, GrantRefused rows []` |    `status 502 refused "emit refused: grant refused: jinn:ui/before-send", walks 0, GrantRefused { contract: jinn:ui/before-send, reason: NotGranted } on jinn-api-http, the extension’s rows []` |
-| six kit tests, the emitters' grants | six panics, one per builder | six green, the grants written |
-| 5b ten boots deterministic | (unchanged proof) | `10/10 fresh boots reached transport active + listening + document served (652 s in all)` |
+| proof | red first (`b1dbe8f`) | green at `138fdce` (first candidate) | green at `cb08683` (adopted) |
+|---|---|---|---|
+| 5 the restart window is closed | `0 REFUSED, 50 answered UNMODIFIED, walks with listeners=0: 50, refusal rows: []` |    `63 REFUSED typed restarting (first at 347 ms), 0 answered UNMODIFIED, walks with listeners=0: 0, one DispatchRefused { owed: Reload } per refused send, the new fold at 3.55 s, window 1.6 s` | `49 REFUSED typed restarting (first at 340 ms), 0 answered UNMODIFIED, walks with listeners=0: 0, 49 DispatchRefused { owed: Reload } rows, the new fold at 3.46 s, window 1.55 s` |
+| KG-6 an off-grant emit is refused | `status 200, walks 1, GrantRefused rows []` |    `status 502 refused "emit refused: grant refused: jinn:ui/before-send", walks 0, GrantRefused { contract: jinn:ui/before-send, reason: NotGranted } on jinn-api-http, the extension’s rows []` | the same: `status 502 refused, walks 0, GrantRefused { jinn:ui/before-send, NotGranted } on jinn-api-http, the extension's rows []` |
+| six kit tests, the emitters' grants | six panics, one per builder | six green, the grants written | six green (unchanged code) |
+| 5b ten boots deterministic | (unchanged proof) | `10/10 fresh boots reached transport active + listening + document served (652 s in all)` | see the ui suite tail below |
 
 ## #52, re-measured
 
@@ -223,7 +223,9 @@ the ROW order was not — the rows are not the walk's witness in either
 direction, which is what proof 3 asserts, and no field on the trace
 names the order taken. M2-K26 names sibling order out of scope and adds
 nothing to `DispatchTrace`; #52 stays open, its NOT-YET assertion as
-written.
+written. At the adopted pin `cb08683` one more boot: fold
+`["ext-blue", "ext-green"]`, rows `["ext-blue", "ext-green"]` —
+agreeing this time, as the boot dealt; still open.
 
 ## What the first candidate pin broke — FINDINGS #53 (closed at `cb08683`)
 

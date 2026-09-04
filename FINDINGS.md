@@ -3126,6 +3126,16 @@ proof 5: after the edit — 9 answers with the OLD fold, 63 REFUSED typed `resta
 proof 5: every moment inside the window was refused typed `restarting`, none answered unmodified (FINDINGS #47 closed at this pin)
 ```
 
+Re-run at the ADOPTED pin `cb08683` (the `138fdce` candidate was held
+on #53; the moments suite in full, `--test-threads=1`, the same proof
+unchanged):
+
+```
+proof 5: after the edit — 7 answers with the OLD fold, 49 REFUSED typed `restarting` (first at Some(339.527125ms)), 0 answered the payload UNMODIFIED (fail-open; first at None), the new fold landed at 3.457584875s; walks with listeners=0 on the ledger: 0; refusal rows: [49 DispatchRefused { topic: jinn:ui/before-send, mode: Waterfall, target: ext-green, owed: Reload } rows, elided]; the old incarnation's suspension to the new one's Active: Some(1549) ms
+proof 5: every moment inside the window was refused typed `restarting`, none answered unmodified (FINDINGS #47 closed at this pin)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 799.30s
+```
+
 Read against the original transcript: the same edit, the same slow
 source, the same client posting every ~5 ms — and every send inside the
 window is a typed `503` naming `restarting`, zero answered unmodified,
@@ -3309,6 +3319,14 @@ and green at pin `138fdce`:
 KG-6: the transport with NO topic grant posted a moment — status 502, error {"code":"refused","detail":"emit refused: grant refused: jinn:ui/before-send"}, walks 0, GrantRefused rows [(Some("jinn-api-http"), "{"GrantRefused":{"contract":"jinn:ui/before-send","reason":"NotGranted","detail":null}}")], the extension's rows after the send []
 KG-6: an emit without the topic's grant is refused on the record (FINDINGS #49 closed at this pin)
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 106.81s
+```
+
+Re-run at the ADOPTED pin `cb08683` (the moments suite in full):
+
+```
+KG-6: the transport with NO topic grant posted a moment — status 502, error {"code":"refused","detail":"emit refused: grant refused: jinn:ui/before-send"}, walks 0, GrantRefused rows [(Some("jinn-api-http"), "{"GrantRefused":{"contract":"jinn:ui/before-send","reason":"NotGranted","detail":null}}")], the extension's rows after the send []
+KG-6: an emit without the topic's grant is refused on the record (FINDINGS #49 closed at this pin)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 799.30s
 ```
 
 The transport with its three `jinn:ui/*` grants stripped is refused on
@@ -3525,8 +3543,9 @@ NOT-YET assertion on the reading's absence (the trace has no
 `deliveries`/`order` field): a pin that names its deliveries fails it
 and the proof is flipped to assert the fold against that reading.
 
-**Re-measured at pin `138fdce` (jinnd M2-K26, harness pin-bump 9) —
-OPEN, unchanged.** M2-K26 names listener order as a declaration out of
+**Re-measured at pin `138fdce` and again at the adopted pin `cb08683`
+(jinnd M2-K26 and its amendment 2, harness pin-bump 9) — OPEN,
+unchanged.** M2-K26 names listener order as a declaration out of
 scope ("registration order stays activation order") and adds no field to
 `DispatchTrace`. Proof 3 at the pin, three solo runs:
 
@@ -3541,6 +3560,19 @@ run 3:
 proof 3: two extensions folded — answer "hello 🔵 🟢", fold order ["ext-blue", "ext-green"], listen rows ["ext-blue", "ext-green"] (KG-3 / FINDINGS #52: the order across siblings is what the boot dealt, and the listen rows are not its witness)
 test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 98.94s
 ```
+
+Re-measured once more at the ADOPTED pin `cb08683` (M2-K26 amendment 2
+touches the seat's commit, nothing about sibling order; the moments
+suite in full):
+
+```
+proof 3: two extensions folded — answer "hello 🔵 🟢", fold order ["ext-blue", "ext-green"], listen rows ["ext-blue", "ext-green"] (KG-3 / FINDINGS #52: the order across siblings is what the boot dealt, and the listen rows are not its witness)
+test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 799.30s
+```
+
+One boot, the rows and the fold agreeing this time — which is the
+point: they agree or disagree as the boot deals, and the trace still
+names neither. OPEN, unchanged.
 
 The order across two siblings is still what the boot dealt, the listen
 rows are still not its witness, and the trace still carries counts
