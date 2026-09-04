@@ -1476,12 +1476,20 @@ fn an_entry_emitting_off_its_topic_grant_is_refused_on_the_record() {
     };
     let baseline = last_seq(&daemon);
     let answer = send(port);
-    let refusals: Vec<(Option<String>, String)> = daemon
-        .ledger_rows()
-        .iter()
-        .filter(|row| row.seq > baseline && row.kind.contains("GrantRefused"))
-        .map(|row| (row.entry.clone(), row.kind.clone()))
-        .collect();
+    // The ledger is read after its batch lands (the refusal row is the
+    // kernel's, appended on the broker's clock, not the answer's).
+    let grant_refusals = || -> Vec<(Option<String>, String)> {
+        daemon
+            .ledger_rows()
+            .iter()
+            .filter(|row| row.seq > baseline && row.kind.contains("GrantRefused"))
+            .map(|row| (row.entry.clone(), row.kind.clone()))
+            .collect()
+    };
+    daemon.eventually("the refusal (or a walk) on the ledger", || {
+        !grant_refusals().is_empty() || !traces(&daemon, baseline).is_empty()
+    });
+    let refusals = grant_refusals();
     let walks = traces(&daemon, baseline).len();
     let extension_rows: Vec<String> = daemon
         .ledger_rows()
