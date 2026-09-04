@@ -16,7 +16,11 @@ pub const STORE_ID: &str = "jinn-settings-store";
 /// kernel's readiness wakes), and it holds `jinn:auth` BARE — the door
 /// (packet 2.8): the bundle declares no scope, a scoped grant would
 /// refuse at admission, and without the grant the provider cannot ask
-/// and answers every request `refused`; the status consumer holds the read-only
+/// and answers every request `refused` — and, at pin `f8b285b` (jinnd
+/// M2-K23, FINDINGS #37), `jinn:profile-admin` over EVERY entry (the scope
+/// WRITTEN: a bare grant administers nothing): the transport is the
+/// operator's delegate by the operator's own document, and each admin
+/// route is one call on it; the status consumer holds the read-only
 /// kernel contracts (`jinn:introspect`, `jinn:ledger`) and reads the
 /// document of record through a `jinn:profile` grant attenuated to
 /// `ops: ["document"]` — a viewer that CANNOT patch (FINDINGS.md #24
@@ -38,6 +42,7 @@ pub fn api_entries(http: &str, status: &str, edit: &str, port: u16) -> Vec<serde
           "config": { "grants": [
                           { "contract": "jinn:net", "scope": { "bind": [port, port] } },
                           jinn_api::AUTH_CONTRACT,
+                          { "contract": jinn_api::profile_admin::ADMIN_CONTRACT, "scope": ["*"] },
                           jinn_api::STATUS_CONTRACT, jinn_api::PROFILE_CONTRACT,
                           jinn_settings::SETTINGS_CONTRACT ],
                       "data": { "port": port } } }),
@@ -81,6 +86,34 @@ pub fn settings_entries(provider: &str, store: &str, owners: &[&str]) -> Vec<ser
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Pin-bump 10 (jinnd M2-K23, FINDINGS #37): the transport is the
+    /// operator's delegate by the operator's own document — its entry
+    /// carries `{ contract: "jinn:profile-admin", scope: ["*"] }`, the
+    /// scope WRITTEN (a bare grant administers nothing), in every profile
+    /// that mounts the api trio.
+    #[test]
+    fn the_transport_is_granted_profile_admin_over_every_entry() {
+        let entries = api_entries("http", "status", "edit", 7000);
+        let transport = &entries[0];
+        assert_eq!(transport["id"], PROVIDER_ID);
+        let grants = transport["config"]["grants"].as_array().expect("grants");
+        assert!(
+            grants
+                .contains(&serde_json::json!({ "contract": "jinn:profile-admin", "scope": ["*"] })),
+            "the transport holds jinn:profile-admin over every entry, scope written: {grants:?}"
+        );
+        for other in &entries[1..] {
+            let held = other["config"]["grants"].as_array().expect("grants");
+            assert!(
+                !held
+                    .iter()
+                    .any(|grant| grant["contract"] == "jinn:profile-admin"),
+                "only the transport administers: {} holds {held:?}",
+                other["id"]
+            );
+        }
+    }
 
     /// The settings provider EMITS `jinn:settings/changed` after a landed
     /// patch and `jinn:settings/refused` after a refused one; at pin

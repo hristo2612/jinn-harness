@@ -7,6 +7,10 @@ const listPlugins = vi.fn()
 vi.mock("@/lib/api", () => ({ api: { listPlugins: (...args: unknown[]) => listPlugins(...args) } }))
 const authFetch = vi.fn()
 vi.mock("@/lib/auth", () => ({ authFetch: (...args: unknown[]) => authFetch(...args) }))
+const setDisabled = vi.fn()
+vi.mock("@/lib/profile-admin", () => ({
+  profileAdmin: { setDisabled: (...args: unknown[]) => setDisabled(...args) },
+}))
 
 const { usePluginInventory, useRescanPlugins, useRevealPlugin, useTogglePlugin } = await import("../inventory")
 
@@ -18,12 +22,15 @@ function wrapper() {
 beforeEach(() => {
   listPlugins.mockReset()
   authFetch.mockReset()
+  setDisabled.mockReset()
 })
 
 // UI-1 §4.2 item 10 (§8 amendment 6): the inventory's read is the daemon's
 // `main` catalog through item 1's adapter, one function, the inventory's own
-// row shape; the old gateway's writes have no `/v1` counterpart and refuse
-// client-side, sending nothing.
+// row shape. Pin-bump 10 (jinnd M2-K23, FINDINGS #37 closed): the toggle is
+// ONE `jinn:profile-admin` write through `PATCH /v1/profile/entries/{id}
+// { disabled }`; reveal and rescan still have no counterpart — a catalog
+// entry is not a folder — and refuse client-side, sending nothing.
 describe("the plugins inventory on the daemon", () => {
   it("reads the main catalog through the /v1 adapter in the inventory's shape", async () => {
     listPlugins.mockResolvedValue({
@@ -48,17 +55,35 @@ describe("the plugins inventory on the daemon", () => {
     expect(authFetch).not.toHaveBeenCalled()
   })
 
-  it("refuses a write client-side and sends nothing (FINDINGS #37 / KG-1)", async () => {
-    const { result } = renderHook(
-      () => ({ toggle: useTogglePlugin(), reveal: useRevealPlugin(), rescan: useRescanPlugins() }),
-      { wrapper: wrapper() },
-    )
+  it("toggles a plugin as one jinn:profile-admin write: PATCH { disabled } (pin f8b285b, #37 closed)", async () => {
+    setDisabled.mockResolvedValue({ "api-version": "0.3.0", id: "jinn-cron", write: "set-disabled", "administered-seq": 7 })
+    const { result } = renderHook(() => useTogglePlugin(), { wrapper: wrapper() })
 
-    await expect(result.current.toggle.mutateAsync({ id: "jinn-cron", enabled: false })).rejects.toThrow("config only")
-    await expect(result.current.reveal.mutateAsync("jinn-cron")).rejects.toThrow("config only")
-    await expect(result.current.rescan.mutateAsync()).rejects.toThrow("config only")
+    await expect(result.current.mutateAsync({ id: "jinn-cron", enabled: false })).resolves.toMatchObject({
+      write: "set-disabled",
+      "administered-seq": 7,
+    })
+    expect(setDisabled).toHaveBeenCalledWith("jinn-cron", true)
+
+    await expect(result.current.mutateAsync({ id: "jinn-cron", enabled: true })).resolves.toMatchObject({ write: "set-disabled" })
+    expect(setDisabled).toHaveBeenLastCalledWith("jinn-cron", false)
+  })
+
+  it("surfaces the kernel's typed refusal from the toggle, unchanged", async () => {
+    setDisabled.mockRejectedValue(new Error("set-disabled refused (conflict): an operation is in flight on the entry"))
+    const { result } = renderHook(() => useTogglePlugin(), { wrapper: wrapper() })
+
+    await expect(result.current.mutateAsync({ id: "jinn-cron", enabled: false })).rejects.toThrow("conflict")
+  })
+
+  it("reveal and rescan still have no counterpart: a catalog entry is not a folder", async () => {
+    const { result } = renderHook(() => ({ reveal: useRevealPlugin(), rescan: useRescanPlugins() }), { wrapper: wrapper() })
+
+    await expect(result.current.reveal.mutateAsync("jinn-cron")).rejects.toThrow("not a folder")
+    await expect(result.current.rescan.mutateAsync()).rejects.toThrow("not a folder")
 
     expect(authFetch).not.toHaveBeenCalled()
+    expect(setDisabled).not.toHaveBeenCalled()
     expect(listPlugins).not.toHaveBeenCalled()
   })
 })

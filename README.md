@@ -13,6 +13,34 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
+Pin-bump 10 — kernel pin `f8b285b` (M2-K23, `jinn:profile-admin` 0.1.0;
+`jinn:profile` 0.3.0; `wit/` byte-identical to `cb08683`, no world
+change). **The composition's shape is a write, not a file edit.** The
+transport is the operator's delegate by the operator's own document —
+its entry carries `{ contract: "jinn:profile-admin", scope: ["*"] }` in
+every kit — and `POST /v1/profile/entries`, `DELETE
+/v1/profile/entries/{id}`, `PATCH … {disabled}`, `PATCH … {grants}` and
+`PATCH … {package, hash}` are ONE `jinn:profile-admin` call each: a
+`ProfileAdministered { write }` row under the transport before the
+commit, the answer naming that row's sequence, the restart, spawn or
+disposal it schedules followed on the ledger. The config `PATCH` beside
+them stays confined to `config.data`; a `grants` through it is the
+kernel's typed refusal (K23 (d)), proven. FINDINGS #37 CLOSES at the
+pin: the swap every seam proved by a file edit is one write, and the
+proof that carried #37 flipped and was renamed
+(`the_operator_api_swaps_what_a_plugin_is_and_the_old_incarnation_is_disposed_until_m2_k27`).
+The five #37 pills on the plugins page are live actions (install,
+remove, widen topics, swap engine, the disable switch), a refusal
+rendered inline in the kernel's words; the NOT-YET list is empty and
+its mechanism stays. What it is NOT: the swap WINDOW — at this pin
+`swap-plugin` is dispose-then-spawn (the old incarnation
+`ExplicitDispose`, never suspended; a reply-expecting walk between the
+two selects nobody, never `restarting`), the bundle's STATED 0.1.0 limit
+carded as jinnd M2-K27 and pinned by the flipped proof's window
+assertion; #52's reading, re-measured and open; reveal and rescan, which
+have no counterpart because a catalog entry is not a folder
+(`docs/notes/2026-09-04-a-shape-is-a-write.md`).
+
 Pin-bump 9 — kernel pin `cb08683` (M2-K26 with its amendment 2; the
 first candidate `138fdce` was HELD on FINDINGS #53 and never landed).
 **A registration is replaced, never absent — and an emit is covered by
@@ -245,11 +273,15 @@ EQUAL across the swap, not merely "it still answers"
 That is only possible because this seam was designed for it.
 `jinn:profile.patch-entry` writes ONE subtree, `config`, so the
 package-and-hash swap the other six seams prove by editing the profile
-file is not reachable through the operator API at all (`FINDINGS.md` #37).
-Both catalog providers therefore read their catalog id from config and are
-granted both catalog names up front. The distribution's headline claim —
-*swapping a provider is a profile edit* — was true only of an operator
-with filesystem access to the document, and now says so.
+file was not reachable through the operator API at pins before `f8b285b`
+(`FINDINGS.md` #37, CLOSED at `f8b285b`: `PATCH /v1/profile/entries/{id}
+{package, hash}` is one `jinn:profile-admin.swap-plugin` write). Both
+catalog providers read their catalog id from config and are granted both
+catalog names up front — the config-decided swap this seam was designed
+with, kept as a second, restart-free path. The distribution's headline
+claim — *swapping a provider is a profile edit* — was true only of an
+operator with filesystem access to the document; since pin-bump 10 it is
+true of the operator API too.
 
 **A catalog READS; it does not run.** Every value is licensed by the
 evidence that produced it, and `active` is reachable from exactly one
@@ -646,8 +678,10 @@ Its own README carries these in full; the load-bearing ones:
   operated the surface a person or an agent actually has and found that
   `jinn:profile.patch-entry` writes one subtree — `config` — and nothing
   else. The distribution's headline claim, *a product is a profile and
-  swapping a provider is a profile edit*, is true today only of an
-  operator with filesystem access to the document. This seam's own swap
+  swapping a provider is a profile edit*, was true only of an operator
+  with filesystem access to the document until pin `f8b285b` (jinnd
+  M2-K23, pin-bump 10), where the swap is one `jinn:profile-admin`
+  write and #37 closed. This seam's own swap
   works because it was DESIGNED so its binding is decided by config; a
   seam that did not think of that in advance has no API-driven swap at
   all. It has a transcript, and it goes to the M3 parity conversation
@@ -775,10 +809,12 @@ Its own README carries these in full; the load-bearing ones:
   kernel's answer to sibling order covers declared injections only).
   Proof 3 names both orders and asserts neither is the other's witness.
 - **Installing, removing, disabling an extension, widening its topics or
-  swapping its engine are profile edits, not clicks** (#37; the K23 split,
-  plan §9.5), rendered DISABLED on the extension's row with the finding
-  (#48 is answered at pin `b1dbe8f` and its pill went with pin-bump 8;
-  #47 at pin `cb08683` with pin-bump 9) — never silently absent.
+  swapping its engine are CLICKS since pin `f8b285b`** (#37 closed; the
+  K23 split, plan §9.5; pin-bump 10): one `jinn:profile-admin` write each
+  from the transport, the refusal rendered on the row. Before it they
+  were profile edits rendered DISABLED with the finding (#48 answered at
+  `b1dbe8f`, pin-bump 8; #47 at `cb08683`, pin-bump 9; #37 at `f8b285b`)
+  — never silently absent; the NOT-YET mechanism stays, empty.
   Editing an installed extension's `source`, `origin` or
   already-granted `topics` IS `PATCH /v1/profile/entries/{id}` today.
 - **The two chat topics are dispatchable and proven, and reached by no

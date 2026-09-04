@@ -1680,6 +1680,25 @@ enumerated adaptations.
   failing tails per proof) under `docs/notes/`. (f) Every NOT-YET item is
   disabled on the page with its finding number, never silently absent.
 
+- **Amendment 9 (pin-bump 10, PLA-368, 2026-09-04).** Kernel pin
+  `cb08683` → `f8b285b` (jinnd M2-K23 `jinn:profile-admin` 0.1.0 with its
+  verifier lane; `jinn:profile` 0.3.0; `wit/` unchanged). The limitation
+  §9.5 carried into UI-2 — the five #37 items rendered DISABLED on the
+  extension's row — is RETIRED: the transport's `ui` root entry carries
+  `{ contract: "jinn:profile-admin", scope: ["*"] }` (the operator's
+  document naming its delegate, in every kit), and `POST
+  /v1/profile/entries`, `DELETE /v1/profile/entries/{id}`, `PATCH …
+  {disabled}`, `PATCH … {grants}`, `PATCH … {package, hash}` are one
+  `jinn:profile-admin` call each, refusals typed as every `refused` is;
+  the config `PATCH` stays confined to `config.data` (K23 (d) proven as a
+  refusal). Install, remove, disable, widen topics and swap engine are
+  live on the plugin row; the NOT-YET list is empty and its mechanism
+  stays (8(f)). FINDINGS #37 CLOSED at the pin with the transcript; the
+  `swap-plugin` window is the bundle's STATED 0.1.0 limit (dispose, then
+  spawn; jinnd M2-K27) and the flipped proof pins its shape. **UI-7 (the
+  plugin tree) is UNBLOCKED**: its enable/disable, install and remove are
+  the routes this bump proves. #52 re-measured at the pin, open.
+
 ---
 
 ## Appendix - the spike, reproducibly

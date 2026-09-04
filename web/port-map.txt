@@ -113,6 +113,7 @@ verbatim	packages/web/src/lib/api-todo-capture.ts	src/lib/api-todo-capture.ts
 verbatim	packages/web/src/lib/api-workflow-lifecycle.ts	src/lib/api-workflow-lifecycle.ts
 adapted	packages/web/src/lib/api.ts	src/lib/api.ts	1,13
 new	-	src/lib/api-v1-wire.ts
+new	-	src/lib/profile-admin.ts
 new	-	src/lib/api-moments.ts	13
 new	-	src/lib/api-write.ts	13
 new	-	src/lib/__tests__/api-config.test.ts	13
@@ -225,6 +226,7 @@ verbatim	packages/web/src/routes/settings/plugins/entry.tsx	src/routes/settings/
 adapted	packages/web/src/routes/settings/plugins/inventory.ts	src/routes/settings/plugins/inventory.ts	10
 new	-	src/routes/settings/plugins/__tests__/inventory.test.ts	10
 new	-	src/routes/settings/plugins/__tests__/plugin-row.test.tsx	14
+new	-	src/routes/settings/plugins/actions.tsx
 new	-	src/routes/settings/plugins/not-yet.tsx	14
 adapted	packages/web/src/routes/settings/plugins/page.tsx	src/routes/settings/plugins/page.tsx	4
 verbatim	packages/web/src/routes/settings/plugins/plugin-list.tsx	src/routes/settings/plugins/plugin-list.tsx

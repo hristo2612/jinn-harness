@@ -2166,6 +2166,103 @@ The route works, the grant is held, the entry is patchable — and the
 package is exactly what it was. What an operator may change is what a
 plugin is CONFIGURED with; what a plugin IS stays out of reach.
 
+### CLOSED at pin `f8b285b` — the composition's shape is a write (jinnd M2-K23, harness pin-bump 10)
+
+jinnd M2-K23 (`598a03c`, its verifier lane merged as `f8b285b`) is the
+first capability shape named above, widened: not one `replace-entry` but
+a bundle, `jinn:profile-admin` 0.1.0 — `add-entry`, `remove-entry`,
+`set-disabled`, `set-grants`, `swap-plugin` — under its own grant on the
+CALLING entry (scope type `entry-ids`, `*` only when written, `ops`
+attenuation), each applied by the loader as the plan step the
+document-led diff would produce for that entry, ledgered as
+`ProfileAdministered { entry, by, write, before, after, prior }` BEFORE
+the commit, the inverse write's payload on the row. And the second
+shape too, made a refusal rather than a sentence: `jinn:profile` 0.3.0
+refuses a `patch-entry` whose `grants` differ from the committed ones
+(K23 (d)), so the config route can no longer carry authority by
+accident. `wit/` is byte-identical to `cb08683`; the world did not move.
+
+The harness adopts it as the K23 card's "Harness consequence" rules
+(PLA-368): the transport's entry carries `{ contract:
+"jinn:profile-admin", scope: ["*"] }` in every kit — the operator's
+document naming its delegate — and `POST /v1/profile/entries`, `DELETE
+/v1/profile/entries/{id}`, `PATCH … {disabled}`, `PATCH … {grants}`,
+`PATCH … {package, hash}` are one call each from the transport
+(`plugins/api/jinn-api/src/profile_admin.rs`,
+`plugins/api/jinn-api-http/src/profile_admin.rs`). The proof that
+carried this entry flipped and was renamed —
+`tests/composition/tests/plugins.rs::the_operator_api_swaps_what_a_plugin_is_and_the_old_incarnation_is_disposed_until_m2_k27`
+— and one proof per write landed in
+`tests/composition/tests/profile_admin.rs`, each reading the row under
+the transport and the live effect. The five pills on the plugins page
+are live actions; the sentence "install is a file edit" is gone.
+
+**Transcript** (`cargo test -p composition --test plugins --test
+profile_admin --no-fail-fast -- --nocapture --test-threads=2`, the
+pinned daemon from `git archive f8b285b`). The swap this entry was filed
+on, through the same route as the round-2 transcript above:
+
+```
+FINDINGS #37 transcript — PATCH /v1/profile/entries/jinn-plugins-appliance {"package": "plugins/jinn-plugins-profile", "hash": …}
+HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: 98
+Connection: close
+
+{"administered-seq":215,"api-version":"0.4.0","id":"jinn-plugins-appliance","write":"swap-plugin"}
+swap window rows 223..229: 5 rows, 0 DispatchRefused, traces ["\"jinn:introspect/transitions\" listeners 1"]
+test the_operator_api_swaps_what_a_plugin_is_and_the_old_incarnation_is_disposed_until_m2_k27 ... ok
+test result: ok. 12 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 200.73s
+```
+
+Row 215 is `ProfileAdministered { entry: jinn-plugins-appliance, by:
+jinn-api-http, write: SwapPlugin, prior: …"plugins/jinn-plugins-static"… }`
+under the transport; the old incarnation rests `Disposed` under
+`ExplicitDispose` with no `FiberSuspended` row; the successor is a
+different fiber, `active`, on `plugins/jinn-plugins-profile` in the
+status report AND in the document of record; and the config patch
+through the same path still lands (`ledger-limit: 64`, package
+untouched). The window (rows 223..229) carries zero `DispatchRefused`
+and one emit-mode trace on the introspect topic (the live catalog's
+listener) — the fixture lands no reply-expecting walk on the swapped
+entry, so the drop is the kernel's own case
+(`a_swap_disposes_the_old_incarnation_a_stated_limit_until_m2_k27`)
+and the harness pins the window's shape: dispose-then-spawn, never
+`restarting`. **That window is the bundle's STATED 0.1.0 limit, carded
+as jinnd M2-K27**; the proof's suffix and its window assertion flip with
+it.
+
+The other four writes and the three refusals, one boot each:
+
+```
+FINDINGS #37 transcript (add)      POST /v1/profile/entries
+HTTP/1.1 200 OK   {"administered-seq":219,"api-version":"0.4.0","id":"jinn-plugins-added","write":"add-entry"}
+  → row 219 ProfileAdministered { write: Add, prior: null } under jinn-api-http; jinn-plugins-added active; in the document
+FINDINGS #37 transcript (remove)   DELETE /v1/profile/entries/jinn-plugins-appliance
+HTTP/1.1 200 OK   {"administered-seq":212,"api-version":"0.4.0","id":"jinn-plugins-appliance","write":"remove-entry"}
+  → row 212 { write: Remove, prior: …static… }; FiberTransition → Disposed; ServiceWithdrawn jinn:plugins.parked; gone from the document and the status; GET /v1/plugins/parked ≠ 200
+FINDINGS #37 transcript (self)     PATCH /v1/profile/entries/jinn-api-http {"disabled": true}
+HTTP/1.1 502 Bad Gateway   {"api-version":"0.4.0","error":{"code":"refused","detail":"set-disabled refused (unauthorized): an entry cannot administer itself or an ancestor","class":"unauthorized","retryable":false}}
+FINDINGS #37 transcript (disable)  PATCH … {"disabled": true}
+HTTP/1.1 200 OK   {"administered-seq":205,…,"write":"set-disabled"}      → Disposed; document disabled: true; not active
+FINDINGS #37 transcript (enable)   PATCH … {"disabled": false}
+HTTP/1.1 200 OK   {"administered-seq":274,…,"write":"set-disabled"}      → a NEW fiber active; parked served by plugins/jinn-plugins-static again
+FINDINGS #37 transcript (grants)   PATCH … {"grants": [… + "jinn:clock"]}
+HTTP/1.1 200 OK   {"administered-seq":188,…,"write":"set-grants"}        → the restart (ConfigChanged) AFTER row 188; incarnation +1; the widened list in the status and the document
+FINDINGS #37 transcript (ungranted)  the transport booted WITHOUT the grant; PATCH … {"disabled": true}
+HTTP/1.1 502 Bad Gateway   {"api-version":"0.4.0","error":{"code":"refused","detail":"jinn:profile-admin is not resolvable from this entry (no grant?): KernelError::GrantRefused(\"grant refused: jinn:profile-admin\")"}}
+  → nothing written: the entry active, zero ProfileAdministered rows after the baseline
+FINDINGS #37 transcript (d)        PATCH … {"config": {"grants": [… + "jinn:clock"]}}   (the config route)
+HTTP/1.1 502 Bad Gateway   {"api-version":"0.4.0","error":{"code":"refused","detail":"patch-entry refused: grants are jinn:profile-admin's","retryable":false}}
+  → an AmendmentRefused row; grants and incarnation unchanged
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 108.49s
+```
+
+What an operator may change through the surface they actually have is
+now what a plugin IS, what it may reach, and whether it runs — one
+ledgered intent each, reversible from the row. The config-decided swap
+this seam was built with stays as a second, restart-free path. CLOSED.
+
 ## 38. A guest's activation failure records its STATE and never its REASON, so no plugin can report why a plugin failed
 
 **Grade: source-cited, with the pre-activation half reproduced under a
@@ -3573,6 +3670,19 @@ test result: ok. 11 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; fin
 One boot, the rows and the fold agreeing this time — which is the
 point: they agree or disagree as the boot deals, and the trace still
 names neither. OPEN, unchanged.
+
+**Re-measured at pin `f8b285b` (jinnd M2-K23 `jinn:profile-admin`,
+harness pin-bump 10, PLA-368) — OPEN, unchanged.** M2-K23 is the
+composition's shape as a write and touches no `DispatchTrace` field;
+proof 3 solo at the pin, one boot:
+
+```
+proof 3: two extensions folded — answer "hello 🔵 🟢", fold order ["ext-blue", "ext-green"], listen rows ["ext-blue", "ext-green"] (KG-3 / FINDINGS #52: the order across siblings is what the boot dealt, and the listen rows are not its witness)
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 153.72s
+```
+
+The rows and the fold agreed on this boot; the trace still carries
+counts only, and the NOT-YET assertion stands as written.
 
 The order across two siblings is still what the boot dealt, the listen
 rows are still not its witness, and the trace still carries counts

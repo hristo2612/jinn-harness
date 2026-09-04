@@ -37,7 +37,12 @@ provider exposes ONE surface:
 | `GET` | `/v1/health` | `jinn:api-status` / `health` | — |
 | `GET` | `/v1/ledger/tail?after=N&limit=M` | `jinn:api-status` / `ledger-tail` | `{after, limit}` |
 | `GET` | `/v1/profile` | `jinn:api-profile` / `get` | — |
-| `PATCH` | `/v1/profile/entries/{id}` | `jinn:api-profile` / `patch-entry` | the JSON body + `id` from the path |
+| `PATCH` | `/v1/profile/entries/{id}` | `jinn:api-profile` / `patch-entry` | the JSON body (`{config}`) + `id` from the path — confined to `config.data`; a `grants` through it is the kernel's typed refusal (`jinn:profile` 0.3.0, M2-K23 (d)) |
+| `POST` | `/v1/profile/entries` | `jinn:profile-admin` / `add-entry` | the 0.2.0 `entry` record (`{id, package, hash, grants, config, …}`) |
+| `DELETE` | `/v1/profile/entries/{id}` | `jinn:profile-admin` / `remove-entry` | `id` from the path (a leaf; no cascade) |
+| `PATCH` | `/v1/profile/entries/{id}` | `jinn:profile-admin` / `set-disabled` | `{disabled}` + `id` from the path |
+| `PATCH` | `/v1/profile/entries/{id}` | `jinn:profile-admin` / `set-grants` | `{grants}` (the whole list) + `id` from the path |
+| `PATCH` | `/v1/profile/entries/{id}` | `jinn:profile-admin` / `swap-plugin` | `{package, hash [, version]}` + `id` from the path |
 | `GET` | `/v1/settings` | `jinn:settings` / `namespaces` | — |
 | `GET` | `/v1/settings/{ns}` | `jinn:settings` / `get` | `{namespace}` from the path |
 | `PATCH` | `/v1/settings/{ns}` | `jinn:settings` / `patch` | the JSON body (`{patch}`) + `namespace` from the path |
@@ -46,6 +51,20 @@ provider exposes ONE surface:
 | `POST` | `/v1/engines/{engine}/runs` | `jinn:engine.{engine}` / `run` | the JSON body (a `RunRequest` minus `engine`) + `engine` from the path |
 | `GET` | `/v1/engines/{engine}/runs/{run-id}` | `jinn:engine.{engine}` / `run-get` | `{run-id}` from the path |
 | `DELETE` | `/v1/engines/{engine}/runs/{run-id}` | `jinn:engine.{engine}` / `cancel` | `{run-id}` from the path |
+
+The admin rows (pin `f8b285b`, jinnd M2-K23; FINDINGS #37 closed) are
+ONE `jinn:profile-admin` call each from the transport itself — the
+operator's delegate by the operator's own document (the kits grant the
+transport `{ contract: "jinn:profile-admin", scope: ["*"] }`). A `PATCH`
+body names exactly one write, or `{config}`; two is `invalid` before any
+kernel call. An accepted write answers `{id, write, administered-seq}` —
+the `ProfileAdministered` row's sequence, the INTENT landed before the
+commit; the restart, spawn or disposal it schedules is followed on the
+ledger, never awaited. A refusal is `refused` with the kernel's `class`
+(`unauthorized` | `malformed` | `conflict` | `irreversible`) verbatim and
+`retryable` (true only for `conflict`). The `swap-plugin` window at this
+pin is the bundle's stated 0.1.0 limit (dispose, then spawn; jinnd
+M2-K27) — `kernel-pin/contracts/jinn-profile-admin/README.md`.
 
 The settings rows (0.2.0) route to the settings seam's provider directly:
 its envelope is this seam's envelope (`plugins/settings/jinn-settings/README.md`),

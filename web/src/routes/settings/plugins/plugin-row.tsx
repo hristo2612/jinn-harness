@@ -5,12 +5,14 @@ import { api } from "@/lib/api"
 import { ToggleSwitch } from "../shared"
 import type { PluginInventoryRow, PluginStatus } from "./inventory"
 import { NotYet } from "./not-yet"
+import { RowActions } from "./actions"
 
-/** UI-1 (docs/plans/ui-malleability-arc.md §4.2 item 4): why every control on
- *  a row is disabled. The operator API writes config only; a plugin's shape is
- *  a profile edit. */
-export const READ_ONLY_REASON =
-  "FINDINGS #37 / KG-1 (PLA-348): a plugin's shape is a profile edit; the operator API writes config only"
+/** Why reveal (and the page's rescan) stay disabled at pin `f8b285b`: a
+ *  catalog entry is the document of record's, not a folder — there is nothing
+ *  on disk to open and nothing to rescan. Every other control is live
+ *  (pin-bump 10, FINDINGS #37 closed): one `jinn:profile-admin` write each. */
+export const NO_FOLDER_REASON =
+  "A catalog entry is not a folder: the composition is the document of record, administered through jinn:profile-admin (pin f8b285b)"
 
 /** An inventory row with the catalog's lifecycle reading beside it. */
 export type CatalogRow = PluginInventoryRow & {
@@ -18,6 +20,12 @@ export type CatalogRow = PluginInventoryRow & {
   incarnation?: number
   package?: string
   provides?: string[]
+  /** The entry's grants as the catalog reads them — what "widen topics" and
+   *  "install" start from. */
+  grants?: unknown[]
+  /** The kernel's refusal of the last toggle on this row, when it refused
+   *  (pin-bump 10) — carried on the row so the verbatim list stays verbatim. */
+  refusal?: string
   /** UI-2 (§9.2 item 14): the entry's declared `origin`, when it has one, and
    *  the digest of its source (§9.7 amendment 8(d)). */
   attestation?: { origin: string; source?: string }
@@ -168,7 +176,7 @@ function RevealButton({ name, onReveal }: { name: string; onReveal: () => void }
       aria-label={`Open the ${name} folder`}
       aria-disabled="true"
       disabled
-      title={READ_ONLY_REASON}
+      title={NO_FOLDER_REASON}
       onClick={onReveal}
       className="grid size-[34px] place-items-center rounded-full text-[var(--text-tertiary)] opacity-50"
     >
@@ -177,8 +185,9 @@ function RevealButton({ name, onReveal }: { name: string; onReveal: () => void }
   )
 }
 
-/** The row's controls: history opens; reveal and the switch are disabled with
- *  the finding (`READ_ONLY_REASON`) on each.
+/** The row's controls: history opens; reveal is disabled with its reason
+ *  (`NO_FOLDER_REASON`); the switch is LIVE — `set-disabled`, a disposal or a
+ *  fresh incarnation (pin-bump 10).
  *
  *  A broken plugin carries no switch. Its inventory row says "error" and not
  *  which of the operator's two lists it is in, so a switch here would have to
@@ -213,11 +222,7 @@ function RowControls({
       <RevealButton name={plugin.name} onReveal={onReveal} />
       {/* The switch's width is held whether or not there is a switch, so the
           reveal buttons stay in one column down the list. */}
-      <span
-        className="flex w-[44px] flex-none justify-end opacity-50 pointer-events-none"
-        aria-disabled="true"
-        title={READ_ONLY_REASON}
-      >
+      <span className="flex w-[44px] flex-none justify-end">
         {decidable && (
           <ToggleSwitch
             checked={plugin.status === "loaded"}
@@ -233,7 +238,9 @@ function RowControls({
 /**
  * One plugin. Everything an operator needs to decide about it is on the row:
  * what it is, what it can reach, whether it is running, and why not when it is
- * not. The controls are disabled (see `READ_ONLY_REASON`); the history opens.
+ * not — and, since pin `f8b285b`, what to do about it: the four actions and
+ * the switch each cost one ledgered write; `plugin.refusal` is the switch's,
+ * when the kernel refused the last toggle. The history opens.
  */
 export function PluginRow({
   plugin,
@@ -259,6 +266,7 @@ export function PluginRow({
         onToggle={onToggle}
         onReveal={onReveal}
       />
+      <RowActions plugin={plugin} refusal={plugin.refusal} />
       {historyOpen && (
         <div className="basis-full pl-1 text-[length:var(--text-caption1)] leading-relaxed text-[var(--text-secondary)]">
           <PluginHistory id={plugin.id} />

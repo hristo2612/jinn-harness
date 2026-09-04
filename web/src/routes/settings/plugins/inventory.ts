@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import { GATEWAY_EVENTS } from "@jinn/gateway-events"
 import { useGateway } from "@/hooks/use-gateway"
 import { api, type PluginCatalogEntryWire } from "@/lib/api"
+import { profileAdmin } from "@/lib/profile-admin"
 
 /**
  * The `/settings/plugins` data lane.
@@ -10,10 +11,11 @@ import { api, type PluginCatalogEntryWire } from "@/lib/api"
  * UI-1 (docs/plans/ui-malleability-arc.md §4.2 item 10, §8 amendment 6): the
  * read is the daemon's `main` plugins catalog through item 1's adapter
  * (`GET /v1/plugins/main`), folded into the inventory's own row shape by one
- * function. The old gateway's writes — enable, reveal, rescan — have no `/v1`
- * counterpart (the operator API writes config only, FINDINGS #37 / KG-1,
- * PLA-348); the page renders their controls disabled, and a call refuses
- * client-side and sends nothing.
+ * function. Pin-bump 10 (jinnd M2-K23, FINDINGS #37 closed at `f8b285b`): the
+ * toggle is ONE `jinn:profile-admin` write — `PATCH /v1/profile/entries/{id}
+ * { disabled }` — a disposal or a fresh incarnation, on the record. Reveal and
+ * rescan still have no counterpart: a catalog entry is not a folder; they
+ * refuse client-side and send nothing.
  */
 
 export type PluginKind = "client" | "client+server"
@@ -39,7 +41,7 @@ const CATALOG = "main"
 
 const ERROR_STATES = new Set(["failed", "interrupted", "disposed", "unrecognised"])
 
-const WRITES_REFUSED = "the operator API writes config only (FINDINGS #37 / KG-1, PLA-348)"
+const NOT_A_FOLDER = "a catalog entry is not a folder: nothing to reveal or rescan (the composition is the document of record, pin f8b285b)"
 
 function statusOf(state: string): PluginStatus {
   if (state === "active") return "loaded"
@@ -68,7 +70,7 @@ function inventoryRowOf(entry: PluginCatalogEntryWire): PluginInventoryRow {
 
 /** A write the daemon has no route for: refused here, nothing sent. */
 function refused(): Promise<void> {
-  return Promise.reject(new Error(WRITES_REFUSED))
+  return Promise.reject(new Error(NOT_A_FOLDER))
 }
 
 export function usePluginInventory() {
@@ -95,12 +97,12 @@ export function useInventoryFollowsDisk(): void {
   )
 }
 
-/** Toggle one plugin, showing the new state immediately and rolling it back if
- *  the gateway refuses. */
+/** Toggle one plugin — `set-disabled`, one ledgered write — showing the new
+ *  state immediately and rolling it back if the kernel refuses (typed). */
 export function useTogglePlugin() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (_input: { id: string; enabled: boolean }) => refused(),
+    mutationFn: ({ id, enabled }: { id: string; enabled: boolean }) => profileAdmin.setDisabled(id, !enabled),
     onMutate: async ({ id, enabled }) => {
       await qc.cancelQueries({ queryKey: PLUGIN_INVENTORY_KEY })
       const previous = qc.getQueryData<PluginInventoryRow[]>(PLUGIN_INVENTORY_KEY)

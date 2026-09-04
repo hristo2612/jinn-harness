@@ -15,6 +15,7 @@ pub mod auth;
 pub mod engines;
 pub mod kernel;
 pub mod plugins;
+pub mod profile_admin;
 pub mod sessions;
 pub mod todos;
 pub mod workflows;
