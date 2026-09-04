@@ -13,8 +13,10 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
-Pin-bump 9 — kernel pin `138fdce` (M2-K26). **A registration is
-replaced, never absent — and an emit is covered by its topic's grant.**
+Pin-bump 9 — kernel pin `cb08683` (M2-K26 with its amendment 2; the
+first candidate `138fdce` was HELD on FINDINGS #53 and never landed).
+**A registration is replaced, never absent — and an emit is covered by
+its topic's grant.**
 The `ui` profile's restart window is closed to moments: while an
 extension's `source` edit activates its replacement (UI-2 proof 5, the
 #47 shape: a slow activation by construction, a client posting every
@@ -44,12 +46,15 @@ What it is NOT: an `emit`-mode notification inside the window (still
 lost, traced `listeners: 0` — the card's named limit); a transport
 policy for a `failed` validator; #51's non-fatal half; #52's reading;
 the soak, untouched on `3a8e5c03` until the 2026-09-04 audit. **What
-the pin BROKE, filed as FINDINGS #53 (Blocker-class):** a replacement
-incarnation stays a staging seat after its commit, so an `alarm-at`
-armed on a later call is recorded and never fired — the two engines
-proofs that restart the spawn provider by a config edit and then run a
-child are RED at this pin (`run never settled`), by the kernel, and
-stay red until the fix lands.
+the first candidate pin BROKE, filed as FINDINGS #53 (Blocker-class)
+and CLOSED at `cb08683`:** at `138fdce` a replacement incarnation
+stayed a staging seat after its commit, so an `alarm-at` armed on a
+later call was recorded and never fired — the two engines proofs that
+restart the spawn provider by a config edit and then run a child were
+RED (`run never settled`), by the kernel; the COO held the bump, jinnd
+M2-K26 amendment 2 (`89f48fa`) makes the staged seat go LIVE at its
+commit, and the pin was re-targeted to `cb08683` where the engines
+suite is 13/13 green again with no harness change but the pin.
 
 Pin-bump 8 — kernel pin `b1dbe8f` (M2-K25). **A delivery spends its
 listener's clock, and a dead instance is a failed fiber.** The `ui`
@@ -72,7 +77,7 @@ declaring entry's own row, and the `ui` profile mounts `ext-green` under
 `ext_kit::GREEN_BUDGET`. `jinn:plugin` is 0.11.0 (additive);
 `jinn:introspect` stays 0.6.0. FINDINGS #48 closes at the pin with
 proof 7's transcript and #51's fatal half with it; the plugins page
-drops the #48 pill and keeps #37/#47 (#47 answered at pin `138fdce` by pin-bump 9)
+drops the #48 pill and keeps #37/#47 (#47 answered at pin `cb08683` by pin-bump 9)
 (`docs/notes/2026-09-04-a-delivery-spends-its-listeners-clock.md`).
 What it is NOT: #51's non-fatal `DeliveryFailed` row (a throwing
 extension still has no row of its own); a budget for `services.call`;
@@ -725,7 +730,7 @@ Its own README carries these in full; the load-bearing ones:
 ### UI-2 — Moments and the extension tier
 
 - **A moment inside an extension's restart window WAS answered UNMODIFIED,
-  not refused** (#47, answered at pin `138fdce`, jinnd M2-K26, pin-bump 9):
+  not refused** (#47, answered at pin `cb08683`, jinnd M2-K26, pin-bump 9):
   at `a53a352` the kernel withdrew a listener's `listen` with the old
   incarnation's suspension BEFORE the replacement committed, so a walk in
   the window (~500 ms per source edit) selected nobody and M2-K9's
@@ -746,7 +751,7 @@ Its own README carries these in full; the load-bearing ones:
   open is #51's non-fatal half: a throwing extension's contained failure
   is still only a count on the emitter's trace.
 - **`emit` WAS not gated by a topic grant** (#49, answered at pin
-  `138fdce`, jinnd M2-K26 (e), pin-bump 9): at `a53a352` any guest could
+  `cb08683`, jinnd M2-K26 (e), pin-bump 9): at `a53a352` any guest could
   emit any unreserved topic and the transport's three topic grants were a
   statement, not an authority. Now a walk is covered by the grant of the
   topic's own name exactly as a subscription is — the stripped transport
@@ -773,7 +778,7 @@ Its own README carries these in full; the load-bearing ones:
   swapping its engine are profile edits, not clicks** (#37; the K23 split,
   plan §9.5), rendered DISABLED on the extension's row with the finding
   (#48 is answered at pin `b1dbe8f` and its pill went with pin-bump 8;
-  #47 at pin `138fdce` with pin-bump 9) — never silently absent.
+  #47 at pin `cb08683` with pin-bump 9) — never silently absent.
   Editing an installed extension's `source`, `origin` or
   already-granted `topics` IS `PATCH /v1/profile/entries/{id}` today.
 - **The two chat topics are dispatchable and proven, and reached by no
