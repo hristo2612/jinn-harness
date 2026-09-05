@@ -74,7 +74,7 @@ infrastructure.
 For new work after this amendment, full gates remain the default. An independent
 reviewer may reuse a previously successful independent gate result for unchanged
 inputs: record both complete SHAs, the full intervening diff, original command and
-output, platform/toolchain, dependency locks and build/config inputs. For the
+output, platform/toolchain, dependency locks, build scripts/config and features. For the
 harness also record the exact kernel pin and loader/profile/plugin identity.
 Prove that the changed files cannot affect that gate's behavior, including generated
 assets and indirect inputs. Label the result reused, not newly executed.
@@ -86,3 +86,10 @@ Changes to Rust/runtime/contract/pin, profiles, loaders, dependencies or build
 machinery require the relevant full Rust/composition gates. Missing, ambiguous or
 non-independent prior evidence requires full validation. Source-of-truth invariants,
 verifier ownership and every required PR/post-merge CI gate remain binding.
+
+When web bytes change, rebuild the actual UI artifact from the new head and prove
+its relevant real-loader/live path against that artifact. Unchanged Rust sources
+alone do not preserve a test result that embeds web assets. Name the actual changed
+paths and compare pin, lockfiles, build scripts/config, features and toolchain;
+cite the independent prior evidence SHA. Missing provenance means rerun. Required
+CI remains intact; reuse cannot turn a skipped job into proof.
