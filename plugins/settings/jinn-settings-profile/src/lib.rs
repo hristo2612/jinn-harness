@@ -9,7 +9,9 @@
 //! `{ data: <patch> }` on the OWNER entry (restart path — the loader
 //! restarts the owner on its new config) or `{ data: { overlays: { ns:
 //! <patch> } } }` on the STORE entry (hot path — the trivial store fiber
-//! restarts, the owner absorbs the `changed` event in place). Both are
+//! restarts, the owner absorbs the `changed` event in place). A hot notice
+//! refused by an opposing declaration is retained until that call returns;
+//! applied/pending is distinct from completed notification. Both paths are
 //! `ProfilePatched` on the ledger under this entry; both leave the
 //! profile the single source of truth. Refusals are typed answers AND a
 //! `jinn:settings/refused` emit (its `DispatchTrace` is the ledger
@@ -29,7 +31,7 @@ use jinn_api::{
     OP_KERNEL_PATCH_ENTRY,
 };
 use jinn_settings::{
-    plan_patch_in, resolve, Answer, Applied, Changed, DeclareRequest, Declaration, ErrorCode,
+    plan_patch_in, resolve, Answer, Applied, Changed, Declaration, DeclareRequest, ErrorCode,
     GetRequest, Layers, NamespaceSummary, Namespaces, Overlays, PatchRequest, Patched, Refused,
     Resolved, SettingsError, API_VERSION, CHANGED_TOPIC, OP_DECLARE, OP_GET, OP_NAMESPACES,
     OP_OVERLAYS, OP_PATCH, REFUSED_TOPIC, SETTINGS_CONTRACT, STORE_CONTRACT,
@@ -42,10 +44,11 @@ wit_bindgen::generate!({
 });
 
 use exports::jinn::plugin::lifecycle::{Guest, GuestFault};
-use jinn::plugin::types::{DispatchMode, Selector};
-use jinn::plugin::{effects, events, services};
+use jinn::plugin::types::{DispatchMode, KernelError, Selector};
+use jinn::plugin::{clock, effects, events, services};
 
 const EFFECT_TOKEN: u64 = 1;
+const NOTICE_TOKEN: u64 = 2;
 
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -59,7 +62,18 @@ struct Held {
     declaration: Declaration,
     entry_layer: serde_json::Value,
     revision: u64,
+    notification: Option<serde_json::Value>,
 }
+
+/// One retained, pre-delivery-refused notice in this provider incarnation.
+/// No new patch is admitted until it settles; a later revision cannot overtake it.
+struct PendingNotice {
+    changed: Changed,
+    owner: String,
+    waiting_for_declare: bool,
+}
+
+static PENDING: Mutex<Option<PendingNotice>> = Mutex::new(None);
 
 static STORE: Mutex<String> = Mutex::new(String::new());
 static HELD: Mutex<BTreeMap<String, Held>> = Mutex::new(BTreeMap::new());
@@ -74,10 +88,18 @@ fn error(code: ErrorCode, detail: impl Into<String>) -> SettingsError {
 
 /// The overlay layer of one namespace, read from the store entry now.
 fn overlay(namespace: &str) -> Result<serde_json::Value, SettingsError> {
-    let handle = services::resolve(STORE_CONTRACT)
-        .map_err(|refused| error(ErrorCode::Unavailable, format!("{STORE_CONTRACT}: {refused:?}")))?;
-    let bytes = services::call(handle, OP_OVERLAYS, &[])
-        .map_err(|refused| error(ErrorCode::Unavailable, format!("{OP_OVERLAYS}: {refused:?}")))?;
+    let handle = services::resolve(STORE_CONTRACT).map_err(|refused| {
+        error(
+            ErrorCode::Unavailable,
+            format!("{STORE_CONTRACT}: {refused:?}"),
+        )
+    })?;
+    let bytes = services::call(handle, OP_OVERLAYS, &[]).map_err(|refused| {
+        error(
+            ErrorCode::Unavailable,
+            format!("{OP_OVERLAYS}: {refused:?}"),
+        )
+    })?;
     let overlays: Overlays = serde_json::from_slice(&bytes)
         .map_err(|bad| error(ErrorCode::Invalid, format!("store answer: {bad}")))?;
     Ok(overlays
@@ -107,7 +129,7 @@ fn resolved(held: &Held) -> Result<Resolved, SettingsError> {
         revision: held.revision,
         hot_keys: held.declaration.hot_keys.clone(),
         schema: held.declaration.schema.clone(),
-        extra: jinn_settings::Extensions::new(),
+        extra: notification_extra(held.notification.clone()),
     })
 }
 
@@ -115,22 +137,35 @@ fn declare(payload: &[u8]) -> Result<Resolved, SettingsError> {
     let request: DeclareRequest = serde_json::from_slice(payload)
         .map_err(|bad| error(ErrorCode::Invalid, format!("declare: {bad}")))?;
     if request.declaration.namespace.is_empty() || request.declaration.entry.is_empty() {
-        return Err(error(ErrorCode::Invalid, "declare: namespace and entry are required"));
+        return Err(error(
+            ErrorCode::Invalid,
+            "declare: namespace and entry are required",
+        ));
     }
     let mut held = HELD.lock().unwrap();
     let revision = held
         .get(&request.declaration.namespace)
         .map_or(0, |prior| prior.revision);
     let namespace = request.declaration.namespace.clone();
+    let owner = request.declaration.entry.clone();
+    let notification = held
+        .get(&namespace)
+        .and_then(|prior| prior.notification.clone());
     held.insert(
         namespace.clone(),
         Held {
             declaration: request.declaration,
             entry_layer: request.current,
             revision,
+            notification,
         },
     );
-    resolved(&held[&namespace])
+    let answer = resolved(&held[&namespace]);
+    drop(held);
+    // The callback cannot run in this guest instance until this declare returns.
+    // Unlike retrying inside patch, returning releases the opposing wait.
+    arm_after_declare(&owner);
+    answer
 }
 
 fn get(payload: &[u8]) -> Result<Resolved, SettingsError> {
@@ -140,7 +175,10 @@ fn get(payload: &[u8]) -> Result<Resolved, SettingsError> {
     let Some(entry) = held.get(&request.namespace) else {
         return Err(error(
             ErrorCode::NotFound,
-            format!("namespace {:?} is not declared in this provider incarnation", request.namespace),
+            format!(
+                "namespace {:?} is not declared in this provider incarnation",
+                request.namespace
+            ),
         ));
     };
     resolved(entry)
@@ -175,12 +213,22 @@ fn namespaces() -> Namespaces {
 /// the answered `ProfilePatched` sequence rides out as `patched-seq`.
 fn kernel_patch(entry: &str, merge: &serde_json::Value) -> Result<Option<u64>, SettingsError> {
     let handle = services::resolve(KERNEL_PROFILE_CONTRACT).map_err(|refused| {
-        error(ErrorCode::Refused, format!("{KERNEL_PROFILE_CONTRACT}: {refused:?}"))
+        error(
+            ErrorCode::Refused,
+            format!("{KERNEL_PROFILE_CONTRACT}: {refused:?}"),
+        )
     })?;
-    let bytes = services::call(handle, OP_KERNEL_PATCH_ENTRY, &profile_patch_payload(entry, merge))
-        .map_err(|refused| error(ErrorCode::Refused, format!("patch-entry: {refused:?}")))?;
+    let bytes = services::call(
+        handle,
+        OP_KERNEL_PATCH_ENTRY,
+        &profile_patch_payload(entry, merge),
+    )
+    .map_err(|refused| error(ErrorCode::Refused, format!("patch-entry: {refused:?}")))?;
     decode_profile_answer(&bytes).map_err(|reason| {
-        let mut refused = error(ErrorCode::Refused, format!("patch-entry {entry:?} refused: {reason}"));
+        let mut refused = error(
+            ErrorCode::Refused,
+            format!("patch-entry {entry:?} refused: {reason}"),
+        );
         refused.extra.insert(
             "retryable".into(),
             serde_json::Value::Bool(refusal_is_retryable(&reason)),
@@ -190,8 +238,6 @@ fn kernel_patch(entry: &str, merge: &serde_json::Value) -> Result<Option<u64>, S
 }
 
 fn emit<T: serde::Serialize>(topic: &str, mode: DispatchMode, payload: &T) {
-    // A refused or unheard emit is not this provider's failure: the
-    // answer already carries the outcome, the emit is its record.
     let _ = events::emit(
         topic,
         mode,
@@ -200,15 +246,108 @@ fn emit<T: serde::Serialize>(topic: &str, mode: DispatchMode, payload: &T) {
     );
 }
 
+fn notification_extra(notification: Option<serde_json::Value>) -> jinn_settings::Extensions {
+    let mut extra = jinn_settings::Extensions::new();
+    if let Some(notification) = notification {
+        extra.insert("notification".into(), notification);
+    }
+    extra
+}
+
+fn record_notice(changed: &Changed, state: &str, detail: String) {
+    if let Some(held) = HELD.lock().unwrap().get_mut(&changed.namespace) {
+        held.notification = Some(serde_json::json!({
+            "state": state, "revision": changed.revision, "detail": detail,
+        }));
+    }
+}
+
+/// Retry ONLY a whole-walk refusal caused by this owner's queued declaration.
+/// The kernel guarantees this cycle refusal ran no listener, so replay cannot
+/// duplicate a partial delivery. Other failures are unconfirmed and never replayed.
+fn send_notice(changed: Changed, owner: String, mode: DispatchMode) {
+    let result = events::emit(
+        CHANGED_TOPIC,
+        mode,
+        &Selector::All,
+        &serde_json::to_vec(&changed).expect("changed encodes"),
+    );
+    match result {
+        Err(KernelError::Cycle(cycle))
+            if changed.applied == Some(Applied::Hot)
+                && cycle.target == owner
+                && cycle.through == [format!("{SETTINGS_CONTRACT}.{OP_DECLARE}")] =>
+        {
+            record_notice(
+                &changed,
+                "pending",
+                "Saved; notification waits for the owner's declaration to return.".into(),
+            );
+            *PENDING.lock().unwrap() = Some(PendingNotice {
+                changed,
+                owner,
+                waiting_for_declare: true,
+            });
+        }
+        Err(refused) => record_notice(
+            &changed,
+            "unconfirmed",
+            format!("Saved; notification refused: {refused:?}. No automatic replay."),
+        ),
+        Ok(replies) if matches!(mode, DispatchMode::Serial) && !replies.is_empty() => {
+            record_notice(&changed, "settled", "The notification walk completed with listener replies; replies do not identify individual listeners.".into());
+        }
+        Ok(_) => record_notice(
+            &changed,
+            "unconfirmed",
+            "Saved; no listener reply confirms notification. No automatic replay.".into(),
+        ),
+    }
+}
+
+fn arm_after_declare(owner: &str) {
+    let mut pending = PENDING.lock().unwrap();
+    let Some(notice) = pending
+        .as_mut()
+        .filter(|notice| notice.waiting_for_declare && notice.owner == owner)
+    else {
+        return;
+    };
+    notice.waiting_for_declare = false;
+    let changed = notice.changed.clone();
+    drop(pending);
+    if let Err(refused) = clock::now().and_then(|now| clock::alarm_at(now, NOTICE_TOKEN)) {
+        // Keep the slot occupied: a later write must not erase an unsent notice.
+        // No timer is rearmed; GET exposes the failure and recovery is explicit.
+        record_notice(&changed, "unconfirmed", format!("Saved; notification callback could not be armed: {refused:?}. Further patches are blocked in this provider incarnation."));
+    }
+}
+
 fn patch(payload: &[u8]) -> Result<Patched, SettingsError> {
     let request: PatchRequest = serde_json::from_slice(payload)
         .map_err(|bad| error(ErrorCode::Invalid, format!("patch: {bad}")))?;
+    if PENDING.lock().unwrap().is_some() {
+        let refused = error(ErrorCode::Unavailable, "A previously saved patch still has an outstanding notification. This patch was not written; inspect the namespace notification before retrying.");
+        emit(
+            REFUSED_TOPIC,
+            DispatchMode::Emit,
+            &Refused {
+                namespace: request.namespace.clone(),
+                error: refused.clone(),
+                extra: jinn_settings::Extensions::new(),
+            },
+        );
+        return Err(refused);
+    }
     let planned = {
         let held = HELD.lock().unwrap();
         let Some(entry) = held.get(&request.namespace) else {
             return Err(error(
                 ErrorCode::NotFound,
-                format!("namespace {:?} is not declared in this provider incarnation", request.namespace),
+                format!(
+                    "namespace {:?} is not declared in this provider incarnation",
+                    request.namespace
+                ),
             ));
         };
         let layers = layers(entry)?;
@@ -231,7 +370,7 @@ fn patch(payload: &[u8]) -> Result<Patched, SettingsError> {
         }
     };
     let (target, merge) = match plan.applied {
-        Applied::Restart => (owner, serde_json::json!({ "data": request.patch })),
+        Applied::Restart => (owner.clone(), serde_json::json!({ "data": request.patch })),
         Applied::Hot => (
             STORE.lock().unwrap().clone(),
             serde_json::json!({ "data": { "overlays": { request.namespace.clone(): request.patch } } }),
@@ -261,36 +400,28 @@ fn patch(payload: &[u8]) -> Result<Patched, SettingsError> {
         }
         entry.revision
     };
-    // The owner absorbs the HOT layer in place from this event, so the
-    // answer waits for it (serial). On the RESTART path the notice is
-    // fire-and-forget: the successor re-declares on its own wake and has
-    // nothing to answer with, so there is no reply to wait for.
-    //
-    // This used to be a WORKAROUND for FINDINGS.md #31 — a serial
-    // dispatch aimed at a fiber the loader was replacing stalled to the
-    // guest deadline, and this provider could only dodge it because it
-    // knows which layer it just wrote. #31 is CLOSED at pin `3a8e5c0`
-    // (jinnd M2-K9): such a dispatch is now refused typed and ledgered.
-    // The choice stays because it is the right notice on its own merits,
-    // not because it is load-bearing — and it was never a shield against
-    // FINDINGS.md #32, where an `Emit` deadlocks against an owner that is
-    // merely busy. No dispatch mode avoids that one.
+    // Successful hot notices stay synchronous. A direct declare-cycle retains
+    // the exact notice until that queued call returns; PATCH reports saved/pending.
     let notice = match plan.applied {
         Applied::Hot => DispatchMode::Serial,
         Applied::Restart => DispatchMode::Emit,
     };
-    emit(
-        CHANGED_TOPIC,
-        notice,
-        &Changed {
+    send_notice(
+        Changed {
             namespace: request.namespace.clone(),
             applied: Some(plan.applied),
             settings: plan.resolved.clone(),
             revision,
             extra: jinn_settings::Extensions::new(),
         },
+        owner,
+        notice,
     );
-    let mut extra = jinn_settings::Extensions::new();
+    let mut extra = notification_extra(
+        HELD.lock().unwrap()[&request.namespace]
+            .notification
+            .clone(),
+    );
     if let Some(sequence) = sequence {
         extra.insert("patched-seq".into(), serde_json::json!(sequence));
     }
@@ -319,6 +450,7 @@ impl Guest for Provider {
             .map_err(|bad| GuestFault::Failed(format!("malformed config: {bad}")))?;
         *STORE.lock().unwrap() = parsed.store;
         HELD.lock().unwrap().clear();
+        *PENDING.lock().unwrap() = None;
         effects::register("jinn-settings-profile on duty", EFFECT_TOKEN)
             .map_err(|refused| fault("effect", refused))?;
         services::provide(SETTINGS_CONTRACT).map_err(|refused| fault("provide", refused))?;
@@ -334,10 +466,16 @@ impl Guest for Provider {
     }
 
     fn handle_event(token: u64, topic: String, payload: Vec<u8>) -> Result<Vec<u8>, GuestFault> {
-        Err(GuestFault::Failed(format!(
-            "unexpected event {topic:?} (token {token}, {} bytes)",
-            payload.len()
-        )))
+        if token != NOTICE_TOKEN || topic != "jinn:clock/alarm" || payload.len() != 8 {
+            return Err(GuestFault::Failed(format!(
+                "unexpected event {topic:?} (token {token})"
+            )));
+        }
+        let notice = PENDING.lock().unwrap().take();
+        if let Some(notice) = notice {
+            send_notice(notice.changed, notice.owner, DispatchMode::Serial);
+        }
+        Ok(Vec::new())
     }
 
     fn handle_call(

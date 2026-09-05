@@ -63,7 +63,8 @@ pub fn api_entries(http: &str, status: &str, edit: &str, port: u16) -> Vec<serde
 /// EMITS — `jinn:settings/changed` and `jinn:settings/refused`; at pin
 /// `138fdce` an emit is covered by the topic's own grant, jinnd M2-K26
 /// (e), FINDINGS #49 — and `jinn:profile` scoped to exactly the entries
-/// it may patch — every namespace owner and the store) and the store
+/// it may patch — every namespace owner and the store; `jinn:clock` permits
+/// one deferred notice after an opposing declaration returns) and the store
 /// (granted only what it provides). The
 /// store's `overlays` is the hot layer's home in the document; the kit
 /// writes it empty.
@@ -74,7 +75,7 @@ pub fn settings_entries(provider: &str, store: &str, owners: &[&str]) -> Vec<ser
     vec![
         serde_json::json!({ "id": SETTINGS_ID, "package": "settings/jinn-settings-profile", "hash": provider,
           "config": { "grants": [jinn_settings::SETTINGS_CONTRACT, jinn_settings::STORE_CONTRACT,
-                                 jinn_settings::CHANGED_TOPIC, jinn_settings::REFUSED_TOPIC,
+                                 jinn_settings::CHANGED_TOPIC, jinn_settings::REFUSED_TOPIC, "jinn:clock",
                                  { "contract": jinn_api::KERNEL_PROFILE_CONTRACT, "scope": scope }],
                       "data": { "store": STORE_ID } } }),
         serde_json::json!({ "id": STORE_ID, "package": "settings/jinn-settings-store", "hash": store,
@@ -125,6 +126,10 @@ mod tests {
         let provider = &entries[0];
         assert_eq!(provider["id"], SETTINGS_ID);
         let grants = provider["config"]["grants"].as_array().expect("grants");
+        assert!(
+            grants.contains(&serde_json::json!("jinn:clock")),
+            "the provider can defer a refused notice after the opposing call returns"
+        );
         for topic in [jinn_settings::CHANGED_TOPIC, jinn_settings::REFUSED_TOPIC] {
             assert!(
                 grants.contains(&serde_json::json!(topic)),

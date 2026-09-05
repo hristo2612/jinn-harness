@@ -41,6 +41,7 @@ export interface DeclaredNamespace {
 interface ResolvedNamespaceWire {
   namespace: string
   settings: Record<string, unknown>
+  notification?: { state?: string; revision?: number; detail?: string }
   schema?: { properties?: Record<string, { kind?: string; required?: boolean }>; additional?: boolean }
 }
 
@@ -63,6 +64,7 @@ export interface ConfigDocument {
   /** The schema each namespace declared: what the page may render, and what a
    *  save may carry. */
   declared: Record<string, DeclaredNamespace>
+  notificationNotice?: string
 }
 
 /** What a save leaves behind: the revision the document now has, so the page that
@@ -72,6 +74,7 @@ export interface ConfigDocument {
 export interface ConfigSaveResult {
   revision: string
   config: Record<string, unknown>
+  notificationNotice?: string
 }
 
 /**
@@ -182,6 +185,19 @@ export function createConfigApi(http: ConfigHttp) {
     return (await res.json()) as ResolvedNamespaceWire
   }
 
+  // Delivery observations belong to this API instance, never to browser storage.
+  const notifications = new Map<string, string>()
+  function observeNotification(namespace: string, wire: ResolvedNamespaceWire) {
+    const state = wire.notification?.state
+    if (state === "settled") notifications.delete(namespace)
+    else if (state === "pending") notifications.set(namespace, "pending")
+    else if (state !== undefined || notifications.has(namespace)) notifications.set(namespace, "unconfirmed")
+  }
+  function notificationNotice(): string | undefined {
+    if (!notifications.size) return undefined
+    return `Saved — ${[...notifications].map(([name, state]) => `${name} notification ${state}`).join("; ")}. Refresh to check delivery. Settings are stored even if notification is unconfirmed.`
+  }
+
   async function patchNamespace(namespace: string, unfolded: Record<string, unknown>): Promise<void> {
     const patch = await foldPatch(http, namespace, unfolded)
     const res = await authFetch(`/v1/settings/${encodeURIComponent(namespace)}`, {
@@ -190,7 +206,9 @@ export function createConfigApi(http: ConfigHttp) {
       body: JSON.stringify({ patch }),
     })
     if (!res.ok) throw await refusal(res, http)
-    lastRead[namespace] = settingsOf(((await res.json()) as ResolvedNamespaceWire).settings)
+    const wire = (await res.json()) as ResolvedNamespaceWire
+    lastRead[namespace] = settingsOf(wire.settings)
+    observeNotification(namespace, wire)
   }
 
   return {
@@ -199,9 +217,11 @@ export function createConfigApi(http: ConfigHttp) {
       if (!res.ok) throw await http.responseError(res)
       const names = Object.keys(((await res.json()) as NamespacesWire).namespaces ?? {})
       const resolved = await Promise.all(names.map(async (name) => [name, await readNamespace(name)] as const))
+      for (const [name, wire] of resolved) observeNotification(name, wire)
+      for (const name of notifications.keys()) if (!names.includes(name)) notifications.set(name, "unconfirmed")
       lastRead = Object.fromEntries(resolved.map(([name, wire]) => [name, settingsOf(wire.settings)]))
       lastDeclared = Object.fromEntries(resolved.map(([name, wire]) => [name, declaredOf(wire.schema)]))
-      return { config: { ...lastRead }, revision: revisionOf(lastRead), declared: { ...lastDeclared } }
+      return { config: { ...lastRead }, revision: revisionOf(lastRead), declared: { ...lastDeclared }, notificationNotice: notificationNotice() }
     },
     /** `revision` is the one `getConfig()` handed over; a save built on an older
      *  read is refused as a conflict rather than landed on top of it. */
@@ -209,12 +229,17 @@ export function createConfigApi(http: ConfigHttp) {
       if (revision && revision !== revisionOf(lastRead)) {
         throw http.conflict(409, "The settings changed under this page since it last read them.", "Reload to pick up the current document.")
       }
-      for (const namespace of new Set([...Object.keys(lastRead), ...Object.keys(data)])) {
-        const patch = namespacePatch(lastRead[namespace] ?? {}, settingsOf(data[namespace]))
-        const declared = declaredPatch(patch, lastDeclared[namespace])
-        if (Object.keys(declared).length > 0) await patchNamespace(namespace, declared)
+      const changes = [...new Set([...Object.keys(lastRead), ...Object.keys(data)])].flatMap((namespace) => {
+        const patch = declaredPatch(namespacePatch(lastRead[namespace] ?? {}, settingsOf(data[namespace])), lastDeclared[namespace])
+        return Object.keys(patch).length ? [{ namespace, patch }] : []
+      })
+      for (const [index, { namespace, patch }] of changes.entries()) {
+        await patchNamespace(namespace, patch)
+        if (notifications.get(namespace) === "pending" && index < changes.length - 1) {
+          return { revision: revisionOf(lastRead), config: { ...lastRead }, notificationNotice: `${notificationNotice()} Remaining namespace edits were not sent.` }
+        }
       }
-      return { revision: revisionOf(lastRead), config: { ...lastRead } }
+      return { revision: revisionOf(lastRead), config: { ...lastRead }, notificationNotice: notificationNotice() }
     },
   }
 }

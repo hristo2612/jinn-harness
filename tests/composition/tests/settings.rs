@@ -174,6 +174,19 @@ fn declare_resolve_and_patch_on_both_paths_with_the_c5_c6_transcript() {
         JOB_PERIOD_MS,
         "the owner entry is untouched by a hot patch"
     );
+    // An opposing declaration may defer this exact notice until that call
+    // returns. State reconciliation is not delivery evidence: await the actual
+    // successful, attributed walk before capturing the C5/C6 ledger segment.
+    daemon.eventually("the changed notice to reach exactly the scheduler", || {
+        daemon.ledger_rows().iter().any(|row| {
+            row.seq > hot_from
+                && row.entry.as_deref() == Some(PROVIDER)
+                && row.kind.contains("DispatchTrace")
+                && row.kind.contains(r#""topic":"jinn:settings/changed""#)
+                && row.kind.contains(r#""listeners":1"#)
+                && row.kind.contains(r#""failures":0"#)
+        })
+    });
     let rows = daemon.ledger_rows();
     let hot_rows: Vec<&LedgerRow> = rows.iter().filter(|row| row.seq > hot_from).collect();
     assert!(
@@ -602,31 +615,10 @@ fn a_patch_reports_exactly_what_the_next_get_resolves_in_both_orders() {
 /// the key gone from the settings, from both layers, and from both
 /// entries of the document of record.
 ///
-/// IGNORED, tracked, not weakened — and the blocker has MOVED. At pin
-/// `3fd7b05` this test died at its first entry-layer patch: a serial
-/// dispatch aimed at a fiber with a pending restart neither queued nor
-/// refused, so the operator's PATCH never answered (FINDINGS.md #31).
-/// jinnd M2-K9 (pin `3a8e5c0`) closed that — the same patch now answers,
-/// and #31 carries the ledger sequence proving it.
-///
-/// What blocks the test now is FINDINGS.md #32, reached only because #31
-/// no longer kills it first: the namespace's owner re-declares on every
-/// alarm wake, which is a call INTO the provider that is at that moment
-/// dispatching a `changed` notice INTO the owner. Each is parked on the
-/// other and both die on the guest deadline — entry 4's nested-dispatch
-/// class, with a transcript at last. No dispatch mode avoids it (`Emit`
-/// awaits delivery exactly as serial does) and the harness has no move: a
-/// provider cannot know whether a listener is currently calling it. Since
-/// the owner's cadence decides whether the two overlap, the test is a
-/// coin flip rather than reliably red, which is its own reason not to
-/// leave it running. Nothing in the body is relaxed: it is the same
-/// assertion, waiting for the kernel.
+/// Previously ignored for FINDINGS.md #32. The pinned kernel now refuses
+/// cycles before delivery; the provider retains the specific opposing-declare
+/// notice until that call returns. The original recovery assertions run again.
 #[test]
-#[ignore = "blocked on FINDINGS.md #32 (entry 4's class, jinnd card pending): the \
-            owner's periodic `declare` and the provider's `changed` notice park on \
-            each other and both die on the guest deadline, so the PATCH behind them \
-            never answers. FINDINGS.md #31, this test's previous blocker, is CLOSED \
-            at pin 3a8e5c0"]
 fn the_shadowed_refusals_recovery_lands_when_executed() {
     let Some((daemon, port)) = booted("settings-recovery") else {
         return;
@@ -762,5 +754,81 @@ fn the_shadowed_refusals_recovery_lands_when_executed() {
         entry_config(&mut doc, STORE)["data"]["overlays"]["cron"]["notify-token"].is_null(),
         "gone from the store entry"
     );
+    daemon.interrupt();
+}
+
+/// A saved patch is not rolled back by a notification refusal. Non-cycle
+/// refusals are visible on PATCH and GET and never automatically replayed.
+#[test]
+fn a_saved_patch_with_a_refused_notice_is_unconfirmed_and_never_replayed() {
+    let Some(binary) = gate() else {
+        return;
+    };
+    let (root, port) = fresh_api_root("settings-notice-refused");
+    let path = root.join("profile.json");
+    let mut doc: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    entry_config(&mut doc, PROVIDER)["grants"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|grant| grant != jinn_settings::CHANGED_TOPIC);
+    std::fs::write(&path, serde_json::to_vec(&doc).unwrap()).unwrap();
+    let daemon = Daemon::boot_operator(binary, &root);
+    daemon.await_ready();
+    daemon.eventually("the namespace to be declared", || {
+        get(port, "/v1/settings/cron").status == 200
+    });
+    let from = daemon.ledger_rows().last().unwrap().seq;
+    for revision in 1..=2 {
+        let saved = patch(
+            port,
+            "/v1/settings/cron",
+            &serde_json::json!({"patch":{"jobs":[
+                {"id":"health","every-ms":JOB_PERIOD_MS / revision,"topic":"cron:health"}
+            ]}}),
+        );
+        assert_eq!(saved.status, 200, "{}", saved.raw);
+        assert_eq!(saved.body["revision"], revision);
+        assert_eq!(saved.body["notification"]["state"], "unconfirmed");
+        assert!(saved.body["notification"]["detail"]
+            .as_str()
+            .unwrap()
+            .contains("GrantRefused"));
+        let current = get(port, "/v1/settings/cron");
+        assert_eq!(current.body["settings"], saved.body["settings"]);
+        assert_eq!(current.body["notification"], saved.body["notification"]);
+    }
+    daemon.eventually("the scheduler still reconciles direct reads", || {
+        get(port, "/v1/status").body["probes"][0]["answer"]["settings-revision"] == 2
+    });
+    daemon.eventually("both notification refusals on the record", || {
+        daemon
+            .ledger_rows()
+            .iter()
+            .filter(|r| {
+                r.seq > from
+                    && r.entry.as_deref() == Some(PROVIDER)
+                    && r.kind.contains("GrantRefused")
+                    && r.kind.contains(jinn_settings::CHANGED_TOPIC)
+            })
+            .count()
+            == 2
+    });
+    let rows = daemon.ledger_rows();
+    assert!(!rows.iter().any(|r| r.seq > from
+        && r.entry.as_deref() == Some(PROVIDER)
+        && (r.kind.contains("AlarmRequested")
+            || (r.kind.contains("DispatchTrace")
+                && r.kind.contains(jinn_settings::CHANGED_TOPIC)))));
+    // A direct store edit still reconciles on a scheduler declaration, even
+    // with notification authority removed. No new provider revision is invented.
+    daemon.edit_profile(|doc| {
+        entry_config(doc, STORE)["data"]["overlays"]["cron"]["jobs"][0]["every-ms"] =
+            serde_json::json!(750);
+    });
+    daemon.eventually("the direct overlay edit to reach the scheduler", || {
+        let answer = get(port, "/v1/status").body["probes"][0]["answer"].clone();
+        answer["jobs"][0]["every-ms"] == 750 && answer["settings-revision"] == 2
+    });
     daemon.interrupt();
 }

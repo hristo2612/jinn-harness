@@ -10,6 +10,7 @@ import type { ConfigSaveState } from "./use-config-commit"
 export function ConfigSaveStatus({ state }: { state: ConfigSaveState }) {
   if (state.phase === "idle") return null
   const failed = state.phase === "failed"
+  const notice = state.phase === "saved" && state.notice
 
   return (
     <div
@@ -29,12 +30,12 @@ export function ConfigSaveStatus({ state }: { state: ConfigSaveState }) {
       }}
     >
       {state.phase === "saving" && <Loader2 size={14} className="shrink-0 animate-spin" />}
-      {state.phase === "saved" && (
+      {state.phase === "saved" && !notice && (
         <Check size={14} className="shrink-0" color="var(--system-green)" />
       )}
-      {failed && <TriangleAlert size={14} className="mt-[1px] shrink-0 self-start" />}
+      {(failed || notice) && <TriangleAlert size={14} className="mt-[1px] shrink-0 self-start" />}
       <span>
-        {state.phase === "saving" ? "Saving…" : state.phase === "saved" ? "Saved" : state.message}
+        {state.phase === "saving" ? "Saving…" : state.phase === "saved" ? state.notice ?? "Saved" : state.message}
       </span>
     </div>
   )

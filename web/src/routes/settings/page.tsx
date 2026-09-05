@@ -157,10 +157,10 @@ export default function SettingsPage() {
     setConfigLoading(true)
     api
       .getConfig()
-      .then(({ config: loaded, revision, declared: schemas }) => {
+      .then(({ config: loaded, revision, declared: schemas, notificationNotice }) => {
         configRef.current = loaded as Config
         setConfig(loaded as Config)
-        adoptRevision(revision)
+        adoptRevision(revision, notificationNotice)
         setDeclared(schemas)
         // Reloading is the way out of a conflict, so it is also what clears it.
         setConflict(null)

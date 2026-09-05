@@ -119,8 +119,10 @@ per-seam "could NOT prove" sections.
 
 ### 2.2 — Settings
 
-- **The shadowed-refusal recovery is unproven end to end.** The repo's
-  only `#[ignore]`d test, blocked on #32.
+- **Notification delivery is not durable across a provider restart or removal.**
+  An opposing declaration's refused hot notice is retained only in the current
+  incarnation; saved settings remain and reconcile through declarations (#32).
+  The formerly ignored shadowed-refusal recovery now runs end to end.
 - **A mixed hot+cold patch across two layers cannot be applied
   atomically** (#28). The shipped shape is a whole refusal carrying an
   executable recovery.

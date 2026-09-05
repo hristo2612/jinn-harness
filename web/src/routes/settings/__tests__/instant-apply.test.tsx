@@ -133,3 +133,13 @@ describe('what the page says about the write', () => {
     expect(screen.queryByText('Saved')).toBeNull()
   })
 })
+
+it('shows saved with notification pending without claiming a failed save or completed delivery', async () => {
+  apiMocks.updateConfig.mockResolvedValue({ revision: 'rev-2', notificationNotice: 'Saved — cron notification pending. Refresh to check delivery.' })
+  fireEvent.click(await renderSettings())
+  expect(await screen.findByText('Saved — cron notification pending. Refresh to check delivery.')).toBeTruthy()
+  expect(screen.queryByText('Saved')).toBeNull()
+  expect(screen.queryByText(/Failed to save/)).toBeNull()
+  await afterTheWindow()
+  expect(apiMocks.updateConfig).toHaveBeenCalledTimes(1)
+})

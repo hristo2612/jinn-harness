@@ -110,3 +110,52 @@ describe("saving settings through the before-patch-settings moment", () => {
     expect(moment).not.toHaveBeenCalled()
   })
 })
+
+it("keeps an applied patch with a pending notification distinct from completed delivery", async () => {
+  daemon()
+  const fetch = authFetch.getMockImplementation()!
+  authFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+    const response = await fetch(path, init)
+    if (init?.method !== "PATCH") return response
+    return json(200, { ...await response.json(), notification: { state: "pending", revision: 1, detail: "waiting for declaration" } })
+  })
+  const api = createConfigApi({ responseError, conflict, moment: async (_d, _t, payload) => json(200, payload) })
+  const document = await api.getConfig()
+  const saved = await api.updateConfig({ cron: { "tick-ms": 700 } }, document.revision)
+  expect(saved.config).toEqual({ cron: { "tick-ms": 700 } })
+  expect(saved.notificationNotice).toMatch(/Saved.*cron.*notification pending/)
+  expect(authFetch.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "PATCH")).toHaveLength(1)
+  // The provider restarted: absence of its in-memory record is not confirmation.
+  expect((await api.getConfig()).notificationNotice).toMatch(/notification unconfirmed/)
+})
+
+it("clears a pending notice only from a settled observation, without writing again", async () => {
+  daemon()
+  const fetch = authFetch.getMockImplementation()!
+  let state = "pending"
+  authFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+    const response = await fetch(path, init)
+    if (path !== "/v1/settings/cron") return response
+    return json(200, { ...await response.json(), notification: { state, revision: 1 } })
+  })
+  const api = createConfigApi({ responseError, conflict, moment: async (_d, _t, payload) => json(200, payload) })
+  expect((await api.getConfig()).notificationNotice).toMatch(/pending/)
+  state = "settled"
+  expect((await api.getConfig()).notificationNotice).toBeUndefined()
+  expect(authFetch.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "PATCH")).toBe(false)
+})
+
+it("does not send remaining namespace edits after an applied patch goes pending", async () => {
+  authFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path === "/v1/settings") return json(200, { namespaces: { first: {}, second: {} } })
+    const namespace = path.split("/").at(-1)
+    if (init?.method === "PATCH") return json(200, { namespace, settings: { value: 2 }, notification: { state: "pending", revision: 1 } })
+    return json(200, { namespace, settings: { value: 1 }, schema: { properties: { value: { kind: "integer" } } } })
+  })
+  const api = createConfigApi({ responseError, conflict, moment: async (_d, _t, payload) => json(200, payload) })
+  const document = await api.getConfig()
+  const saved = await api.updateConfig({ first: { value: 2 }, second: { value: 2 } }, document.revision)
+  expect(saved.config).toEqual({ first: { value: 2 }, second: { value: 1 } })
+  expect(saved.notificationNotice).toMatch(/Remaining namespace edits were not sent/)
+  expect(authFetch.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "PATCH")).toHaveLength(1)
+})
