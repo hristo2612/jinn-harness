@@ -74,13 +74,13 @@ it('Reload started during a save cannot erase its newer pending notification', a
  apiMocks.getConfig.mockImplementation(real.getConfig)
  apiMocks.updateConfig.mockImplementation(real.updateConfig)
  render(<MemoryRouter><SettingsPage /></MemoryRouter>)
- const jobs=await screen.findByRole('textbox',{name:'jobs',exact:true})
+ const jobs=await screen.findByRole('textbox',{name:'jobs'})
  fireEvent.change(jobs,{target:{value:JSON.stringify([{id:'health','every-ms':1000,topic:'cron:health'}])}})
  fireEvent.blur(jobs)
  // Reload starts during the normal 600ms debounce, so its old GET is
  // observed before the new PATCH is sent; only its browser delivery is delayed.
  holdRead=true
- fireEvent.click(screen.getByRole('button',{name:'Reload',exact:true}))
+ fireEvent.click(screen.getByRole('button',{name:'Reload'}))
  await started
  await screen.findByText('Saving…')
  await waitFor(()=>expect(releasePatch).toBeTypeOf('function'))
@@ -88,10 +88,10 @@ it('Reload started during a save cannot erase its newer pending notification', a
  const pending=await screen.findByText(/Saved.*cron notification pending/)
  console.log('AFTER PATCH:',pending.textContent)
  await act(async()=>releaseRead(wireJson(oldWire)))
- await screen.findByRole('textbox',{name:'jobs',exact:true})
- console.log('AFTER LATE RELOAD: pending banner=',screen.queryByText(/cron notification pending/)?.textContent??null,'jobs=',(screen.getByRole('textbox',{name:'jobs',exact:true}) as HTMLTextAreaElement).value,'PATCH count=',fetchProbe.mock.calls.filter(([,i])=>(i as RequestInit|undefined)?.method==='PATCH').length)
+ await screen.findByRole('textbox',{name:'jobs'})
+ console.log('AFTER LATE RELOAD: pending banner=',screen.queryByText(/cron notification pending/)?.textContent??null,'jobs=',(screen.getByRole('textbox',{name:'jobs'}) as HTMLTextAreaElement).value,'PATCH count=',fetchProbe.mock.calls.filter(([,i])=>(i as RequestInit|undefined)?.method==='PATCH').length)
  expect(screen.queryByText(/cron notification pending/),'the actual Settings page must preserve uncertainty for revision 2').not.toBeNull()
- expect(JSON.parse((screen.getByRole('textbox',{name:'jobs',exact:true}) as HTMLTextAreaElement).value)).toEqual([{id:'health','every-ms':1000,topic:'cron:health'}])
+ expect(JSON.parse((screen.getByRole('textbox',{name:'jobs'}) as HTMLTextAreaElement).value)).toEqual([{id:'health','every-ms':1000,topic:'cron:health'}])
  await afterTheWindow()
  expect(fetchProbe.mock.calls.filter(([,init])=>(init as RequestInit|undefined)?.method==='PATCH')).toHaveLength(1)
 })
