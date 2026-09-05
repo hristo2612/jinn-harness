@@ -427,3 +427,4 @@ new	-	src/routes/settings/plugins/use-navigation-admin.ts	16
 new	-	src/routes/settings/plugins/navigation-extension.tsx	16
 new	-	src/routes/settings/plugins/__tests__/navigation-state.test.ts	16
 new	-	src/routes/settings/plugins/__tests__/navigation-admin.test.tsx	16
+new	-	src/routes/settings/plugins/__tests__/navigation-inspection.test.tsx	16
