@@ -47,8 +47,13 @@ product taste on top of the pinned `jinnd` kernel. Read `README.md` and
 ## Working rules
 
 - **TDD.** A failing test exists before your implementation, always.
-- **Verify before claiming done** and paste real output:
-  `cargo fmt --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace`.
+- **Verify before claiming done.** Full Rust gates are `cargo fmt --check`,
+  `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`
+  and `cargo build --workspace --locked`. Workspace tests already include the
+  pin crate; run each required suite once per evidence set. Record full commit
+  SHA, commands and actual tails; run affected web gates as defined by the web
+  package and CI. Current PR and post-merge Linux CI remain required. A skipped
+  composition CI job does not replace local real-loader proof.
 - Branch + PR per work packet (the initial scaffold commit is the one
   exception). Conventional commits (`feat:`, `fix:`, `test:`, `docs:`,
   `chore:`). No co-author trailers.
@@ -63,3 +68,21 @@ names beyond the repo owner's public identity, no keys, no emails, no
 machine-specific paths (write paths relative to the repo root or via
 environment variables), no session ids, no references to private
 infrastructure.
+
+## Scoped verification evidence
+
+For new work after this amendment, full gates remain the default. An independent
+reviewer may reuse a previously successful independent gate result for unchanged
+inputs: record both complete SHAs, the full intervening diff, original command and
+output, platform/toolchain, dependency locks and build/config inputs. For the
+harness also record the exact kernel pin and loader/profile/plugin identity.
+Prove that the changed files cannot affect that gate's behavior, including generated
+assets and indirect inputs. Label the result reused, not newly executed.
+
+A docs/comment-only or web-only delta can qualify; file extension alone is not
+proof. Rerun all affected behavior and acceptance checks on the new head, including
+live UI checks and real-loader composition for affected integration behavior.
+Changes to Rust/runtime/contract/pin, profiles, loaders, dependencies or build
+machinery require the relevant full Rust/composition gates. Missing, ambiguous or
+non-independent prior evidence requires full validation. Source-of-truth invariants,
+verifier ownership and every required PR/post-merge CI gate remain binding.
