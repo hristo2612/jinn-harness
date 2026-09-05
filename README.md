@@ -331,7 +331,8 @@ Its own README carries these in full; the load-bearing ones:
   already-granted `topics` IS `PATCH /v1/profile/entries/{id}` today.
 - **The two chat topics are dispatchable and proven, and reached by no
   ported surface. (named here)** The ported shell has no composer (UI-6);
-  `before-patch-settings` is the one moment an operator can click.
+  `before-patch-settings` is reached by Settings; the shell also reaches
+  `after-build-navigation` for its agent-authored navigation customization.
 
 ### What is not here at all
 

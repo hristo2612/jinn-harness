@@ -1750,6 +1750,29 @@ enumerated adaptations.
 
 ---
 
+### 9.8 Navigation adaptation (PLA-376, accepted 2026-09-05)
+
+Adaptation 16 extends the existing shell navigation with one typed harness moment,
+`jinn:ui/after-build-navigation`, and one optional agent-authored Boa entry,
+`ext-navigation`. It narrows the UI-7 work to the useful Tools first journey:
+install, inspect source/access, disable/re-enable and remove through existing
+profile administration. An agent replaces `config.data.source` through the
+existing config PATCH; no frontend editor or unused write adapter is added.
+The shell consumes the returned desktop/mobile descriptors. Settings and Plugins
+stay reachable, and invalid/refused results show standard navigation and a reason.
+There is no redundant permanent recovery link, kernel/pin change, or new framework.
+
+`web/port-map.txt` records the new consumer, administration row, notice and tests.
+Existing adaptations 9/14/15 also gain their narrow mounts and visible mobile
+labels; their navigation tests mount the query provider the shared consumer needs.
+The installation row distinguishes accepted intent, observed lifecycle/incarnation,
+and the latest navigation result. It displays actual grants with their qualifier,
+source and declared origin; no successful listener delivery is inferred from Active.
+Removal requires a witnessed disposal after the request plus document absence;
+missing/evicted evidence remains unconfirmed. History stays reachable after removal,
+with retained audit/source/config and shared artifact residuals disclosed.
+The contract and failure semantics live in `plugins/ui/jinn-ui/README.md`.
+
 ## Appendix - the spike, reproducibly
 
 Throwaway; run under a scratch directory, delete after. Paths relative to

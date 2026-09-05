@@ -419,3 +419,12 @@ adapted	scripts/ratchet.mjs	scripts/ratchet.mjs	6
 adapted	size-baseline.json	size-baseline.json	6
 adapted	eslint.config.mjs	eslint.config.mjs	6
 adapted	eslint-baseline.json	eslint-baseline.json	6
+new	-	src/lib/navigation-extension.ts	16
+new	-	src/components/navigation-notice.tsx	16
+new	-	src/lib/__tests__/navigation-extension.test.tsx	16
+new	-	src/routes/settings/plugins/navigation-state.ts	16
+new	-	src/routes/settings/plugins/use-navigation-admin.ts	16
+new	-	src/routes/settings/plugins/navigation-extension.tsx	16
+new	-	src/routes/settings/plugins/__tests__/navigation-state.test.ts	16
+new	-	src/routes/settings/plugins/__tests__/navigation-admin.test.tsx	16
+new	-	src/routes/settings/plugins/__tests__/navigation-inspection.test.tsx	16

@@ -224,7 +224,7 @@ fn the_api_namespace_is_exactly_v1_case_sensitive() {
 // The moment vocabulary (UI-2, §9.2).
 
 #[test]
-fn the_path_law_names_exactly_the_three_topics_and_nothing_else() {
+fn the_path_law_names_exactly_the_four_topics_and_nothing_else() {
     assert_eq!(
         moment_topic("/v1/moments/ui/before-send"),
         Some(TOPIC_BEFORE_SEND)
@@ -295,4 +295,21 @@ fn every_topic_binds_its_payload_schema_before_the_walk() {
     let detail = refused_detail("restarting", TOPIC_BEFORE_SEND, "entry ext-green");
     assert!(detail.starts_with("restarting: "), "{detail}");
     assert_eq!(WALK_REFUSALS.len(), 5);
+}
+
+#[test]
+fn navigation_is_a_typed_moment_with_additive_descriptors() {
+    let topic = "jinn:ui/after-build-navigation";
+    assert_eq!(
+        moment_topic("/v1/moments/ui/after-build-navigation"),
+        Some(topic)
+    );
+    let body = br#"{"items":[{"id":"/settings","label":"Settings","provided":true,"future":1}],"mobileItems":[],"future":true}"#;
+    assert_eq!(validate_moment(topic, body), Ok(()));
+    for invalid in [
+        br#"{}"#.as_slice(),
+        br#"{"items":[],"mobileItems":[{"id":"/","label":"Chat"}]}"#,
+    ] {
+        assert!(validate_moment(topic, invalid).is_err());
+    }
 }

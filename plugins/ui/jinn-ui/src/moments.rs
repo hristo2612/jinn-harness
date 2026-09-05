@@ -1,5 +1,5 @@
 //! The MOMENT vocabulary (UI-2, `docs/plans/ui-malleability-arc.md` §9.2):
-//! three closed topics, each payload's schema, and the path law. Pure
+//! four closed topics, each payload's schema, and the path law. Pure
 //! types — the prose law (fail-closed, the walk, what an extension may
 //! do) is this crate's README; this is its schema.
 //!
@@ -23,11 +23,13 @@ pub const TOPIC_BEFORE_SEND: &str = "jinn:ui/before-send";
 /// sessions seam's `SessionSpec` as its payload.
 pub const TOPIC_BEFORE_CREATE_SESSION: &str = "jinn:ui/before-create-session";
 /// Inventory §4.3 moment 19: a settings namespace about to be patched —
-/// the one moment an operator can reach from the shell this packet ships
-/// (the Settings page's save is a ported write; §9.2, ruling 3).
+/// reached by the Settings page before its ported write.
 pub const TOPIC_BEFORE_PATCH_SETTINGS: &str = "jinn:ui/before-patch-settings";
+/// The shell's offered navigation, after availability is derived.
+pub const TOPIC_AFTER_BUILD_NAVIGATION: &str = "jinn:ui/after-build-navigation";
 /// Every topic a moment may be dispatched on. Closed.
-pub const MOMENT_TOPICS: [&str; 3] = [
+pub const MOMENT_TOPICS: [&str; 4] = [
+    TOPIC_AFTER_BUILD_NAVIGATION,
     TOPIC_BEFORE_SEND,
     TOPIC_BEFORE_CREATE_SESSION,
     TOPIC_BEFORE_PATCH_SETTINGS,
@@ -65,6 +67,26 @@ pub struct BeforePatchSettings {
     pub extra: Extensions,
 }
 
+/// Navigation descriptors carry no URLs or authority beyond their offered IDs.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct NavigationItem {
+    pub id: String,
+    pub label: String,
+    pub provided: bool,
+    #[serde(flatten)]
+    pub extra: Extensions,
+}
+
+/// The shell's offered desktop and mobile destinations, folded by listeners.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AfterBuildNavigation {
+    pub items: Vec<NavigationItem>,
+    pub mobile_items: Vec<NavigationItem>,
+    #[serde(flatten)]
+    pub extra: Extensions,
+}
+
 /// Whether a path is under the moments route family at all (the
 /// transport's surface split; a miss under it is still this family's
 /// typed 404).
@@ -97,6 +119,9 @@ pub fn moment_topic(path: &str) -> Option<&'static str> {
 /// The body is not the topic's shape, with serde's reason.
 pub fn validate_moment(topic: &str, body: &[u8]) -> Result<(), String> {
     let shaped = match topic {
+        TOPIC_AFTER_BUILD_NAVIGATION => {
+            serde_json::from_slice::<AfterBuildNavigation>(body).map(drop)
+        }
         TOPIC_BEFORE_SEND => serde_json::from_slice::<BeforeSend>(body).map(drop),
         TOPIC_BEFORE_CREATE_SESSION => {
             serde_json::from_slice::<BeforeCreateSession>(body).map(drop)

@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { readFileSync } from "node:fs"
 import { describe, it, expect } from "vitest"
 import { render, screen, fireEvent, within } from "@testing-library/react"
@@ -76,10 +77,10 @@ function Location() {
 
 function renderAt(path: string) {
   return render(
-    <MemoryRouter initialEntries={[path]}>
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={[path]}>
       <MobileTabBar />
       <Location />
-    </MemoryRouter>,
+    </MemoryRouter></QueryClientProvider>,
   )
 }
 
@@ -130,8 +131,8 @@ describe("MobileTabBar at the shipped route table", () => {
     fireEvent.click(todos)
     expect(screen.getByTestId("location").textContent).toBe("/settings")
     expect(todos.className).toContain("min-h-[49px]")
-    // Live tabs stay icons-only: the reason is the one text the bar carries.
-    expect(screen.getByRole("link", { name: "Settings" }).textContent).toBe("")
+    // Adaptation 16: live labels make agent-authored renames visible on touch.
+    expect(screen.getByRole("link", { name: "Settings" }).textContent).toBe("Settings")
     // A reason a finger can reach but cannot read is not delivered: composited
     // on the bar it clears AA text (≥ 4.5:1) in BOTH themes. Round 2 shipped it
     // at 1.46:1 dark / 1.58:1 light — text-tertiary under the tab's opacity-40.
