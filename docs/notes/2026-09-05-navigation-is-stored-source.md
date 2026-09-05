@@ -89,3 +89,16 @@ Actual failing browser assertion against the first candidate's served artifact
 ```text
 Error: Phone label exceeds its tab: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
 ```
+
+
+The final removal exercise also caught stale source-activation prose after disposal.
+A source observation now stops waiting when the document is disabled or absent;
+this does not claim runtime disposal (the separate witness still owns that claim).
+The behavioral red before the fix was:
+
+```text
+stops awaiting source activation when the entry is disabled or removed
+AssertionError: expected 'Source changed; waiting to observe a fresh Active incarnation.' to contain 'disabled'
+Test Files  1 failed (1)
+Tests  1 failed | 5 passed (6)
+```

@@ -55,3 +55,15 @@ it("a changed source needs a new Active incarnation, not just its new document",
   current.catalog[1].incarnation = 9
   expect(observeNavigationSource(pending, current).message).toContain("fresh Active incarnation was observed")
 })
+
+
+it("stops awaiting source activation when the entry is disabled or removed", () => {
+  const current = snapshot()
+  current.entries.push({...current.entries[0], id: NAVIGATION_ENTRY, disabled: true, config: {data: {source: "second"}}})
+  const pending = {source: "first", incarnation: 8, awaitingAfter: 8, message: "waiting"}
+  expect(observeNavigationSource(pending, current).message).toContain("disabled")
+  expect(observeNavigationSource(pending, current).awaitingAfter).toBeUndefined()
+  current.entries.pop()
+  expect(observeNavigationSource(pending, current).message).toContain("No stored source")
+  expect(observeNavigationSource(pending, current).awaitingAfter).toBeUndefined()
+})

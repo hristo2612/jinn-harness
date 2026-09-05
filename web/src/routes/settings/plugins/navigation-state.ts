@@ -64,7 +64,10 @@ export interface SourceObservation {
 
 /** A new document digest alone cannot associate the source with an Active seat. */
 export function observeNavigationSource(previous: SourceObservation | undefined, snapshot: NavigationSnapshot): SourceObservation {
-  const source = snapshot.entries.find(entry => entry.id === NAVIGATION_ENTRY)?.config.data?.source
+  const document = snapshot.entries.find(entry => entry.id === NAVIGATION_ENTRY)
+  const source = document?.config.data?.source
+  if (!document) return { source, message: "No stored source is installed." }
+  if (document.disabled) return { source, message: "Stored source is disabled; activation is not requested." }
   const runtime = snapshot.catalog.find(entry => entry.id === NAVIGATION_ENTRY)
   const incarnation = runtime?.incarnation
   const changed = previous !== undefined && source !== previous.source
