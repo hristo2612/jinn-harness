@@ -11,6 +11,10 @@
 //! provider reads secret VALUES and may never write, delete, or enumerate
 //! them (the operation-class attenuation M2-K8 landed, FINDINGS.md #24).
 
+mod composition;
+
+pub use composition::build_entries;
+
 use std::path::{Path, PathBuf};
 
 /// The switchable slot: the entry whose `engine` is `default`. The switch
