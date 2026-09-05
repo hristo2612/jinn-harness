@@ -171,3 +171,35 @@ patched-fiber-only restart assertion remain unchanged. No runtime readiness,
 kernel behavior or timeout is changed; the precise prior scheduling delay was
 not measured. Final-head receipts include a bounded missing-observation probe
 and the full real-composition restart proof; the prior run remains failed.
+
+## Witness health's close before measuring the door
+
+The third full workspace attempt at
+`183d220532eb1d2b0956131c7ac80690ca49fd09` failed the exact connection count:
+
+```text
+cargo test --workspace -- --nocapture --test-threads=4
+thread 'a_moment_is_the_door_then_one_walk_and_nothing_else' panicked at tests/composition/tests/moments.rs:357:5:
+assertion `left == right` failed: one segment per connection
+  left: 10
+ right: 9
+```
+
+The retained 319 ledger rows contain boot health at accepted sequence 151,
+health call 161 and matching close 170, followed by the nine measured connections.
+The original cutoff/time was not retained; HTTP completion does not acknowledge
+persistence to this separate SQLite reader. Round four uses the existing bounded
+closed-segment observation to witness exactly one startup connection, identifies
+its health call and checks the same fiber and accepted/closed handle. Only then
+is its close sequence used as the baseline, logged with handle, fiber and wall
+observation time before any measured send. All nine requests, exact-nine count,
+verify-before-walk and forbidden-crossing assertions remain unchanged.
+
+The source-extracted regression probe uses these exact test functions and the
+existing polling method against deterministic snapshots: Active first, then
+accept, health and delayed close; missing close, wrong handle/fiber/entry, absent
+health and duplicate startup connection reject; a tenth post-baseline connection
+still fails the exact-nine assertion. Its shortened probe-only deadline is not a
+runtime or test-suite timeout change. The probe source and actual output accompany
+the final-head evidence. Full real-loader gates remain required; synthetic
+observations do not replace them. No kernel defect or pin change is inferred.

@@ -1342,12 +1342,39 @@ fn an_extension_boots_from_a_profile_and_a_syntax_error_is_a_failed_fiber() {
     daemon.interrupt();
 }
 
+/// HTTP completion does not acknowledge the asynchronous ledger writer. In this
+/// fresh fixture, the sole pre-measurement connection must be boot's health call.
+fn witnessed_health_close(daemon: &Daemon) -> LedgerRow {
+    let startup = closed_segments(daemon, 0, 1);
+    let health = &startup[0];
+    let accepted = health.first().expect("accepted connection");
+    let close = health.last().expect("closed connection");
+    let handle = kind_of(accepted).1["handle"].as_u64().expect("handle");
+    let fiber = accepted.fiber.expect("attributed transport fiber");
+    assert!(health.iter().all(|row| row.fiber == Some(fiber)));
+    assert_eq!(kind_of(close).0, "NetClosed");
+    assert_eq!(kind_of(close).1["handle"].as_u64(), Some(handle));
+    assert_eq!(
+        health
+            .iter()
+            .filter(|row| is_call(row, "jinn:api-status", "health"))
+            .count(),
+        1,
+        "the unique startup connection is health"
+    );
+    println!(
+        "proof 10 baseline: accepted_seq={} close_seq={} fiber={fiber} handle={handle} observed_at={:?}",
+        accepted.seq, close.seq, std::time::SystemTime::now()
+    );
+    close.clone()
+}
+
 #[test]
 fn a_moment_is_the_door_then_one_walk_and_nothing_else() {
     let Some((daemon, port)) = booted("moments-door", |_, _| {}) else {
         return;
     };
-    let baseline = last_seq(&daemon);
+    let baseline = witnessed_health_close(&daemon).seq;
     // 1: a moment with the bearer.
     let granted = send(port);
     assert_eq!(granted.status, 200, "{}", granted.raw);
