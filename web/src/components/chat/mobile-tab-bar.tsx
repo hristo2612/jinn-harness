@@ -1,7 +1,8 @@
 import { Link, useLocation } from "react-router-dom"
-import { isNavItemActive } from "@/components/pill-nav"
+import { activeHref, isNavItemActive } from "@/components/pill-nav"
 import { MORE_NAV_ITEM } from "@/lib/nav"
-import { useNavigation } from "@/lib/use-navigation"
+import { NOT_IN_PROFILE } from "@/lib/nav-provided"
+import { useProvidedNavigation } from "@/lib/use-provided-navigation"
 import { cn } from "@/lib/utils"
 import { useFeatures } from "@/hooks/use-features"
 
@@ -40,7 +41,8 @@ function isTabActive(href: string, pathname: string, overflowHrefs: string[]): b
 export function MobileTabBar() {
   const pathname = useLocation().pathname
   const { data: features } = useFeatures()
-  const navigation = useNavigation(features?.notesEnabled === true)
+  const navigation = useProvidedNavigation(features?.notesEnabled === true)
+  const active = activeHref(navigation.mobileItems, pathname)
 
   return (
     <nav
@@ -59,8 +61,32 @@ export function MobileTabBar() {
       )}
     >
       {navigation.mobileItems.map((item) => {
-        const isActive = isTabActive(item.href, pathname, navigation.overflowHrefs)
+        const isActive =
+          item.href === MORE_NAV_ITEM.href ? isTabActive(item.href, pathname, navigation.overflowHrefs) : item.href === active
         const Icon = item.icon
+        const tabClass = cn(
+          // min-w-0 so flex-1 can shrink past the tap pill's own 3.5rem: at a
+          // large browser text size four rem-wide pills outrun a phone
+          // viewport and the last tab lands off-screen.
+          "min-h-[49px] min-w-0 flex-1 flex items-center justify-center",
+          "transition-colors",
+          isActive
+            ? "text-[var(--accent)]"
+            : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]",
+        )
+        const glyph = (
+          <span className="flex h-9 w-14 max-w-full items-center justify-center rounded-full">
+            <Icon size={25} className="shrink-0" />
+          </span>
+        )
+        // An absent destination (adaptation 15): its slot kept, marked, inert.
+        if (!item.provided) {
+          return (
+            <span key={item.href} role="link" aria-disabled="true" aria-label={item.label} title={NOT_IN_PROFILE} className={cn(tabClass, "cursor-not-allowed opacity-40")}>
+              {glyph}
+            </span>
+          )
+        }
         return (
           <Link
             key={item.href}
@@ -78,20 +104,9 @@ export function MobileTabBar() {
                   ?.scrollTo({ top: 0, behavior: "smooth" })
               }
             }}
-            className={cn(
-              // min-w-0 so flex-1 can shrink past the tap pill's own 3.5rem: at a
-              // large browser text size four rem-wide pills outrun a phone
-              // viewport and the last tab lands off-screen.
-              "min-h-[49px] min-w-0 flex-1 flex items-center justify-center",
-              "transition-colors",
-              isActive
-                ? "text-[var(--accent)]"
-                : "text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]",
-            )}
+            className={tabClass}
           >
-            <span className="flex h-9 w-14 max-w-full items-center justify-center rounded-full">
-              <Icon size={25} className="shrink-0" />
-            </span>
+            {glyph}
           </Link>
         )
       })}
