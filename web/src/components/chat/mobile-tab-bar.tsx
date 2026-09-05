@@ -8,7 +8,15 @@ import { useFeatures } from "@/hooks/use-features"
 
 // ---------------------------------------------------------------------------
 // MobileTabBar — GRS-022. The SOLE mobile nav: an icon-only iOS-style bottom tab
-// bar carrying the 4 primary destinations (Chat · Todos · Workflows · More).
+// bar. Its tabs are the route table's (adaptation 15, `lib/nav-provided`): the
+// primary destinations Chat · Todos · Workflows in their slots, provided or
+// not, then the surfaces this bundle renders where More would sit — at the
+// shipped table Settings and Plugins, live. There is no More tab, and nothing
+// here redirects. An absent destination keeps its slot disabled and says why:
+// the visible caption "not in this profile" under its glyph (the one text the
+// bar carries), which is also the control's accessible description; the
+// control stays focusable, so a finger and a keyboard both reach the reason.
+// A `title` is never the reason on a touch surface (Taste §2).
 // Mobile only (lg:hidden); the parent decides when to mount it. --material-thick
 // over content with the single 0.5px top hairline iOS tab bars are allowed (the
 // one sanctioned exception to "no hairlines at rest"). Frosted on pointer:fine;
@@ -16,16 +24,16 @@ import { useFeatures } from "@/hooks/use-features"
 // (--material-thick-opaque) instead, so the backdrop filter stops re-rasterising
 // over the scrolling thread.
 //
-// Icons-only (HIG icons-over-labels): the glyphs are self-explanatory, so the
-// bar carries no text. The "you are here" cue is the active tab's --accent tint
+// Live tabs are icons-only (HIG icons-over-labels): the glyphs are
+// self-explanatory. The "you are here" cue is the active tab's --accent tint
 // (the sanctioned exception to the desktop rail's "never --accent" rule, scoped
 // to THIS component only — the desktop NavRibbon is untouched). Every tab keeps
 // an aria-label (no visible text ≠ no accessible name) and a ≥49px tap target so
 // a label-free bar stays fully accessible and thumb-friendly.
 //
-// The More tab stays lit while the operator is on any of its overflow children
-// (Org/Cron/Skills/Activity/Limits/Settings), so the bar always shows where you
-// are even after a one-tap dive out of the overflow list.
+// When a profile's router does render the More screen, its More tab stays lit
+// while the operator is on any of its overflow children, so the bar always
+// shows where you are even after a one-tap dive out of the overflow list.
 // ---------------------------------------------------------------------------
 
 function isTabActive(href: string, pathname: string, overflowHrefs: string[]): boolean {
@@ -79,11 +87,25 @@ export function MobileTabBar() {
             <Icon size={25} className="shrink-0" />
           </span>
         )
-        // An absent destination (adaptation 15): its slot kept, marked, inert.
+        // An absent destination (adaptation 15): its slot kept, marked, inert,
+        // its reason where a finger and a keyboard reach it.
         if (!item.provided) {
+          const reasonId = `mobile-tab-reason-${item.label.toLowerCase().replace(/\s+/g, "-")}`
           return (
-            <span key={item.href} role="link" aria-disabled="true" aria-label={item.label} title={NOT_IN_PROFILE} className={cn(tabClass, "cursor-not-allowed opacity-40")}>
+            <span
+              key={item.href}
+              role="link"
+              tabIndex={0}
+              aria-disabled="true"
+              aria-label={item.label}
+              aria-describedby={reasonId}
+              title={NOT_IN_PROFILE}
+              className={cn(tabClass, "flex-col cursor-not-allowed opacity-40")}
+            >
               {glyph}
+              <span id={reasonId} className="px-1 text-center text-[10px] leading-3 font-[var(--weight-medium)]">
+                {NOT_IN_PROFILE}
+              </span>
             </span>
           )
         }
