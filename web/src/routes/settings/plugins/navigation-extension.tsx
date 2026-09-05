@@ -46,7 +46,7 @@ export function NavigationExtension() {
     {occupied && <p role="alert">The ext-navigation ID belongs to {document.package}. Installation is refused; inspect it in the catalog.</p>}
     <NavigationControls document={document} occupied={occupied} busy={busy} ready={snapshot.isSuccess} act={act} historyOpen={historyOpen} onHistory={() => setHistoryOpen(!historyOpen)} />
     <NavigationInspection document={document} runtime={runtime} />
-    <p className="text-[var(--text-secondary)]">Disable withdraws the listener and keeps its source/config. Remove deletes the entry. Retained audit records (including prior source/config) and the shared Boa artifact remain. This preset writes no application data or external effects; removal does not undo unrelated past actions.</p>
+    <p className="text-[var(--text-secondary)]">Disable withdraws the listener and keeps its source/config. Remove deletes the entry. Retained audit records (including prior source/config) and the shared Boa artifact remain. The unchanged Tools first preset writes no application data or external effects. Replaced source or another provider may have different effects; removal does not undo past actions.</p>
     {historyOpen && <NavigationHistory />}
   </section>
 }
@@ -62,7 +62,7 @@ function RuntimeReading({ runtime }: { runtime?: PluginCatalogEntryWire }) {
   return <p>Observed runtime: {runtime.lifecycle.state}; incarnation {runtime.incarnation ?? "none"}. {runtime.lifecycle.reason === undefined ? null : JSON.stringify(runtime.lifecycle.reason)}</p>
 }
 
-function NavigationInspection({ document, runtime }: { document?: ProfileEntryWire; runtime?: PluginCatalogEntryWire }) {
+export function NavigationInspection({ document, runtime }: { document?: ProfileEntryWire; runtime?: PluginCatalogEntryWire }) {
   return (
     <details className="space-y-3">
       <summary className="min-h-10 cursor-pointer py-2">Inspect source and access</summary>
@@ -74,7 +74,7 @@ function NavigationInspection({ document, runtime }: { document?: ProfileEntryWi
         <pre className="whitespace-pre-wrap break-words">{JSON.stringify(runtime.grants.values, null, 2)}</pre>
         <p>{runtime.grants.qualifier}</p>
       </> : <p>Actual grants have not been observed. Installation requests only the navigation topic and clock.</p>}
-      <p>The Boa source receives destination IDs, labels and availability. Its JavaScript has no host calls; the provider reads the clock. It receives no profile contents, credentials or sessions.</p>
+      <NavigationAccess document={document} />
     </details>
   )
 }
@@ -112,4 +112,16 @@ function SourceRuntime({ snapshot }: { snapshot?: NavigationSnapshot }) {
   const observation = held?.snapshot === snapshot ? held.observation : observeNavigationSource(held?.observation, snapshot)
   if (held?.snapshot !== snapshot) setHeld({ snapshot, observation })
   return <p className="text-[var(--text-secondary)]">{observation.message}</p>
+}
+
+
+function NavigationAccess({ document }: { document?: ProfileEntryWire }) {
+  return <>
+      <p>Preset access: Tools first requests navigation IDs, labels and availability through Boa, plus the provider’s clock access.</p>
+      {document && <>
+        <p>Configured provider: {document.package}</p>
+        <p>Configured topics: {JSON.stringify(document.config.data?.topics ?? "not declared")}</p>
+        <p>Installed access may differ from the preset. Other configured topics can carry other data, including session text; another provider may expose different capabilities. Read the actual grants and provider configuration together.</p>
+      </>}
+  </>
 }

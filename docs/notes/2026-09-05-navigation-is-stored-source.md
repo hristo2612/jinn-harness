@@ -102,3 +102,23 @@ AssertionError: expected 'Source changed; waiting to observe a fresh Active inca
 Test Files  1 failed (1)
 Tests  1 failed | 5 passed (6)
 ```
+
+
+## Interim review corrections
+
+COO review required a real elapsed bound for stalled I/O and truthful copy after
+external authority/provider changes. Three behavioral tests initially failed
+(controls stayed busy after stalled runtime reads, final refresh and writes).
+Two inspection cases initially failed for changed topics and an occupied provider.
+
+```text
+navigation-admin.test.tsx: Tests 3 failed | 2 passed (5)
+navigation-inspection.test.tsx: Tests 2 failed (2)
+```
+
+Reads/writes now race an elapsed deadline; only timely observations publish a
+confirmation. Refresh cannot hold administration controls busy. A timed-out write
+remains uncertain, and a late read cannot retroactively claim witnessed success.
+Inspection displays configured provider/topics and explicitly scopes access and
+side-effect claims to the unchanged preset. Changed providers/topics may expose
+other data and effects. No transport-wide behavior or kernel contracts changed.
