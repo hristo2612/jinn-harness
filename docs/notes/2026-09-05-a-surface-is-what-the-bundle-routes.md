@@ -97,12 +97,13 @@ AssertionError: expected [ '/', '/todos', '/workflow', …(2) ] to deeply equal 
 The UI-2 meter (plan §9 preamble) counts production Rust net on its path
 list. This packet changes no Rust: **0** on the meter. The TypeScript tree
 carries no line ceiling (its acceptance is the diff against the pinned
-sha); the card's estimate was ≤ 120 production net, and the TypeScript
-production delta is 80 lines added and 12 deleted across
-`lib/nav-provided.ts` (70), `lib/use-provided-navigation.ts` (10),
-`components/pill-nav.tsx` (+19), `components/chat/mobile-tab-bar.tsx`
-(+15 −12) — reported for the estimate, not against a ceiling. Every
-touched file is under 300 lines (`pill-nav.tsx` 285).
+sha); the card's ESTIMATE was ≤ 120 production net, and the TypeScript
+production delta (`git diff --numstat main -- web/src`, test directories
+excluded) is **+135 −21 = 114 net**: `lib/nav-provided.ts` +70,
+`lib/use-provided-navigation.ts` +10, `components/pill-nav.tsx` +23 −4,
+`components/chat/mobile-tab-bar.tsx` +32 −17 — reported against the
+estimate, not a ceiling. Every touched file is under 300 lines
+(`pill-nav.tsx` 285, `mobile-tab-bar.tsx` 115).
 
 ## Out of scope, named
 
@@ -112,4 +113,33 @@ splat as before. Adjacent, reported, not fixed here (Taste §4).
 
 ## Browser pass
 
-(filled after the pass on the suite's own daemon)
+On the suite's own pinned daemon (`target/composition/pinned-jinnd`,
+`f8b285b`) booted by hand from a fresh copy of the suite's `ui` kit on a
+free loopback port, driven with `agent-browser` on a throwaway profile;
+the browser paired through the pairing screen with the root's own
+credential. Ten screenshots are attached to the Todo: `desktop-1440-{light,dark}-{settings,plugins,hover-todos}`
+and `mobile-390-{light,dark}-{settings,plugins}`.
+
+Measured on the live DOM, `/settings/plugins`, light, 1440 × 900 (the
+rail, in order):
+
+| item | href | aria-disabled | title | current | box | opacity |
+|---|---|---|---|---|---|---|
+| Chat … Skills (nine) | none | `true` | `not in this profile` | none | 44 × 44 | 0.4 |
+| Settings | `/settings` | none | none | none | 44 × 44 | 1 |
+| Plugins | `/settings/plugins` | none | none | `page` | 44 × 44 | 1 |
+
+Hovering a disabled row shows its pill reading `Todos · not in this
+profile` (the `hover-todos` screenshots). A click on the disabled Todos
+row left the URL at `/settings`; a click on Plugins landed on
+`/settings/plugins`; on it Plugins alone carries `aria-current`.
+
+Mobile, 390 × 844, the fixed bar: Chat, Todos, Workflows `aria-disabled`
+with the title, no href, 78 × 49, opacity 0.4; Settings and Plugins live
+links, 78 × 49; a tap on Todos left `/settings`, a tap on Plugins landed
+on `/settings/plugins` with Plugins alone current. No More tab.
+
+One transcript note for the next verifier: a selector on
+`nav[aria-label="Primary"]` matches the hidden desktop rail first at 390
+px (a 0 × 0 anchor agent-browser reports as "covered"); the mobile bar is
+`nav[aria-label="Primary"].fixed`.
