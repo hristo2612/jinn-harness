@@ -7,16 +7,19 @@ import { cn } from "@/lib/utils"
 import { useFeatures } from "@/hooks/use-features"
 
 // ---------------------------------------------------------------------------
-// MobileTabBar — GRS-022. The SOLE mobile nav: an icon-only iOS-style bottom tab
-// bar. Its tabs are the route table's (adaptation 15, `lib/nav-provided`): the
+// MobileTabBar — GRS-022. The SOLE mobile nav: an iOS-style bottom tab bar.
+// Its tabs are the route table's (adaptation 15, `lib/nav-provided`): the
 // primary destinations Chat · Todos · Workflows in their slots, provided or
 // not, then the surfaces this bundle renders where More would sit — at the
 // shipped table Settings and Plugins, live. There is no More tab, and nothing
 // here redirects. An absent destination keeps its slot disabled and says why:
-// the visible caption "not in this profile" under its glyph (the one text the
-// bar carries), which is also the control's accessible description; the
-// control stays focusable, so a finger and a keyboard both reach the reason.
-// A `title` is never the reason on a touch surface (Taste §2).
+// it renders the visible caption "not in this profile" under its glyph (the
+// one text the bar carries), which is also the control's accessible
+// description; the control stays focusable, so a finger and a keyboard both
+// reach the reason. Only the glyph dims: the caption stays at full opacity in
+// --text-secondary, so it composites to ≥ 4.5:1 on the bar in both themes —
+// a reason a finger can reach but cannot read is not delivered. A `title` is
+// never the reason on a touch surface (Taste §2).
 // Mobile only (lg:hidden); the parent decides when to mount it. --material-thick
 // over content with the single 0.5px top hairline iOS tab bars are allowed (the
 // one sanctioned exception to "no hairlines at rest"). Frosted on pointer:fine;
@@ -100,10 +103,10 @@ export function MobileTabBar() {
               aria-label={item.label}
               aria-describedby={reasonId}
               title={NOT_IN_PROFILE}
-              className={cn(tabClass, "flex-col cursor-not-allowed opacity-40")}
+              className={cn(tabClass, "flex-col cursor-not-allowed")}
             >
-              {glyph}
-              <span id={reasonId} className="px-1 text-center text-[10px] leading-3 font-[var(--weight-medium)]">
+              <span className="flex opacity-40">{glyph}</span>
+              <span id={reasonId} className="px-1 text-center text-[10px] leading-3 font-[var(--weight-medium)] text-[var(--text-secondary)]">
                 {NOT_IN_PROFILE}
               </span>
             </span>
