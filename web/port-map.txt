@@ -16,7 +16,9 @@
 # Settings surface; item 12 is `plugins/disk-plugins.ts`, the shell's client-plugin
 # loader, the ACTUAL source of that transcript's `GET /api/plugins` (declared on
 # the Todo in round 3 with the evidence). Each adapted test row carries its
-# module's item number, the item-9 precedent.
+# module's item number, the item-9 precedent. Item 15 (§9.7 amendment 10) is
+# the derived rail: the two nav components, their two tests pinned to the old
+# gateway's full route table by one mock each, and the derivation beside nav.ts.
 #
 # --- the shell, Settings, the plugins page, components/ui (the import closure
 # --- of the trimmed route table, computed at the sha)
@@ -27,7 +29,7 @@ adapted	packages/web/src/components/auth/pairing-screen.tsx	src/components/auth/
 verbatim	packages/web/src/components/auth/remote-access-panel.tsx	src/components/auth/remote-access-panel.tsx
 verbatim	packages/web/src/components/chat/chat-hydration.tsx	src/components/chat/chat-hydration.tsx
 verbatim	packages/web/src/components/chat/chat-route-helpers.ts	src/components/chat/chat-route-helpers.ts
-verbatim	packages/web/src/components/chat/mobile-tab-bar.tsx	src/components/chat/mobile-tab-bar.tsx
+adapted	packages/web/src/components/chat/mobile-tab-bar.tsx	src/components/chat/mobile-tab-bar.tsx	15
 verbatim	packages/web/src/components/chat/new-chat-helpers.ts	src/components/chat/new-chat-helpers.ts
 verbatim	packages/web/src/components/chat/todo-prefix-context.tsx	src/components/chat/todo-prefix-context.tsx
 verbatim	packages/web/src/components/edge-back/edge-back-layer.tsx	src/components/edge-back/edge-back-layer.tsx
@@ -55,7 +57,7 @@ verbatim	packages/web/src/components/global-search/verbs.ts	src/components/globa
 verbatim	packages/web/src/components/global-search/workbench.tsx	src/components/global-search/workbench.tsx
 verbatim	packages/web/src/components/live-stream-widget.tsx	src/components/live-stream-widget.tsx
 adapted	packages/web/src/components/page-layout.tsx	src/components/page-layout.tsx	9
-verbatim	packages/web/src/components/pill-nav.tsx	src/components/pill-nav.tsx
+adapted	packages/web/src/components/pill-nav.tsx	src/components/pill-nav.tsx	15
 verbatim	packages/web/src/components/route-loading.tsx	src/components/route-loading.tsx
 verbatim	packages/web/src/components/search-overlay-context.tsx	src/components/search-overlay-context.tsx
 verbatim	packages/web/src/components/shell/large-title-header.tsx	src/components/shell/large-title-header.tsx
@@ -133,6 +135,9 @@ verbatim	packages/web/src/lib/native-gateway-profiles.ts	src/lib/native-gateway-
 verbatim	packages/web/src/lib/native-gateway-socket.ts	src/lib/native-gateway-socket.ts
 verbatim	packages/web/src/lib/native-gateway-transport.ts	src/lib/native-gateway-transport.ts
 verbatim	packages/web/src/lib/nav.ts	src/lib/nav.ts
+new	-	src/lib/nav-provided.ts	15
+new	-	src/lib/use-provided-navigation.ts	15
+new	-	src/lib/__tests__/nav-provided.test.ts	15
 verbatim	packages/web/src/lib/parked.ts	src/lib/parked.ts
 verbatim	packages/web/src/lib/query-client.ts	src/lib/query-client.ts
 verbatim	packages/web/src/lib/query-keys.ts	src/lib/query-keys.ts
@@ -274,7 +279,8 @@ verbatim	packages/web/src/test/setup.ts	src/test/setup.ts
 verbatim	packages/web/src/test/virtual-layout.ts	src/test/virtual-layout.ts
 # --- the tests whose subject is on the map and whose import closure resolves
 # --- inside web/ (the harnesses and fixtures they share included), verbatim
-verbatim	packages/web/src/components/__tests__/nav-ribbon.test.tsx	src/components/__tests__/nav-ribbon.test.tsx
+adapted	packages/web/src/components/__tests__/nav-ribbon.test.tsx	src/components/__tests__/nav-ribbon.test.tsx	15
+new	-	src/components/__tests__/nav-ribbon-provided.test.tsx	15
 adapted	packages/web/src/components/__tests__/page-layout.test.tsx	src/components/__tests__/page-layout.test.tsx	9
 verbatim	packages/web/src/components/__tests__/pill-nav.test.ts	src/components/__tests__/pill-nav.test.ts
 verbatim	packages/web/src/components/__tests__/route-loading.test.tsx	src/components/__tests__/route-loading.test.tsx
@@ -282,7 +288,8 @@ verbatim	packages/web/src/components/__tests__/status-bar.test.tsx	src/component
 verbatim	packages/web/src/components/auth/native-pairing-screen.test.tsx	src/components/auth/native-pairing-screen.test.tsx
 verbatim	packages/web/src/components/auth/remote-access-panel.test.tsx	src/components/auth/remote-access-panel.test.tsx
 verbatim	packages/web/src/components/chat/__tests__/chat-route-helpers.test.ts	src/components/chat/__tests__/chat-route-helpers.test.ts
-verbatim	packages/web/src/components/chat/__tests__/mobile-tab-bar.test.tsx	src/components/chat/__tests__/mobile-tab-bar.test.tsx
+adapted	packages/web/src/components/chat/__tests__/mobile-tab-bar.test.tsx	src/components/chat/__tests__/mobile-tab-bar.test.tsx	15
+new	-	src/components/chat/__tests__/mobile-tab-bar-provided.test.tsx	15
 verbatim	packages/web/src/components/chat/__tests__/new-chat-employee-flow.test.ts	src/components/chat/__tests__/new-chat-employee-flow.test.ts
 verbatim	packages/web/src/components/chat/__tests__/new-chat-helpers-speech.test.ts	src/components/chat/__tests__/new-chat-helpers-speech.test.ts
 verbatim	packages/web/src/components/edge-back/__tests__/edge-back-harness.tsx	src/components/edge-back/__tests__/edge-back-harness.tsx

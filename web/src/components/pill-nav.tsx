@@ -2,7 +2,8 @@ import { type ComponentType, type MouseEvent as ReactMouseEvent, type ReactNode 
 import { Link, useLocation } from "react-router-dom"
 import { PanelLeft } from "lucide-react"
 import { useSettings } from "@/routes/settings-provider"
-import { useNavigation } from "@/lib/use-navigation"
+import { NOT_IN_PROFILE } from "@/lib/nav-provided"
+import { useProvidedNavigation } from "@/lib/use-provided-navigation"
 import { cn } from "@/lib/utils"
 import { useFeatures } from "@/hooks/use-features"
 import { prefetchRoute } from "@/lib/route-prefetch"
@@ -69,6 +70,12 @@ export function isNavItemActive(href: string, pathname: string): boolean {
   return href === "/" ? pathname === "/" : pathname.startsWith(href)
 }
 
+/** The one item lit for `pathname`: the longest matching href, so a nested
+ *  surface (`/settings/plugins`) lights its own item and not its parent's too. */
+export function activeHref(items: readonly { href: string }[], pathname: string): string | undefined {
+  return items.filter((item) => isNavItemActive(item.href, pathname)).sort((a, b) => b.href.length - a.href.length)[0]?.href
+}
+
 // ---------------------------------------------------------------------------
 // NavRibbon — the chat route's permanent slim icon rail (~56px). Always mounted
 // (desktop only). Icons-only at rest; the rail NEVER widens, so the chat list is
@@ -101,12 +108,15 @@ function RibbonRow({
   label,
   isActive,
   href,
+  disabled,
   onClick,
 }: {
   Icon: ComponentType<{ size?: number | string; className?: string }>
   label: string
   isActive?: boolean
   href?: string
+  /** An absent destination (adaptation 15): kept in its slot, marked, inert. */
+  disabled?: boolean
   // Receives the click event so a link row can preventDefault a no-op
   // same-route navigation (used by the Chat icon to reveal the list instead).
   onClick?: (e: ReactMouseEvent) => void
@@ -125,10 +135,17 @@ function RibbonRow({
       {/* Piano reveal — floats past the rail edge; flex-centers vertically so the
           inner pill is free to animate on the X axis. */}
       <span aria-hidden className="pointer-events-none absolute inset-y-0 left-full z-50 ml-2 flex items-center">
-        <span className={RIBBON_LABEL_PILL}>{label}</span>
+        <span className={RIBBON_LABEL_PILL}>{disabled ? `${label} · ${NOT_IN_PROFILE}` : label}</span>
       </span>
     </>
   )
+  if (disabled) {
+    return (
+      <span role="link" aria-disabled="true" aria-label={label} title={NOT_IN_PROFILE} className={cn(cls, "cursor-not-allowed opacity-40 hover:bg-transparent")}>
+        {inner}
+      </span>
+    )
+  }
   if (href) {
     return (
       <Link
@@ -163,8 +180,9 @@ export function NavRibbon({
   onToggleList?: () => void
 }) {
   const { data: features } = useFeatures()
-  const navItems = useNavigation(features?.notesEnabled === true).items
+  const navItems = useProvidedNavigation(features?.notesEnabled === true).items
   const pathname = useLocation().pathname
+  const active = activeHref(navItems, pathname)
   const { settings } = useSettings()
   const portalName = settings.portalName ?? "Jinn"
   // Default brand mark carries U+FE0F so the genie always renders as a COLOR
@@ -256,7 +274,8 @@ export function NavRibbon({
             Icon={item.icon}
             label={item.label}
             href={item.href}
-            isActive={isNavItemActive(item.href, pathname)}
+            isActive={item.href === active}
+            disabled={!item.provided}
             onClick={item.href === "/" ? onChatIconClick : undefined}
           />
         ))}
