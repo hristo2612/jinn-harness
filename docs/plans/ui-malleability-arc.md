@@ -1699,6 +1699,55 @@ enumerated adaptations.
   plugin tree) is UNBLOCKED**: its enable/disable, install and remove are
   the routes this bump proves. #52 re-measured at the pin, open.
 
+- **Amendment 10 (PLA-356, 2026-09-05, the nav rail; operator feedback
+  on the test instance, 2026-09-03: "Nothing works aside from settings
+  page").** The verbatim rail (`lib/nav.ts`) lists ten surfaces; every
+  one but Settings lands on the plugin splat and is redirected to
+  `/settings` without a word, and the real second surface,
+  `/settings/plugins`, is reachable only from a link below the fold. ONE
+  adaptation joins §4.2's list, and the verbatim gate's map gains its
+  rows:
+
+  15. `components/pill-nav.tsx` (the desktop rail) and
+      `components/chat/mobile-tab-bar.tsx` (the mobile bar) render the
+      list `lib/nav-provided.ts` (new, with its hook
+      `lib/use-provided-navigation.ts`) DERIVES: `navigationFor`'s items
+      (verbatim, the port's inventory of destinations) with Plugins
+      (`/settings/plugins`) inserted after Settings as a first-class rail
+      item, each marked PROVIDED or not. **The source is the route table
+      `lib/app-routes.ts` (item 5)** — the bundle's own statement of the
+      surfaces it renders: a route is a surface unless it is a redirect
+      (its `surface` names another route's, the descriptor's own rule) or
+      the plugin splat; a contributed row is provided by the plugin that
+      contributed it. NOT the plugin catalog, for two reasons: a surface
+      is provided by the bundle that routes it, not by the seam its page
+      reads (Settings renders the seam's absence itself, item 1), and the
+      catalog is a reading at one instant the rail would have to poll
+      (FINDINGS #40) where the route table is a fact of the bundle. An
+      absent destination is rendered DISABLED with the reason `not in
+      this profile` — its `title`, its label pill, `aria-disabled` on a
+      `role="link"` with no `href` — navigates nowhere, and is never a
+      silent redirect; the router's `/` and `/more` redirects stay as the
+      answers to a TYPED url and no rail item reaches them any more. On
+      mobile an absent primary is disabled the same way and, the More
+      screen being absent at this profile, the provided overflow surfaces
+      take the More slot as direct tabs (a table that renders `/more`
+      gives the verbatim bar back). The active cue is the LONGEST
+      matching href, so `/settings/plugins` lights Plugins and not
+      Settings beside it. The four verbatim tests of these two components
+      (`nav.test.ts` and `pill-nav.test.ts` stay verbatim; `nav-ribbon.test.tsx`
+      and `mobile-tab-bar.test.tsx` do not) become adapted rows pinned to
+      the old gateway's FULL table by one mock each, the item-9 precedent,
+      so every assertion they carry stands unchanged; new tests carry the
+      derivation, the disabled state, the routing of the Plugins item and
+      the mutant (a hardcoded list goes red against a table that renders
+      one more surface). Every ported pixel otherwise stays; Jinn Taste
+      applies (≥ 34 px targets, no resting hairlines). README's "Only
+      Settings and Plugins are ported; the nav rail still lists the absent
+      surfaces" limitation is RETIRED by this item. Out of scope, named:
+      the global search's static pages (`components/global-search/
+      static-pages.tsx`, verbatim) still offer the absent surfaces.
+
 ---
 
 ## Appendix - the spike, reproducibly
