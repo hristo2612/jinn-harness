@@ -145,3 +145,29 @@ every UI topic grant and requires the typed refusal, exactly one topic-naming
 `GrantRefused` row, no `DispatchTrace`, and no listener activity. Both prior full
 attempts remain failed/incomplete; neither provides a workspace pass. Final-head
 gate results are recorded separately with the submitted SHA.
+
+## Observe the boot ledger before taking the restart baseline
+
+The next full workspace attempt at
+`09da2c2f13ba618dacb682c83fd42cf47fcf9140` failed before reaching the
+corrected moment fixture:
+
+```text
+cargo test --workspace -- --nocapture --test-threads=4
+thread 'patching_one_entry_through_the_api_restarts_exactly_that_fiber' (71838145) panicked at tests/composition/tests/api.rs:345:5:
+assertion `left == right` failed: every entry active at boot
+  left: 5
+ right: 7
+test patching_one_entry_through_the_api_restarts_exactly_that_fiber ... FAILED
+```
+
+The preserved ledger later recorded Active fibers for all seven expected entry
+IDs. HTTP readiness is not a persistence acknowledgement for the test's separate
+SQLite reader. Round three waits with the existing bounded `eventually` helper
+for each expected entry's attributed Active row before taking the baseline.
+Missing identity, fiber attribution or Active evidence cannot satisfy the wait;
+its existing deadline still fails closed. The exact seven-fiber count and every
+patched-fiber-only restart assertion remain unchanged. No runtime readiness,
+kernel behavior or timeout is changed; the precise prior scheduling delay was
+not measured. Final-head receipts include a bounded missing-observation probe
+and the full real-composition restart proof; the prior run remains failed.
