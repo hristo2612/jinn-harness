@@ -3,6 +3,16 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
 import { MobileTabBar } from '../mobile-tab-bar'
 
+// Adaptation 15 (docs/plans/ui-malleability-arc.md §9.7 amendment 10): these
+// assertions describe the old gateway's tab bar, where every destination is
+// rendered; the route table is pinned to that world so they stand unchanged.
+// The shipped table's bar is `mobile-tab-bar-provided.test.tsx`.
+vi.mock("@/lib/app-routes", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/app-routes")>()
+  const surface = (path: string) => ({ id: path.slice(1) || "chat", path, availability: "always", surface: path.slice(1) || "chat" })
+  return { ...actual, APP_ROUTES: ["/", "/todos", "/notes", "/workflow", "/experiments", "/org", "/cron", "/limits", "/logs", "/skills", "/settings", "/more"].map(surface) }
+})
+
 function renderAt(path: string) {
   return render(
     <MemoryRouter initialEntries={[path]}>

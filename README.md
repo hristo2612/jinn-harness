@@ -265,10 +265,11 @@ Its own README carries these in full; the load-bearing ones:
 - **The bundle is one 1.46 MB crossing per transport activation. (named
   here)** Measured in proof 3 and recorded in the note; a page load is N
   connections because responses close.
-- **Only Settings and Plugins are ported; the nav rail still lists the
-  absent surfaces. (named here)** `nav.ts` is verbatim and its
-  feature-disabled snapshot hides only Notes; an absent destination
-  lands on the plugin splat.
+- **Only Settings and Plugins are ported.** The rail no longer pretends
+  otherwise: since PLA-356 (adaptation 15, plan §9.7 amendment 10) it
+  derives what is live from the route table, Plugins is a rail item of
+  its own, and an absent destination is disabled with the reason
+  `not in this profile` rather than landing on the plugin splat.
 - **The service worker is dropped** (plan §8, question 4), so the UI is
   not installable and has no offline shell in this packet.
 
