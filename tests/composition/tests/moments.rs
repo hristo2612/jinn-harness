@@ -1466,11 +1466,7 @@ fn an_entry_emitting_off_its_topic_grant_is_refused_on_the_record() {
             .expect("grants");
         let before = grants.len();
         grants.retain(|grant| !grant.as_str().is_some_and(|g| g.starts_with("jinn:ui/")));
-        assert_eq!(
-            grants.len(),
-            before - 4,
-            "the four topic grants were there"
-        );
+        assert_eq!(grants.len(), before - 4, "the four topic grants were there");
     }) else {
         return;
     };
