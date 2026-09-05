@@ -93,7 +93,16 @@ CLOSED (R3) — `src/moments.rs` is its schema:
 |---|---|---|
 | `jinn:ui/before-send` | `{ "text", "attachments": [], "session-id" }` (`BeforeSend`) | §4.3 moment 1 |
 | `jinn:ui/before-create-session` | the sessions seam's `SessionSpec` | §4.3 moment 3 |
-| `jinn:ui/before-patch-settings` | `{ "namespace", "patch": { … } }` (`BeforePatchSettings`) | §4.3 moment 19 — the one moment the ported shell reaches (the Settings save) |
+| `jinn:ui/before-patch-settings` | `{ "namespace", "patch": { … } }` (`BeforePatchSettings`) | §4.3 moment 19 — the Settings save |
+
+| `jinn:ui/after-build-navigation` | `{ "items": [{ "id", "label", "provided" }], "mobileItems": […] }` (`AfterBuildNavigation`) | Navigation adaptation (PLA-376) |
+
+The navigation consumer validates returned IDs against each offered list, rejects
+duplicates and invalid labels (plain text, 1–40 characters), preserves Settings
+and Plugins where offered, and reconstructs hrefs/icons/availability from the
+original descriptors. Invalid output or a refused walk shows standard navigation
+with the actual reason; a throwing listener may still answer unchanged successfully.
+Unknown envelope siblings remain additive. Source runs in Boa, never in the browser.
 
 **The path law** (`moment_topic`): `/v1/moments/<domain>/<topic>` maps
 to `jinn:<domain>/<topic>` for exactly the topics above, byte for byte;
@@ -120,7 +129,7 @@ happen. The client's retry-once after a `503` belongs with the composer
 (UI-6); the Settings adapter surfaces the refusal as its conflict notice
 and does not retry.
 
-The emitter — the transport — is granted the three topic names as the
+The emitter — the transport — is granted the four topic names as the
 profile's statement of what it emits (`tools/ui-kit`, `mount_moments_on`).
 Listeners are the extension tier (`plugins/ext/README.md`). Every claim
 above is proven on the ledger in `tests/composition/tests/moments.rs`.

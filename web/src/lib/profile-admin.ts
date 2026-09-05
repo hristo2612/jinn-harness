@@ -77,3 +77,18 @@ export const profileAdmin = {
   swapPlugin: (id: string, pkg: string, hash: string) =>
     write("PATCH", `${ENTRIES}/${encodeURIComponent(id)}`, { package: pkg, hash }),
 }
+
+/** A scoped read of the document; config is kept separate from runtime state. */
+export interface ProfileEntryWire {
+  id: string
+  package: string
+  hash: string
+  disabled?: boolean
+  config: { data?: Record<string, unknown>; grants?: unknown[] }
+}
+
+export async function readProfile(): Promise<{ profile: { entries: ProfileEntryWire[] } }> {
+  const res = await authFetch("/v1/profile")
+  if (!res.ok) throw await refusal(res)
+  return res.json()
+}

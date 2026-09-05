@@ -27,12 +27,8 @@ import { useFeatures } from "@/hooks/use-features"
 // (--material-thick-opaque) instead, so the backdrop filter stops re-rasterising
 // over the scrolling thread.
 //
-// Live tabs are icons-only (HIG icons-over-labels): the glyphs are
-// self-explanatory. The "you are here" cue is the active tab's --accent tint
-// (the sanctioned exception to the desktop rail's "never --accent" rule, scoped
-// to THIS component only — the desktop NavRibbon is untouched). Every tab keeps
-// an aria-label (no visible text ≠ no accessible name) and a ≥49px tap target so
-// a label-free bar stays fully accessible and thumb-friendly.
+// Live tabs show their returned labels so a renamed destination is visible
+// on touch screens. Every tab keeps its accessible name and ≥49px target.
 //
 // When a profile's router does render the More screen, its More tab stays lit
 // while the operator is on any of its overflow children, so the bar always
@@ -79,7 +75,7 @@ export function MobileTabBar() {
           // min-w-0 so flex-1 can shrink past the tap pill's own 3.5rem: at a
           // large browser text size four rem-wide pills outrun a phone
           // viewport and the last tab lands off-screen.
-          "min-h-[49px] min-w-0 flex-1 flex items-center justify-center",
+          "min-h-[49px] min-w-0 flex-1 flex flex-col items-center justify-center",
           "transition-colors",
           isActive
             ? "text-[var(--accent)]"
@@ -132,6 +128,7 @@ export function MobileTabBar() {
             className={tabClass}
           >
             {glyph}
+            <span className="px-1 text-center text-[10px] leading-3 text-[var(--text-secondary)] break-words">{item.label}</span>
           </Link>
         )
       })}

@@ -1,3 +1,4 @@
+import { NavigationNotice } from "./navigation-notice"
 import { lazy, Suspense, useEffect, useRef, useState } from "react"
 import { NavRibbon } from "./pill-nav"
 import { MobileTabBar } from "./chat/mobile-tab-bar"
@@ -117,6 +118,7 @@ export function PageLayout({ children, chromeless, hideMobileTabBar }: { childre
             <main> so its per-icon label pills can escape rightward over content. */}
         {!chromeless && <NavRibbon />}
         <main className="relative flex flex-1 flex-col overflow-hidden">
+          {!chromeless && <NavigationNotice />}
           {/* Before the live view in DOM order, which is what puts the previous
               view underneath it while the drag is running. */}
           {coarsePointer && <EdgeBackLayer contentRef={content} />}

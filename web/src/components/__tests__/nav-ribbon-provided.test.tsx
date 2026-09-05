@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { describe, it, expect, vi } from "vitest"
 import { render, screen, fireEvent } from "@testing-library/react"
 import { MemoryRouter, useLocation } from "react-router-dom"
@@ -17,10 +18,10 @@ function Location() {
 
 function renderAt(path: string) {
   return render(
-    <MemoryRouter initialEntries={[path]}>
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={[path]}>
       <NavRibbon />
       <Location />
-    </MemoryRouter>,
+    </MemoryRouter></QueryClientProvider>,
   )
 }
 

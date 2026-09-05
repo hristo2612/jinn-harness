@@ -1537,3 +1537,274 @@ fn an_entry_emitting_off_its_topic_grant_is_refused_on_the_record() {
     );
     daemon.interrupt();
 }
+
+const NAV_ID: &str = "ext-navigation";
+const NAV_TOPIC: &str = "jinn:ui/after-build-navigation";
+const NAV_PATH: &str = "/v1/moments/ui/after-build-navigation";
+
+fn navigation_body() -> serde_json::Value {
+    let items = serde_json::json!([
+        {"id":"/", "label":"Chat", "provided":false},
+        {"id":"/settings", "label":"Settings", "provided":true},
+        {"id":"/settings/plugins", "label":"Plugins", "provided":true}
+    ]);
+    serde_json::json!({"items":items, "mobileItems":items, "future-envelope":true})
+}
+
+fn nav_catalog(port: u16) -> serde_json::Value {
+    get(port, &format!("/v1/plugins/main/{NAV_ID}")).body
+}
+
+fn patch_navigation(port: u16, source: &str) -> Response {
+    composition::api::patch(
+        port,
+        &format!("/v1/profile/entries/{NAV_ID}"),
+        &serde_json::json!({"config":{"data":{"source":source,"origin":"agent"}}}),
+    )
+}
+
+fn install_navigation(port: u16) -> Response {
+    let document = get(port, "/v1/profile").body;
+    let boa = document["profile"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["id"] == GREEN_ID)
+        .unwrap();
+    let source = include_str!("../../../web/src/lib/navigation-extension.ts")
+        .split_once("TOOLS_FIRST_SOURCE = `")
+        .unwrap()
+        .1
+        .split_once('`')
+        .unwrap()
+        .0;
+    post(
+        port,
+        "/v1/profile/entries",
+        &serde_json::json!({
+            "id":NAV_ID,"package":boa["package"],"hash":boa["hash"],"parent":null,"disabled":false,
+            "grants":[NAV_TOPIC,CLOCK_CONTRACT],
+            "config":{"data":{"topics":[NAV_TOPIC],"source":source,"origin":"agent","budget":{"fuel":GREEN_FUEL}}}
+        }),
+    )
+}
+
+fn await_navigation(daemon: &Daemon, port: u16, label: &str) {
+    daemon.eventually("the source's navigation result", || {
+        let answer = post(port, NAV_PATH, &navigation_body());
+        answer.status == 200 && answer.body["items"][0]["label"] == label
+    });
+}
+
+#[test]
+fn navigation_source_is_installed_replaced_disabled_and_removed_without_a_shell_rebuild() {
+    let Some((daemon, port)) = booted("navigation-journey", |_, _| {}) else {
+        return;
+    };
+    let before = post(port, NAV_PATH, &navigation_body());
+    assert_eq!(before.status, 200, "typed navigation path: {}", before.raw);
+    assert_eq!(before.body, navigation_body());
+    let (_, _, bundle_before) = composition::api::fetch_bytes(port, "/", None);
+    let added = install_navigation(port);
+    assert_eq!(added.status, 200, "{}", added.raw);
+    assert!(added.body["administered-seq"].is_u64());
+    await_navigation(&daemon, port, "My tools");
+    let focused = post(port, NAV_PATH, &navigation_body()).body;
+    for list in ["items", "mobileItems"] {
+        assert_eq!(focused[list].as_array().unwrap().len(), 2);
+        assert_eq!(focused[list][0]["id"], "/settings/plugins");
+        assert_eq!(focused[list][1]["id"], "/settings");
+    }
+    assert_eq!(focused["future-envelope"], true);
+    let catalog = nav_catalog(port);
+    assert_eq!(state(&catalog), "active");
+    assert_eq!(catalog["attestation"]["origin"], "agent");
+    println!("navigation install: {} catalog {}", added.body, catalog);
+
+    // A different program keeps unavailable destinations and renames every item.
+    let alternate = "p => ({...p, items:p.items.map(x=>({...x,label:'Agent '+x.label})), mobileItems:p.mobileItems.map(x=>({...x,label:'Agent '+x.label}))})";
+    let prior = catalog["incarnation"].clone();
+    let patched = patch_navigation(port, alternate);
+    assert_eq!(patched.status, 200, "{}", patched.raw);
+    assert!(patched.body["patched-seq"].is_u64(), "{}", patched.body);
+    await_navigation(&daemon, port, "Agent Chat");
+    let current = nav_catalog(port);
+    assert_ne!(current["incarnation"], prior);
+    assert_eq!(current["attestation"]["source"], source_digest(alternate));
+    let alternate_result = post(port, NAV_PATH, &navigation_body()).body;
+    assert_eq!(alternate_result["mobileItems"][2]["label"], "Agent Plugins");
+    assert_eq!(alternate_result["items"].as_array().unwrap().len(), 3);
+    let (_, _, bundle_after) = composition::api::fetch_bytes(port, "/", None);
+    assert_eq!(
+        bundle_before, bundle_after,
+        "same shell bytes after source PATCH"
+    );
+
+    let path = format!("/v1/profile/entries/{NAV_ID}");
+    let disabled = composition::api::patch(port, &path, &serde_json::json!({"disabled":true}));
+    assert_eq!(disabled.status, 200, "{}", disabled.raw);
+    daemon.eventually("disable withdraws the listener", || {
+        post(port, NAV_PATH, &navigation_body()).body == navigation_body()
+    });
+    let document = get(port, "/v1/profile").body;
+    let retained = document["profile"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["id"] == NAV_ID)
+        .unwrap();
+    assert_eq!(retained["config"]["data"]["source"], alternate);
+    assert_eq!(retained["disabled"], true);
+    let enabled = composition::api::patch(port, &path, &serde_json::json!({"disabled":false}));
+    assert_eq!(enabled.status, 200, "{}", enabled.raw);
+    await_navigation(&daemon, port, "Agent Chat");
+    let removed = composition::api::delete(port, &path);
+    assert_eq!(removed.status, 200, "{}", removed.raw);
+    let seq = removed.body["administered-seq"].as_u64().unwrap();
+    daemon.eventually("positive disposal witness after removal", || {
+        let evidence = get(port, &format!("/v1/plugins/main/{NAV_ID}/transitions")).body;
+        evidence["witnessed"].as_array().unwrap().iter().any(|row| {
+            row["to"] == "disposed" && row["committed-by"].as_u64().is_some_and(|at| at >= seq)
+        })
+    });
+    let document = get(port, "/v1/profile").body;
+    assert!(!document["profile"]["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["id"] == NAV_ID));
+    assert_eq!(
+        post(port, NAV_PATH, &navigation_body()).body,
+        navigation_body()
+    );
+    assert!(!history(port, CATALOG, NAV_ID)["lines"]
+        .as_array()
+        .unwrap()
+        .is_empty());
+    println!("navigation journey: install → alternate source PATCH → disable/re-enable → witnessed removal; same shell {}; retained history available", source_digest(&String::from_utf8(bundle_before).unwrap()));
+    daemon.interrupt();
+}
+
+#[test]
+fn navigation_malformed_throwing_and_exhausted_sources_keep_the_transport_alive() {
+    let Some((daemon, port)) = booted("navigation-failures", |_, _| {}) else {
+        return;
+    };
+    assert_eq!(install_navigation(port).status, 200);
+    await_navigation(&daemon, port, "My tools");
+    // Invalid output is deliberately returned to the shell, whose validator is
+    // independently tested. An empty list may not remove its recovery routes.
+    assert_eq!(
+        patch_navigation(port, "p => ({...p,items:[],mobileItems:[]})").status,
+        200
+    );
+    daemon.eventually("malformed output reaches the consumer", || {
+        post(port, NAV_PATH, &navigation_body()).body["items"] == serde_json::json!([])
+    });
+    let before_throw = nav_catalog(port)["incarnation"].clone();
+    assert_eq!(patch_navigation(port, THROWING_SOURCE).status, 200);
+    daemon.eventually("throwing source's new incarnation", || {
+        state(&nav_catalog(port)) == "active" && nav_catalog(port)["incarnation"] != before_throw
+    });
+    let answer = post(port, NAV_PATH, &navigation_body());
+    assert_eq!(answer.status, 200, "{}", answer.raw);
+    assert_eq!(answer.body, navigation_body());
+    assert_eq!(
+        state(&nav_catalog(port)),
+        "active",
+        "not proof of listener success"
+    );
+    let before_loop = nav_catalog(port)["incarnation"].clone();
+    let looping = composition::api::patch(
+        port,
+        &format!("/v1/profile/entries/{NAV_ID}"),
+        &serde_json::json!({"config":{"data":{"source":LOOPING_SOURCE,"budget":{"fuel":LOOPING_FUEL}}}}),
+    );
+    assert_eq!(looping.status, 200, "{}", looping.raw);
+    daemon.eventually("looping source active in a fresh incarnation", || {
+        state(&nav_catalog(port)) == "active" && nav_catalog(port)["incarnation"] != before_loop
+    });
+    let answer = post(port, NAV_PATH, &navigation_body());
+    assert_eq!(answer.status, 200, "{}", answer.raw);
+    assert_eq!(answer.body, navigation_body());
+    daemon.eventually("only the exhausted extension fails", || {
+        state(&nav_catalog(port)) == "failed"
+    });
+    assert_eq!(get(port, "/v1/health").status, 200);
+    println!("navigation failures: malformed output reaches consumer; throwing listener stays active with unchanged result; exhausted listener fails and health remains 200");
+    daemon.interrupt();
+}
+
+#[test]
+fn navigation_topic_and_admin_grants_are_enforced_on_the_real_loader() {
+    let Some((daemon, port)) = booted("navigation-grants", |root, document| {
+        let mut denied = budgeted(extension(root, NAV_ID, &[NAV_TOPIC], "p => p"), GREEN_FUEL);
+        denied["config"]["grants"] = serde_json::json!([CLOCK_CONTRACT]);
+        push_entry(document, denied);
+        entry_mut(document, TRANSPORT)["config"]["grants"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|grant| grant["contract"] != "jinn:profile-admin");
+    }) else {
+        return;
+    };
+    assert_eq!(state(&nav_catalog(port)), "failed");
+    assert!(daemon
+        .ledger_rows()
+        .iter()
+        .any(|row| row.entry.as_deref() == Some(NAV_ID)
+            && row.kind.contains("GrantRefused")
+            && row.kind.contains(NAV_TOPIC)));
+    assert_eq!(
+        post(port, NAV_PATH, &navigation_body()).body,
+        navigation_body()
+    );
+    let denied_admin = composition::api::delete(port, &format!("/v1/profile/entries/{NAV_ID}"));
+    assert_ne!(denied_admin.status, 200, "{}", denied_admin.raw);
+    assert!(denied_admin.raw.contains("refused"), "{}", denied_admin.raw);
+    let wrong_shape = post(port, NAV_PATH, &serde_json::json!({"items":[]}));
+    assert_eq!(wrong_shape.status, 422, "{}", wrong_shape.raw);
+    println!("navigation grants: listener failed on its denied topic; admin removal refused; malformed input 422");
+    daemon.interrupt();
+}
+
+#[test]
+fn navigation_restarting_refusal_is_typed_and_never_an_unmodified_success() {
+    let Some((daemon, port)) = booted("navigation-restarting", |_, _| {}) else {
+        return;
+    };
+    assert_eq!(install_navigation(port).status, 200);
+    await_navigation(&daemon, port, "My tools");
+    let slow = "(function(){var i=0;while(i<4000000)i++;return p=>({...p,items:p.items.map(x=>({...x,label:'New '+x.label})),mobileItems:p.mobileItems});})()";
+    daemon.edit_profile(|document| {
+        entry_mut(document, NAV_ID)["config"]["data"]["source"] = serde_json::json!(slow)
+    });
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let mut refused = 0;
+    loop {
+        assert!(Instant::now() < deadline, "replacement did not land");
+        let answer = post(port, NAV_PATH, &navigation_body());
+        if answer.status == 503 {
+            assert_eq!(
+                answer.body["error"]["refusal"], "restarting",
+                "{}",
+                answer.raw
+            );
+            refused += 1;
+        } else {
+            assert_eq!(answer.status, 200, "{}", answer.raw);
+            if answer.body["items"][0]["label"] == "New Chat" {
+                break;
+            }
+            assert_eq!(
+                answer.body["items"][0]["label"], "My tools",
+                "no unmodified success in restart: {}",
+                answer.raw
+            );
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(refused > 0, "the slow activation window was witnessed");
+    println!("navigation restarting: {refused} typed refusals; only old/new folds answered 200");
+    daemon.interrupt();
+}
