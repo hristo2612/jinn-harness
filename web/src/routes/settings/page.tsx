@@ -24,7 +24,7 @@ import { DeclaredSettings } from "./declared-settings"
 import { PluginsEntry } from "./plugins/entry"
 import { EnginesSection } from "./engines/entry"
 import type { Config } from "./config-shape"
-import type { DeclaredNamespace } from "@/lib/api-config"
+import { SupersededConfigRead, type DeclaredNamespace } from "@/lib/api-config"
 import { configSaveBlocker } from "./engines/model-map-model"
 import { SttSettingsSection } from "./stt-section"
 import { VoiceSection } from "./voice-section"
@@ -110,13 +110,19 @@ export default function SettingsPage() {
   /** The document the next write is built from. Held beside the state because two
    *  edits in one tick both have to reach the writer, not just the last render. */
   const configRef = useRef<Config>({})
+  const configLoad = useRef(0)
   const [configLoading, setConfigLoading] = useState(true)
   const [configError, setConfigError] = useState<string | null>(null)
   const [conflict, setConflict] = useState<{ message: string; remedy?: string } | null>(null)
   const { voiceCapability, reloadVoiceCapability } = useVoiceCapability()
   const { saveState, commit, adoptRevision } = useConfigCommit({
     blocker: (next) => configSaveBlocker(next.engines, modelRegistry?.engines),
-    onSaved: reloadVoiceCapability, onFolded: (folded) => { configRef.current = folded; setConfig(folded) },
+    onSaved: reloadVoiceCapability, onFolded: (folded) => {
+      ++configLoad.current
+      setConfigLoading(false)
+      configRef.current = folded
+      setConfig(folded)
+    },
     onConflict: setConflict,
   })
 
@@ -154,10 +160,12 @@ export default function SettingsPage() {
 
   // Load gateway config
   function loadConfig() {
+    const load = ++configLoad.current
     setConfigLoading(true)
     api
       .getConfig()
       .then(({ config: loaded, revision, declared: schemas, notificationNotice }) => {
+        if (load !== configLoad.current) return
         configRef.current = loaded as Config
         setConfig(loaded as Config)
         adoptRevision(revision, notificationNotice)
@@ -167,8 +175,10 @@ export default function SettingsPage() {
         setCompanyPrefixValue((loaded as Config).portal?.companyPrefix ?? "")
         setConfigError(null)
       })
-      .catch((err) => setConfigError(err.message))
-      .finally(() => setConfigLoading(false))
+      .catch((err) => {
+        if (load === configLoad.current && !(err instanceof SupersededConfigRead)) setConfigError(err.message)
+      })
+      .finally(() => { if (load === configLoad.current) setConfigLoading(false) })
   }
 
   useEffect(() => {
@@ -207,6 +217,8 @@ export default function SettingsPage() {
 
   /** Editing and saving are one action now that there is no Save button. */
   function applyModelConfig(updater: (cfg: Config) => Config) {
+    ++configLoad.current
+    setConfigLoading(false)
     const next = updater(configRef.current)
     configRef.current = next
     setConfig(next)

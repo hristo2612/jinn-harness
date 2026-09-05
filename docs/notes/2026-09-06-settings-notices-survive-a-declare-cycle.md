@@ -46,3 +46,14 @@ one successful serial walk with one listener and zero failures. Separate probes
 cover a denied clock, backpressure, and pending restart/removal. These diagnostic
 barriers are test fixtures, not production code. The ordinary composition suite
 still requires the actual attributed successful walk; state alone is insufficient.
+
+A browser Reload may observe old settings and arrive after a later save. The
+adapter publishes a read only if it is the latest read and no save overlaps it;
+starting and finishing a save invalidates outstanding reads. Its document,
+schema and notification observations share that local ordering scope. This is
+not a comparison of provider revision counters, which reset on restart. A
+superseded read is discarded, including its error, without updating the adapter
+baseline or the page. The page also excludes read results after a newer load,
+local edit or accepted save. No write is replayed. The mounted cron regression
+holds an old settled GET across the normal debounce and a pending PATCH, then
+checks that the new jobs and warning survive with exactly one PATCH.
