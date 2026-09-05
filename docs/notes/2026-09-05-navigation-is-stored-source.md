@@ -72,3 +72,20 @@ positive disposal witnesses, retained history, malformed/throwing/exhausted
 sources, denied topic/admin grants and typed restarting refusal. Web behavior
 tests cover validation, stale responses, bounded confirmation and source changes.
 Final gate/live receipts belong to the submitted head and accompany the PR.
+
+## Long labels remain readable on a phone
+
+Live boundary evidence at the first candidate accepted a 40-character unbroken
+label but rendered the two provided phone labels over their neighbours. The
+result paragraph also painted outside its card. The correction constrains phone
+labels to their tab width (ellipsis, full accessible name retained) and permits
+wrapping anywhere in the inspection/result card. Targets and navigation paths
+stay unchanged. The incomplete first-candidate Rust run was stopped when this
+live defect was observed; it is not counted as passing final-head evidence.
+
+Actual failing browser assertion against the first candidate's served artifact
+(the label's rectangle must stay within its own tab):
+
+```text
+Error: Phone label exceeds its tab: XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+```

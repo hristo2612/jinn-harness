@@ -31,7 +31,7 @@ export function NavigationExtension() {
   const document = snapshot.data?.entries.find(entry => entry.id === NAVIGATION_ENTRY)
   const runtime = snapshot.data?.catalog.find(entry => entry.id === NAVIGATION_ENTRY)
   const occupied = !!document && document.package !== "ext/jinn-ext-js-boa"
-  return <section aria-label="Navigation customization" className="space-y-4 rounded-2xl bg-[var(--fill-quaternary)] p-4 text-[length:var(--text-subheadline)] text-[var(--text-primary)]">
+  return <section aria-label="Navigation customization" className="space-y-4 [overflow-wrap:anywhere] rounded-2xl bg-[var(--fill-quaternary)] p-4 text-[length:var(--text-subheadline)] text-[var(--text-primary)]">
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div><h2 className="font-semibold">Navigation customization</h2><p className="text-[var(--text-secondary)]">Tools first preset</p></div>
       <button className={buttonClass} disabled={busy} onClick={() => void refresh()}>Refresh navigation</button>

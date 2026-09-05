@@ -128,7 +128,7 @@ export function MobileTabBar() {
             className={tabClass}
           >
             {glyph}
-            <span className="px-1 text-center text-[10px] leading-3 text-[var(--text-secondary)] break-words">{item.label}</span>
+            <span className="max-w-full truncate px-1 text-center text-[10px] leading-3 text-[var(--text-secondary)]">{item.label}</span>
           </Link>
         )
       })}
