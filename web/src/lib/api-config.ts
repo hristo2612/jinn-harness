@@ -177,51 +177,51 @@ async function foldPatch(http: ConfigHttp, namespace: string, patch: Record<stri
   return settingsOf(folded.patch)
 }
 
+async function readNamespace(http: ConfigHttp, namespace: string): Promise<ResolvedNamespaceWire> {
+  const res = await authFetch(`/v1/settings/${encodeURIComponent(namespace)}`)
+  if (!res.ok) throw await http.responseError(res)
+  return (await res.json()) as ResolvedNamespaceWire
+}
+
+function observeNotification(notifications: Map<string, string>, namespace: string, wire: ResolvedNamespaceWire) {
+  const state = wire.notification?.state
+  if (state === "settled") notifications.delete(namespace)
+  else if (state === "pending") notifications.set(namespace, "pending")
+  else if (state !== undefined || notifications.has(namespace)) notifications.set(namespace, "unconfirmed")
+}
+function notificationNotice(notifications: Map<string, string>): string | undefined {
+  if (!notifications.size) return undefined
+  return `Saved — ${[...notifications].map(([name, state]) => `${name} notification ${state}`).join("; ")}. Refresh to check delivery. Settings are stored even if notification is unconfirmed.`
+}
+
+async function patchNamespace(http: ConfigHttp, notifications: Map<string, string>, namespace: string, unfolded: Record<string, unknown>): Promise<void> {
+  const patch = await foldPatch(http, namespace, unfolded)
+  const res = await authFetch(`/v1/settings/${encodeURIComponent(namespace)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ patch }),
+  })
+  if (!res.ok) throw await refusal(res, http)
+  const wire = (await res.json()) as ResolvedNamespaceWire
+  lastRead[namespace] = settingsOf(wire.settings)
+  observeNotification(notifications, namespace, wire)
+}
+
 /** The config slice of the `api` object, spread back in at its old position. */
 export function createConfigApi(http: ConfigHttp) {
-  async function readNamespace(namespace: string): Promise<ResolvedNamespaceWire> {
-    const res = await authFetch(`/v1/settings/${encodeURIComponent(namespace)}`)
-    if (!res.ok) throw await http.responseError(res)
-    return (await res.json()) as ResolvedNamespaceWire
-  }
-
   // Delivery observations belong to this API instance, never to browser storage.
   const notifications = new Map<string, string>()
-  function observeNotification(namespace: string, wire: ResolvedNamespaceWire) {
-    const state = wire.notification?.state
-    if (state === "settled") notifications.delete(namespace)
-    else if (state === "pending") notifications.set(namespace, "pending")
-    else if (state !== undefined || notifications.has(namespace)) notifications.set(namespace, "unconfirmed")
-  }
-  function notificationNotice(): string | undefined {
-    if (!notifications.size) return undefined
-    return `Saved — ${[...notifications].map(([name, state]) => `${name} notification ${state}`).join("; ")}. Refresh to check delivery. Settings are stored even if notification is unconfirmed.`
-  }
-
-  async function patchNamespace(namespace: string, unfolded: Record<string, unknown>): Promise<void> {
-    const patch = await foldPatch(http, namespace, unfolded)
-    const res = await authFetch(`/v1/settings/${encodeURIComponent(namespace)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ patch }),
-    })
-    if (!res.ok) throw await refusal(res, http)
-    const wire = (await res.json()) as ResolvedNamespaceWire
-    lastRead[namespace] = settingsOf(wire.settings)
-    observeNotification(namespace, wire)
-  }
-
   return {
     getConfig: async (): Promise<ConfigDocument> => {
       const res = await authFetch("/v1/settings")
       if (!res.ok) throw await http.responseError(res)
       const names = Object.keys(((await res.json()) as NamespacesWire).namespaces ?? {})
-      const resolved = await Promise.all(names.map(async (name) => [name, await readNamespace(name)] as const))
-      for (const [name, wire] of resolved) observeNotification(name, wire)
+      const resolved = await Promise.all(names.map(async (name) => [name, await readNamespace(http, name)] as const))
+      for (const [name, wire] of resolved) observeNotification(notifications, name, wire)
       for (const name of notifications.keys()) if (!names.includes(name)) notifications.set(name, "unconfirmed")
       lastRead = Object.fromEntries(resolved.map(([name, wire]) => [name, settingsOf(wire.settings)]))
       lastDeclared = Object.fromEntries(resolved.map(([name, wire]) => [name, declaredOf(wire.schema)]))
-      return { config: { ...lastRead }, revision: revisionOf(lastRead), declared: { ...lastDeclared }, notificationNotice: notificationNotice() }
+      return { config: { ...lastRead }, revision: revisionOf(lastRead), declared: { ...lastDeclared }, notificationNotice: notificationNotice(notifications) }
     },
     /** `revision` is the one `getConfig()` handed over; a save built on an older
      *  read is refused as a conflict rather than landed on top of it. */
@@ -234,12 +234,12 @@ export function createConfigApi(http: ConfigHttp) {
         return Object.keys(patch).length ? [{ namespace, patch }] : []
       })
       for (const [index, { namespace, patch }] of changes.entries()) {
-        await patchNamespace(namespace, patch)
+        await patchNamespace(http, notifications, namespace, patch)
         if (notifications.get(namespace) === "pending" && index < changes.length - 1) {
-          return { revision: revisionOf(lastRead), config: { ...lastRead }, notificationNotice: `${notificationNotice()} Remaining namespace edits were not sent.` }
+          return { revision: revisionOf(lastRead), config: { ...lastRead }, notificationNotice: `${notificationNotice(notifications)} Remaining namespace edits were not sent.` }
         }
       }
-      return { revision: revisionOf(lastRead), config: { ...lastRead }, notificationNotice: notificationNotice() }
+      return { revision: revisionOf(lastRead), config: { ...lastRead }, notificationNotice: notificationNotice(notifications) }
     },
   }
 }
