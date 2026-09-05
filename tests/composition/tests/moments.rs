@@ -1451,9 +1451,9 @@ fn a_moment_is_the_door_then_one_walk_and_nothing_else() {
 /// `events.emit` is covered by the grant of the topic's own name exactly
 /// as `listen` is. The transport is the ONE first-party guest that emits
 /// on `jinn:ui/*` (an extension is a listener by construction — its Boa
-/// provider never calls `emit`), and its three topic grants were written
-/// into the `ui` profile by UI-2 so it would READ as the kernel now
-/// enforces. This boot STRIPS them and shows the walk is refused ON THE
+/// provider never calls `emit`), and its four topic grants cover UI-2's
+/// three moments plus navigation. This boot STRIPS them and shows the
+/// walk is refused ON THE
 /// RECORD: a `GrantRefused` row naming the topic, the transport's typed
 /// `refused` answer, NO `DispatchTrace`, and the extension never ran.
 /// The same emitter WITH its grant is proof 2's fold, unchanged.
@@ -1468,8 +1468,8 @@ fn an_entry_emitting_off_its_topic_grant_is_refused_on_the_record() {
         grants.retain(|grant| !grant.as_str().is_some_and(|g| g.starts_with("jinn:ui/")));
         assert_eq!(
             grants.len(),
-            before - 3,
-            "the three topic grants were there"
+            before - 4,
+            "the four topic grants were there"
         );
     }) else {
         return;

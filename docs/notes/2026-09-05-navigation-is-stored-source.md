@@ -122,3 +122,26 @@ remains uncertain, and a late read cannot retroactively claim witnessed success.
 Inspection displays configured provider/topics and explicitly scopes access and
 side-effect claims to the unchanged preset. Changed providers/topics may expose
 other data and effects. No transport-wide behavior or kernel contracts changed.
+
+## Four topic grants in the refusal fixture
+
+The first full workspace attempts at
+`09832c0c635bf03723f298ac5386ec198c17f428` failed the existing grant-refusal
+fixture before it reached its runtime assertions. The navigation moment adds a
+fourth grant, while the fixture still subtracted three. Actual red output from
+`cargo test --workspace -- --nocapture --test-threads=4` (also present in the
+earlier serial attempt):
+
+```text
+thread 'an_entry_emitting_off_its_topic_grant_is_refused_on_the_record' (71729737) panicked at tests/composition/tests/moments.rs:1469:9:
+assertion `left == right` failed: the three topic grants were there
+  left: 9
+ right: 10
+test an_entry_emitting_off_its_topic_grant_is_refused_on_the_record ... FAILED
+```
+
+Round two corrects only that fixture's count and comment. The proof still strips
+every UI topic grant and requires the typed refusal, exactly one topic-naming
+`GrantRefused` row, no `DispatchTrace`, and no listener activity. Both prior full
+attempts remain failed/incomplete; neither provides a workspace pass. Final-head
+gate results are recorded separately with the submitted SHA.
