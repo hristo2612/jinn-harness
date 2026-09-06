@@ -1,6 +1,8 @@
 //! The UI seam's profile entries and the bundle-building half of the kit
 //! (one home per fact); `main.rs` runs the web build and writes the profile.
 
+pub mod codex;
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

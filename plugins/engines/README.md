@@ -70,6 +70,14 @@ thread, verifies the requested model/effort and refuses inherited instructions,
 MCP, hooks, plugins, tools or approval requests. The pinned installed protocol
 used for proof is codex-cli 0.153.4. Only actual agent-message deltas become text;
 completed-message and terminal checks detect disagreement or terminal loss.
-Stdin EOF ends the owned process after terminal output. Stop sends a kill and
-remains pending until process wait confirms exit. Failures say when stop is
-unconfirmed. No fallback provider or long-lived global service is introduced.
+For this mode, `ui-kit` resolves the OpenAI npm launcher to its installed native
+executable before writing the command and executable grant. Direct native paths
+are also accepted; unknown scripts, missing dependencies and non-executable files
+are refused. Custom profiles must likewise name the native executable, not a
+launcher: the pinned process contract owns one PID. Existing exec profiles are
+unchanged. This layout resolution follows the OpenAI CLI 0.153.4 platform package
+and bundled-vendor paths; an unsupported install must supply its native path.
+
+Stdin EOF ends the owned native process after terminal output. Stop sends a kill
+and remains pending until process wait confirms that worker's exit. Failures
+say when stop is unconfirmed. No fallback provider or long-lived global service is introduced.

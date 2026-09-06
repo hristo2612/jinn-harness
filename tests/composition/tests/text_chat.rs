@@ -38,6 +38,68 @@ fn send(port: u16, id: &str, message: &str) {
     assert_eq!(response.status, 200, "{}", response.raw);
 }
 
+// Track the worker from this entry's kernel ledger, then include its actual
+// descendants. Launcher exit alone previously produced a false Stop pass.
+fn owned_tree(daemon: &Daemon) -> Vec<u32> {
+    let pid = daemon
+        .ledger_rows()
+        .iter()
+        .rev()
+        .find_map(|row| {
+            let (kind, fields) = row.kind_of();
+            (row.entry.as_deref() == Some("chat-codex") && kind == "ProcessSpawned")
+                .then(|| fields["pid"].as_u64().unwrap() as u32)
+        })
+        .expect("the native worker was spawned");
+    let rows = process_parents();
+    assert!(
+        rows.iter().any(|(child, _)| *child == pid),
+        "worker must be live before Stop"
+    );
+    let mut owned = vec![pid];
+    loop {
+        let before = owned.len();
+        for (child, parent) in &rows {
+            if owned.contains(parent) && !owned.contains(child) {
+                owned.push(*child);
+            }
+        }
+        if owned.len() == before {
+            break;
+        }
+    }
+    eprintln!("actual owned worker tree: {owned:?}");
+    owned
+}
+
+fn process_parents() -> Vec<(u32, u32)> {
+    let output = std::process::Command::new("ps")
+        .args(["-axo", "pid=,ppid="])
+        .output()
+        .expect("process table");
+    assert!(output.status.success());
+    String::from_utf8(output.stdout)
+        .unwrap()
+        .lines()
+        .map(|line| {
+            let mut fields = line.split_whitespace();
+            (
+                fields.next().unwrap().parse().unwrap(),
+                fields.next().unwrap().parse().unwrap(),
+            )
+        })
+        .collect()
+}
+
+fn assert_reaped(owned: &[u32]) {
+    let rows = process_parents();
+    assert!(
+        !rows.iter().any(|(pid, _)| owned.contains(pid)),
+        "confirmed Stop must leave no native worker/descendant: {owned:?}"
+    );
+    eprintln!("confirmed absent from process table: {owned:?}");
+}
+
 #[test]
 fn real_astra_partials_context_cancel_and_restart_at_the_archived_pin() {
     let Ok(root) = std::env::var("JINN_TEXT_CHAT_ROOT") else {
@@ -59,6 +121,12 @@ fn real_astra_partials_context_cancel_and_restart_at_the_archived_pin() {
         .unwrap();
     assert_eq!(provider["package"], "engines/jinn-engine-codex");
     assert!(provider["config"]["data"]["text-chat"].is_object());
+    let command = PathBuf::from(provider["config"]["data"]["command"].as_str().unwrap());
+    assert_eq!(
+        ui_kit::codex::executable(&command).unwrap(),
+        command,
+        "the runtime grant/command must name the native worker"
+    );
     let pin = pinned_commit().unwrap();
     let source = jinnd_source(&pin).expect("the exact pin is mandatory for this vendor proof");
     let binary = pinned_daemon(&source, &pin).unwrap();
@@ -137,10 +205,12 @@ fn real_astra_partials_context_cancel_and_restart_at_the_archived_pin() {
             .is_some_and(|text| !text.is_empty())
     });
     assert_eq!(partial["log"][2]["status"], "running");
+    let stopped_tree = owned_tree(&daemon);
     let stopped = delete(port, &format!("/v1/sessions/chat/{id}/turns"));
     assert_eq!(stopped.status, 200);
     let cancelled = until(port, id, |saved| saved["log"][2]["status"] != "running");
     assert_eq!(cancelled["log"][2]["status"], "cancelled", "{cancelled}");
+    assert_reaped(&stopped_tree);
     assert!(cancelled["log"][2]["answer"]
         .as_str()
         .unwrap()
@@ -155,7 +225,9 @@ fn real_astra_partials_context_cancel_and_restart_at_the_archived_pin() {
             .as_str()
             .is_some_and(|text| !text.is_empty())
     });
+    let suspended_tree = owned_tree(&daemon);
     daemon.interrupt();
+    assert_reaped(&suspended_tree);
     let daemon = Daemon::boot_operator(&binary, &root);
     daemon.await_ready();
     let recovered = record(port, id);

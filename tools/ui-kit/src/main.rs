@@ -32,6 +32,12 @@ fn build_provider(artifacts: &Path, bundle_dir: &Path, name: &str) -> String {
 }
 
 fn kit(root: &Path, port: u16, every_ms: u64, tick_ms: u64, chat: Option<(&str, &str)>) {
+    let chat = chat.map(|(command, home)| {
+        let command = ui_kit::codex::executable(Path::new(command))
+            .unwrap_or_else(|error| panic!("Text Chat executable: {error}"));
+        let home = std::fs::canonicalize(home).expect("dedicated Codex home exists");
+        (command, home)
+    });
     let artifacts = root.join("artifacts");
     let out = build_web();
     let files = archive(&out);
@@ -77,9 +83,7 @@ fn kit(root: &Path, port: u16, every_ms: u64, tick_ms: u64, chat: Option<(&str, 
         Some(GREEN_BUDGET),
     ));
 
-    if let Some((command, codex_home)) = chat {
-        let command = std::fs::canonicalize(command).expect("Codex executable exists");
-        let codex_home = std::fs::canonicalize(codex_home).expect("dedicated Codex home exists");
+    if let Some((command, codex_home)) = &chat {
         let home = root.join("chat-home");
         std::fs::create_dir_all(home.join("workspace")).expect("isolated chat workspace");
         let home = std::fs::canonicalize(home).expect("chat home exists");
