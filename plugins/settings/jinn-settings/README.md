@@ -12,7 +12,7 @@ encode round trip at every nesting level.
 |---|---|---|
 | Contract | `jinn:settings` | Provided by a settings provider; operations `declare`, `get`, `patch`, `namespaces`. |
 | Store contract | `jinn:settings-store` | Provided by the overlay store; operation `overlays`. |
-| Changed topic | `jinn:settings/changed` | Emitted serial/all after an applied patch, payload `Changed`. An owner holds a listen grant for it; the provider holds the same topic as its emit grant (since pin `138fdce` an emit is covered by the topic's own grant, exactly as a subscription is). |
+| Changed topic | `jinn:settings/changed` | Emitted serial/all after a hot patch, emit/all on the restart path, payload `Changed`; see notification observations below. An owner holds a listen grant for it; the provider holds the same topic as its emit grant (since pin `138fdce` an emit is covered by the topic's own grant, exactly as a subscription is). |
 | Refused topic | `jinn:settings/refused` | Emitted emit/all after a refused patch, payload `Refused` — its `DispatchTrace` is the refusal's ledger record. The provider holds the topic as its emit grant. |
 | Secret reference | `{"$secret": "<keystore key>"}` | The only shape a `secret-ref` field admits. The shape is CLOSED and its decoder REFUSES a sibling key, naming the surface (`closed`): an unknown key must never ride along beside a credential name, so this is the one wire surface in the distribution where preservation would be the wrong answer. |
 
@@ -195,13 +195,40 @@ what resolves now. The defaults are not addressable.
 5. `revision` counts applied patches per namespace within a provider
    incarnation.
 
+## Notification observations
+
+`Patched` and `Resolved` may carry an additive `notification` object with
+`state`, `revision` and `detail`. `applied` means the profile write succeeded;
+it does not imply delivery when notification is `pending` or `unconfirmed`.
+`settled` records a completed serial walk with listener replies, without
+per-listener attribution. An absent record means this provider incarnation
+has no observation; it does not confirm a notification from an earlier one.
+
+A hot notice refused **before any delivery** by the direct owner's queued
+`jinn:settings.declare` call is retained exactly once in memory. The patch
+answers saved/pending. After that declaration is answered, a one-shot clock
+callback attempts the retained notice. Renewed direct declare cycles wait for
+the corresponding declaration to return, rather than retrying inside the same
+call. Ordinary successful hot notices remain synchronous. All other refusals,
+empty replies and callback-arm failures are unconfirmed, with no automatic
+replay. Failed dispatches remain on the kernel ledger; callback-arm failure is
+also exposed by GET.
+
+There is at most one outstanding notice per provider incarnation; while it
+exists a new patch is refused `unavailable` **before** any write. A failed clock
+request keeps that slot occupied and does not rearm on subsequent declarations.
+Provider restart/removal releases the in-memory slot and its alarms. Previously
+saved settings remain in the profile store and reconcile through declarations;
+delivery across that boundary is unconfirmed. No durable queue or exactly-once
+notification guarantee is provided. See the
+[repair rationale](../../../docs/notes/2026-09-06-settings-notices-survive-a-declare-cycle.md).
+
 ## Why the owner never calls from `activate`
 
-`jinn:profile` `patch-entry` awaits the patched fiber's restart before
-answering. An owner whose `activate` called the settings provider would
-be activating inside the provider's own `patch` call — the
-nested-dispatch deadlock (FINDINGS.md #4, #26). So an owner resolves its
-settings from a one-shot alarm after activation and from every wake,
+The original profile patch path awaited the owner's restart, so calling back
+from `activate` formed the nested-dispatch deadlock (FINDINGS.md #4, #26).
+The current pin accepts the patch without waiting for restart. The owner keeps
+its post-activation resolution: it declares from a one-shot alarm and every wake,
 plans its activation on the entry layer alone, and absorbs `changed`
 events without calling back (the payload carries the resolved settings).
 

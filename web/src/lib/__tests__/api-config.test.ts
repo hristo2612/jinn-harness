@@ -110,3 +110,131 @@ describe("saving settings through the before-patch-settings moment", () => {
     expect(moment).not.toHaveBeenCalled()
   })
 })
+
+it("keeps an applied patch with a pending notification distinct from completed delivery", async () => {
+  daemon()
+  const fetch = authFetch.getMockImplementation()!
+  authFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+    const response = await fetch(path, init)
+    if (init?.method !== "PATCH") return response
+    return json(200, { ...await response.json(), notification: { state: "pending", revision: 1, detail: "waiting for declaration" } })
+  })
+  const api = createConfigApi({ responseError, conflict, moment: async (_d, _t, payload) => json(200, payload) })
+  const document = await api.getConfig()
+  const saved = await api.updateConfig({ cron: { "tick-ms": 700 } }, document.revision)
+  expect(saved.config).toEqual({ cron: { "tick-ms": 700 } })
+  expect(saved.notificationNotice).toMatch(/Saved.*cron.*notification pending/)
+  expect(authFetch.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "PATCH")).toHaveLength(1)
+  // The provider restarted: absence of its in-memory record is not confirmation.
+  expect((await api.getConfig()).notificationNotice).toMatch(/notification unconfirmed/)
+})
+
+it("clears a pending notice only from a settled observation, without writing again", async () => {
+  daemon()
+  const fetch = authFetch.getMockImplementation()!
+  let state = "pending"
+  authFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+    const response = await fetch(path, init)
+    if (path !== "/v1/settings/cron") return response
+    return json(200, { ...await response.json(), notification: { state, revision: 1 } })
+  })
+  const api = createConfigApi({ responseError, conflict, moment: async (_d, _t, payload) => json(200, payload) })
+  expect((await api.getConfig()).notificationNotice).toMatch(/pending/)
+  state = "settled"
+  expect((await api.getConfig()).notificationNotice).toBeUndefined()
+  expect(authFetch.mock.calls.some(([, init]) => (init as RequestInit | undefined)?.method === "PATCH")).toBe(false)
+})
+
+it("does not send remaining namespace edits after an applied patch goes pending", async () => {
+  authFetch.mockImplementation(async (path: string, init?: RequestInit) => {
+    if (path === "/v1/settings") return json(200, { namespaces: { first: {}, second: {} } })
+    const namespace = path.split("/").at(-1)
+    if (init?.method === "PATCH") return json(200, { namespace, settings: { value: 2 }, notification: { state: "pending", revision: 1 } })
+    return json(200, { namespace, settings: { value: 1 }, schema: { properties: { value: { kind: "integer" } } } })
+  })
+  const api = createConfigApi({ responseError, conflict, moment: async (_d, _t, payload) => json(200, payload) })
+  const document = await api.getConfig()
+  const saved = await api.updateConfig({ first: { value: 2 }, second: { value: 2 } }, document.revision)
+  expect(saved.config).toEqual({ first: { value: 2 }, second: { value: 1 } })
+  expect(saved.notificationNotice).toMatch(/Remaining namespace edits were not sent/)
+  expect(authFetch.mock.calls.filter(([, init]) => (init as RequestInit | undefined)?.method === "PATCH")).toHaveLength(1)
+})
+
+function deferredResponse() {
+  let resolve!: (response: Response) => void
+  const promise = new Promise<Response>((done) => { resolve = done })
+  return { promise, resolve }
+}
+const orderingWire = (period: number, state?: string, revision = 1) => ({
+  namespace: "cron", revision, settings: { "tick-ms": period },
+  schema: { properties: { "tick-ms": { kind: "integer" } } },
+  ...(state ? { notification: { state, revision } } : {}),
+})
+function orderingApi(reads: Array<Response | Promise<Response>>, patched: Response | Promise<Response>) {
+  authFetch.mockImplementation((path: string, init?: RequestInit) => {
+    if (path === "/v1/settings") return Promise.resolve(json(200, { namespaces: { cron: {} } }))
+    return init?.method === "PATCH" ? patched : reads.shift()
+  })
+  return createConfigApi({ responseError, conflict, moment: async (_d, _t, payload) => json(200, payload) })
+}
+
+it("excludes a read begun before a save from both notification and shared baseline publication", async () => {
+  const old = deferredResponse()
+  const api = orderingApi([json(200, orderingWire(500, "settled")), old.promise], json(200, orderingWire(700, "pending", 2)))
+  const initial = await api.getConfig()
+  const read = api.getConfig()
+  const rejected = expect(read).rejects.toMatchObject({ name: "SupersededConfigRead" })
+  const saved = await api.updateConfig({ cron: { "tick-ms": 700 } }, initial.revision)
+  old.resolve(json(200, orderingWire(500, "settled")))
+  await rejected
+  const unchanged = await api.updateConfig(saved.config, saved.revision)
+  expect(unchanged.config).toEqual(saved.config)
+  expect(unchanged.notificationNotice).toMatch(/pending/)
+  expect(authFetch.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(1)
+})
+
+it.each([true, false])("only the latest read publishes, including a provider revision reset (old first: %s)", async (oldFirst) => {
+  const old = deferredResponse(), current = deferredResponse()
+  const api = orderingApi([json(200, orderingWire(500, "pending", 9)), old.promise, current.promise], json(200, {}))
+  await api.getConfig()
+  const first = api.getConfig()
+  await vi.waitFor(() => expect(authFetch).toHaveBeenCalledTimes(4))
+  const rejected = expect(first).rejects.toMatchObject({ name: "SupersededConfigRead" })
+  const second = api.getConfig()
+  if (oldFirst) { old.resolve(json(200, orderingWire(500, "settled", 9))); await rejected }
+  current.resolve(json(200, orderingWire(700, undefined, 0)))
+  const latest = await second
+  if (!oldFirst) { old.resolve(json(200, orderingWire(500, "settled", 9))); await rejected }
+  expect(latest.notificationNotice).toMatch(/unconfirmed/)
+  const baseline = await api.updateConfig(latest.config, latest.revision)
+  expect(baseline.config).toEqual({ cron: { "tick-ms": 700 } })
+  expect(baseline.notificationNotice).toMatch(/unconfirmed/)
+  expect(authFetch.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(0)
+})
+
+it.each([true, false])("excludes reads begun during a save (delivered before the save: %s)", async (beforeSave) => {
+  const patch = deferredResponse(), read = deferredResponse()
+  const api = orderingApi([json(200, orderingWire(500)), read.promise], patch.promise)
+  const initial = await api.getConfig()
+  const save = api.updateConfig({ cron: { "tick-ms": 700 } }, initial.revision)
+  const reload = api.getConfig()
+  const rejected = expect(reload).rejects.toMatchObject({ name: "SupersededConfigRead" })
+  if (beforeSave) { read.resolve(json(200, orderingWire(500, "settled"))); await rejected }
+  patch.resolve(json(200, orderingWire(700, "pending", 2)))
+  const saved = await save
+  if (!beforeSave) { read.resolve(json(200, orderingWire(500, "settled"))); await rejected }
+  expect((await api.updateConfig(saved.config, saved.revision)).notificationNotice).toMatch(/pending/)
+  expect(authFetch.mock.calls.filter(([, init]) => init?.method === "PATCH")).toHaveLength(1)
+})
+
+it("does not publish a superseded read error over a newer observation", async () => {
+  const old = deferredResponse()
+  const api = orderingApi([old.promise, json(200, orderingWire(700, "pending"))], json(200, {}))
+  const first = api.getConfig()
+  await vi.waitFor(() => expect(authFetch).toHaveBeenCalledTimes(2))
+  const rejected = expect(first).rejects.toMatchObject({ name: "SupersededConfigRead" })
+  const latest = await api.getConfig()
+  old.resolve(json(500, {}))
+  await rejected
+  expect((await api.updateConfig(latest.config, latest.revision)).notificationNotice).toMatch(/pending/)
+})

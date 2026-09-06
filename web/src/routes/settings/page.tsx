@@ -31,6 +31,7 @@ import { VoiceSection } from "./voice-section"
 import { PairingSection } from "./pairing-section"
 import { ShortcutsSection } from "./shortcuts-section"
 import { useConfigCommit } from "./use-config-commit"
+import { useConfigLoad } from "./use-config-load"
 import { useVoiceCapability } from "./use-voice-capability"
 import {
   CONTROL_CLASS,
@@ -110,13 +111,15 @@ export default function SettingsPage() {
   /** The document the next write is built from. Held beside the state because two
    *  edits in one tick both have to reach the writer, not just the last render. */
   const configRef = useRef<Config>({})
-  const [configLoading, setConfigLoading] = useState(true)
-  const [configError, setConfigError] = useState<string | null>(null)
   const [conflict, setConflict] = useState<{ message: string; remedy?: string } | null>(null)
   const { voiceCapability, reloadVoiceCapability } = useVoiceCapability()
   const { saveState, commit, adoptRevision } = useConfigCommit({
     blocker: (next) => configSaveBlocker(next.engines, modelRegistry?.engines),
-    onSaved: reloadVoiceCapability, onFolded: (folded) => { configRef.current = folded; setConfig(folded) },
+    onSaved: reloadVoiceCapability, onFolded: (folded) => {
+      invalidateLoad()
+      configRef.current = folded
+      setConfig(folded)
+    },
     onConflict: setConflict,
   })
 
@@ -152,24 +155,17 @@ export default function SettingsPage() {
     settings.accentColor,
   ])
 
-  // Load gateway config
-  function loadConfig() {
-    setConfigLoading(true)
-    api
-      .getConfig()
-      .then(({ config: loaded, revision, declared: schemas }) => {
-        configRef.current = loaded as Config
-        setConfig(loaded as Config)
-        adoptRevision(revision)
-        setDeclared(schemas)
-        // Reloading is the way out of a conflict, so it is also what clears it.
-        setConflict(null)
-        setCompanyPrefixValue((loaded as Config).portal?.companyPrefix ?? "")
-        setConfigError(null)
-      })
-      .catch((err) => setConfigError(err.message))
-      .finally(() => setConfigLoading(false))
-  }
+  const { loading: configLoading, error: configError, loadConfig, invalidateLoad } = useConfigLoad(
+    ({ config: loaded, revision, declared: schemas, notificationNotice }) => {
+      configRef.current = loaded as Config
+      setConfig(loaded as Config)
+      adoptRevision(revision, notificationNotice)
+      setDeclared(schemas)
+      // A current Reload is the way out of a conflict.
+      setConflict(null)
+      setCompanyPrefixValue((loaded as Config).portal?.companyPrefix ?? "")
+    },
+  )
 
   useEffect(() => {
     loadConfig()
@@ -207,6 +203,7 @@ export default function SettingsPage() {
 
   /** Editing and saving are one action now that there is no Save button. */
   function applyModelConfig(updater: (cfg: Config) => Config) {
+    invalidateLoad()
     const next = updater(configRef.current)
     configRef.current = next
     setConfig(next)

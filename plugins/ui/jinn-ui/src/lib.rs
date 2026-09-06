@@ -13,8 +13,9 @@ pub mod moments;
 mod tests;
 
 pub use moments::{
-    is_moments_path, moment_topic, refused_detail, validate_moment, BeforeCreateSession,
-    BeforePatchSettings, BeforeSend, MOMENTS_PATH, MOMENT_TOPICS, TOPIC_BEFORE_CREATE_SESSION,
+    is_moments_path, moment_topic, refused_detail, validate_moment, AfterBuildNavigation,
+    BeforeCreateSession, BeforePatchSettings, BeforeSend, NavigationItem, MOMENTS_PATH,
+    MOMENT_TOPICS, TOPIC_AFTER_BUILD_NAVIGATION, TOPIC_BEFORE_CREATE_SESSION,
     TOPIC_BEFORE_PATCH_SETTINGS, TOPIC_BEFORE_SEND, WALK_REFUSALS,
 };
 

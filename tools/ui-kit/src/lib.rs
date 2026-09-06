@@ -48,7 +48,7 @@ pub fn mount_bundle_on(transport: &mut serde_json::Value) {
     transport["config"]["data"]["ui-bundle-entry"] = serde_json::json!(BUNDLE_ID);
 }
 
-/// Tells the transport's entry it EMITS the moments: the three topic
+/// Tells the transport's entry it EMITS the moments: the four topic
 /// names as grants — the profile's statement of what it dispatches, and
 /// since pin `138fdce` the authority the kernel enforces: a walk is
 /// covered by the grant of the topic's own name exactly as a
@@ -203,10 +203,10 @@ mod tests {
         assert_eq!(transport["config"]["data"]["ui-bundle-entry"], BUNDLE_ID);
     }
 
-    /// The transport is granted exactly the three moment topics it emits
+    /// The transport is granted exactly the four moment topics it emits
     /// (UI-2 §9.2) and no other topic.
     #[test]
-    fn the_transport_entry_is_granted_the_three_moment_topics_it_emits() {
+    fn the_transport_entry_is_granted_the_four_moment_topics_it_emits() {
         let mut transport = serde_json::json!({
             "id": "jinn-api-http",
             "config": { "grants": ["jinn:net"], "data": {} }
@@ -223,8 +223,8 @@ mod tests {
         }
         assert_eq!(
             grants.iter().filter(|g| g.starts_with("jinn:ui/")).count(),
-            3,
-            "exactly the three: {grants:?}"
+            4,
+            "exactly the four: {grants:?}"
         );
     }
 }

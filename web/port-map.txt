@@ -20,6 +20,9 @@
 # the derived rail: the two nav components, their two tests pinned to the old
 # gateway's full route table by one mock each, and the derivation beside nav.ts.
 #
+# The settings notification repair extends item 13 to the save status and its
+# mounted test; see docs/notes/2026-09-06-settings-notices-survive-a-declare-cycle.md.
+#
 # --- the shell, Settings, the plugins page, components/ui (the import closure
 # --- of the trimmed route table, computed at the sha)
 verbatim	packages/web/src/components/activity/log-browser.tsx	src/components/activity/log-browser.tsx
@@ -212,7 +215,7 @@ verbatim	packages/web/src/routes/providers.tsx	src/routes/providers.tsx
 verbatim	packages/web/src/routes/settings-provider.tsx	src/routes/settings-provider.tsx
 verbatim	packages/web/src/routes/settings/appearance-pickers.tsx	src/routes/settings/appearance-pickers.tsx
 verbatim	packages/web/src/routes/settings/config-conflict-notice.tsx	src/routes/settings/config-conflict-notice.tsx
-verbatim	packages/web/src/routes/settings/config-save-status.tsx	src/routes/settings/config-save-status.tsx
+adapted	packages/web/src/routes/settings/config-save-status.tsx	src/routes/settings/config-save-status.tsx	13
 verbatim	packages/web/src/routes/settings/config-shape.ts	src/routes/settings/config-shape.ts
 new	-	src/routes/settings/declared-settings.tsx	1
 verbatim	packages/web/src/routes/settings/emoji-rows.tsx	src/routes/settings/emoji-rows.tsx
@@ -370,7 +373,7 @@ verbatim	packages/web/src/routes/__tests__/contributed-route.test.tsx	src/routes
 verbatim	packages/web/src/routes/__tests__/settings-provider-operator-emoji.test.tsx	src/routes/__tests__/settings-provider-operator-emoji.test.tsx
 verbatim	packages/web/src/routes/settings/__tests__/config-conflict.test.tsx	src/routes/settings/__tests__/config-conflict.test.tsx
 new	-	src/routes/settings/__tests__/declared-settings.test.tsx	1
-verbatim	packages/web/src/routes/settings/__tests__/instant-apply.test.tsx	src/routes/settings/__tests__/instant-apply.test.tsx
+adapted	packages/web/src/routes/settings/__tests__/instant-apply.test.tsx	src/routes/settings/__tests__/instant-apply.test.tsx	13
 verbatim	packages/web/src/routes/settings/__tests__/operator-emoji-row.test.tsx	src/routes/settings/__tests__/operator-emoji-row.test.tsx
 verbatim	packages/web/src/routes/settings/__tests__/orb-variant-persistence.test.tsx	src/routes/settings/__tests__/orb-variant-persistence.test.tsx
 verbatim	packages/web/src/routes/settings/__tests__/shortcuts-section.test.tsx	src/routes/settings/__tests__/shortcuts-section.test.tsx
@@ -419,3 +422,14 @@ adapted	scripts/ratchet.mjs	scripts/ratchet.mjs	6
 adapted	size-baseline.json	size-baseline.json	6
 adapted	eslint.config.mjs	eslint.config.mjs	6
 adapted	eslint-baseline.json	eslint-baseline.json	6
+new	-	src/lib/navigation-extension.ts	16
+new	-	src/components/navigation-notice.tsx	16
+new	-	src/lib/__tests__/navigation-extension.test.tsx	16
+new	-	src/routes/settings/plugins/navigation-state.ts	16
+new	-	src/routes/settings/plugins/use-navigation-admin.ts	16
+new	-	src/routes/settings/plugins/navigation-extension.tsx	16
+new	-	src/routes/settings/plugins/__tests__/navigation-state.test.ts	16
+new	-	src/routes/settings/plugins/__tests__/navigation-admin.test.tsx	16
+new	-	src/routes/settings/plugins/__tests__/navigation-inspection.test.tsx	16
+new	-	src/routes/settings/__tests__/notification-order.test.tsx	13
+new	-	src/routes/settings/use-config-load.ts	13

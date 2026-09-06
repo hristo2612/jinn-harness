@@ -41,6 +41,7 @@ export interface DeclaredNamespace {
 interface ResolvedNamespaceWire {
   namespace: string
   settings: Record<string, unknown>
+  notification?: { state?: string; revision?: number; detail?: string }
   schema?: { properties?: Record<string, { kind?: string; required?: boolean }>; additional?: boolean }
 }
 
@@ -63,6 +64,7 @@ export interface ConfigDocument {
   /** The schema each namespace declared: what the page may render, and what a
    *  save may carry. */
   declared: Record<string, DeclaredNamespace>
+  notificationNotice?: string
 }
 
 /** What a save leaves behind: the revision the document now has, so the page that
@@ -72,6 +74,7 @@ export interface ConfigDocument {
 export interface ConfigSaveResult {
   revision: string
   config: Record<string, unknown>
+  notificationNotice?: string
 }
 
 /**
@@ -96,10 +99,22 @@ interface PatchSettingsMomentWire {
   patch?: Record<string, unknown>
 }
 
-/** The document the last `getConfig` read: what the next save is diffed against. */
-let lastRead: Record<string, Record<string, unknown>> = {}
-/** The schemas the last `getConfig` read: what the next save is filtered by. */
-let lastDeclared: Record<string, DeclaredNamespace> = {}
+/** Request order is browser-local: provider revisions reset across incarnations. */
+interface ConfigState {
+  lastRead: Record<string, Record<string, unknown>>
+  lastDeclared: Record<string, DeclaredNamespace>
+  notifications: Map<string, string>
+  generation: number
+  writes: number
+}
+
+/** A superseded read must publish neither adapter state nor page state. */
+export class SupersededConfigRead extends Error {
+  constructor() {
+    super("A newer settings operation superseded this read.")
+    this.name = "SupersededConfigRead"
+  }
+}
 
 function revisionOf(document: Record<string, unknown>): string {
   return JSON.stringify(document)
@@ -174,47 +189,93 @@ async function foldPatch(http: ConfigHttp, namespace: string, patch: Record<stri
   return settingsOf(folded.patch)
 }
 
-/** The config slice of the `api` object, spread back in at its old position. */
-export function createConfigApi(http: ConfigHttp) {
-  async function readNamespace(namespace: string): Promise<ResolvedNamespaceWire> {
-    const res = await authFetch(`/v1/settings/${encodeURIComponent(namespace)}`)
+async function readNamespace(http: ConfigHttp, namespace: string): Promise<ResolvedNamespaceWire> {
+  const res = await authFetch(`/v1/settings/${encodeURIComponent(namespace)}`)
+  if (!res.ok) throw await http.responseError(res)
+  return (await res.json()) as ResolvedNamespaceWire
+}
+
+function observeNotification(notifications: Map<string, string>, namespace: string, wire: ResolvedNamespaceWire) {
+  const state = wire.notification?.state
+  if (state === "settled") notifications.delete(namespace)
+  else if (state === "pending") notifications.set(namespace, "pending")
+  else if (state !== undefined || notifications.has(namespace)) notifications.set(namespace, "unconfirmed")
+}
+function notificationNotice(notifications: Map<string, string>): string | undefined {
+  if (!notifications.size) return undefined
+  return `Saved — ${[...notifications].map(([name, state]) => `${name} notification ${state}`).join("; ")}. Refresh to check delivery. Settings are stored even if notification is unconfirmed.`
+}
+
+async function patchNamespace(http: ConfigHttp, state: ConfigState, namespace: string, unfolded: Record<string, unknown>): Promise<void> {
+  const patch = await foldPatch(http, namespace, unfolded)
+  const res = await authFetch(`/v1/settings/${encodeURIComponent(namespace)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ patch }),
+  })
+  if (!res.ok) throw await refusal(res, http)
+  const wire = (await res.json()) as ResolvedNamespaceWire
+  state.lastRead[namespace] = settingsOf(wire.settings)
+  observeNotification(state.notifications, namespace, wire)
+}
+
+function requireCurrentRead(state: ConfigState, generation: number) {
+  if (generation !== state.generation || state.writes) throw new SupersededConfigRead()
+}
+
+async function getConfig(http: ConfigHttp, state: ConfigState): Promise<ConfigDocument> {
+  const generation = ++state.generation
+  try {
+    const res = await authFetch("/v1/settings")
     if (!res.ok) throw await http.responseError(res)
-    return (await res.json()) as ResolvedNamespaceWire
+    const names = Object.keys(((await res.json()) as NamespacesWire).namespaces ?? {})
+    const resolved = await Promise.all(names.map(async (name) => [name, await readNamespace(http, name)] as const))
+    requireCurrentRead(state, generation)
+    for (const [name, wire] of resolved) observeNotification(state.notifications, name, wire)
+    for (const name of state.notifications.keys()) if (!names.includes(name)) state.notifications.set(name, "unconfirmed")
+    state.lastRead = Object.fromEntries(resolved.map(([name, wire]) => [name, settingsOf(wire.settings)]))
+    state.lastDeclared = Object.fromEntries(resolved.map(([name, wire]) => [name, declaredOf(wire.schema)]))
+    return { ...savedConfig(state), declared: { ...state.lastDeclared } }
+  } catch (error) {
+    requireCurrentRead(state, generation)
+    throw error
   }
+}
 
-  async function patchNamespace(namespace: string, unfolded: Record<string, unknown>): Promise<void> {
-    const patch = await foldPatch(http, namespace, unfolded)
-    const res = await authFetch(`/v1/settings/${encodeURIComponent(namespace)}`, {
-      method: "PATCH",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ patch }),
+function savedConfig(state: ConfigState): ConfigSaveResult {
+  return { config: { ...state.lastRead }, revision: revisionOf(state.lastRead), notificationNotice: notificationNotice(state.notifications) }
+}
+
+async function updateConfig(http: ConfigHttp, state: ConfigState, data: Record<string, unknown>, revision?: string): Promise<ConfigSaveResult> {
+  if (revision && revision !== revisionOf(state.lastRead)) {
+    throw http.conflict(409, "The settings changed under this page since it last read them.", "Reload to pick up the current document.")
+  }
+  ++state.generation
+  ++state.writes
+  try {
+    const changes = [...new Set([...Object.keys(state.lastRead), ...Object.keys(data)])].flatMap((namespace) => {
+      const patch = declaredPatch(namespacePatch(state.lastRead[namespace] ?? {}, settingsOf(data[namespace])), state.lastDeclared[namespace])
+      return Object.keys(patch).length ? [{ namespace, patch }] : []
     })
-    if (!res.ok) throw await refusal(res, http)
-    lastRead[namespace] = settingsOf(((await res.json()) as ResolvedNamespaceWire).settings)
+    for (const [index, { namespace, patch }] of changes.entries()) {
+      await patchNamespace(http, state, namespace, patch)
+      if (state.notifications.get(namespace) === "pending" && index < changes.length - 1) {
+        return { ...savedConfig(state), notificationNotice: `${notificationNotice(state.notifications)} Remaining namespace edits were not sent.` }
+      }
+    }
+    return savedConfig(state)
+  } finally {
+    --state.writes
+    // Reads begun during this save are stale too, even if delivered afterward.
+    ++state.generation
   }
+}
 
+/** The config slice owns its baseline and delivery observations together. */
+export function createConfigApi(http: ConfigHttp) {
+  const state: ConfigState = { lastRead: {}, lastDeclared: {}, notifications: new Map(), generation: 0, writes: 0 }
   return {
-    getConfig: async (): Promise<ConfigDocument> => {
-      const res = await authFetch("/v1/settings")
-      if (!res.ok) throw await http.responseError(res)
-      const names = Object.keys(((await res.json()) as NamespacesWire).namespaces ?? {})
-      const resolved = await Promise.all(names.map(async (name) => [name, await readNamespace(name)] as const))
-      lastRead = Object.fromEntries(resolved.map(([name, wire]) => [name, settingsOf(wire.settings)]))
-      lastDeclared = Object.fromEntries(resolved.map(([name, wire]) => [name, declaredOf(wire.schema)]))
-      return { config: { ...lastRead }, revision: revisionOf(lastRead), declared: { ...lastDeclared } }
-    },
-    /** `revision` is the one `getConfig()` handed over; a save built on an older
-     *  read is refused as a conflict rather than landed on top of it. */
-    updateConfig: async (data: Record<string, unknown>, revision?: string): Promise<ConfigSaveResult> => {
-      if (revision && revision !== revisionOf(lastRead)) {
-        throw http.conflict(409, "The settings changed under this page since it last read them.", "Reload to pick up the current document.")
-      }
-      for (const namespace of new Set([...Object.keys(lastRead), ...Object.keys(data)])) {
-        const patch = namespacePatch(lastRead[namespace] ?? {}, settingsOf(data[namespace]))
-        const declared = declaredPatch(patch, lastDeclared[namespace])
-        if (Object.keys(declared).length > 0) await patchNamespace(namespace, declared)
-      }
-      return { revision: revisionOf(lastRead), config: { ...lastRead } }
-    },
+    getConfig: () => getConfig(http, state),
+    updateConfig: (data: Record<string, unknown>, revision?: string) => updateConfig(http, state, data, revision),
   }
 }

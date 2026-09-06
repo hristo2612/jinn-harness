@@ -340,6 +340,17 @@ fn patching_one_entry_through_the_api_restarts_exactly_that_fiber() {
     let Some((daemon, port)) = booted("api-patch") else {
         return;
     };
+    // HTTP readiness does not acknowledge persistence to this separate ledger reader.
+    daemon.eventually("all boot entries to have recorded Active fibers", || {
+        let rows = daemon.ledger_rows();
+        ALL.iter().all(|entry| {
+            rows.iter().any(|row| {
+                row.entry.as_deref() == Some(*entry)
+                    && row.fiber.is_some()
+                    && row.kind.contains(r#""to":"Active""#)
+            })
+        })
+    });
     let before = daemon.ledger_rows();
     let fibers_before = active_fibers(&before);
     assert_eq!(fibers_before.len(), ALL.len(), "every entry active at boot");

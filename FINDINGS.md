@@ -1534,6 +1534,24 @@ relaxed.
 
 ---
 
+**Current settings disposition (2026-09-06).** At the current pinned kernel,
+M2-K10 refuses the opposing wait before any listener runs rather than deadlocking.
+The settings provider still discarded that refusal: a controlled real-loader
+probe saved revision 1 and reconciled the scheduler through `declare`, with no
+successful `changed` walk. The provider now retains that exact hot notice and
+attempts it in a clock callback after the opposing declaration returns. Two
+forced consecutive cycles produce one successful walk (`listeners: 1`,
+`failures: 0`), with applied/pending exposed to API and UI. The previously ignored
+shadowed-recovery test passes unchanged assertions and is enabled again.
+
+This is a bounded harness repair, not a new kernel guarantee. A single outstanding
+notice blocks later writes before persistence; non-cycle failures are not replayed.
+Pending notifications do not survive provider restart/removal, while saved profile
+settings do. Per-wake reconciliation and provider swaps remain. See the
+[notification note](docs/notes/2026-09-06-settings-notices-survive-a-declare-cycle.md).
+
+---
+
 ## 33. An append-only log over `jinn:fs` grows the fiber's effect journal without bound — one entry per line, for the life of the incarnation
 
 **Where the harness hit it.** The sessions seam's durable store

@@ -12,7 +12,7 @@ export const CONFIG_COMMIT_DEBOUNCE_MS = 600
 export type ConfigSaveState =
   | { phase: "idle" }
   | { phase: "saving" }
-  | { phase: "saved" }
+  | { phase: "saved"; notice?: string }
   | { phase: "failed"; message: string }
 
 export interface ConfigCommitOptions {
@@ -81,7 +81,7 @@ function drain(
       queue.revision = result?.revision ?? ""
       if (queue.pending === null) {
         if (result?.config) options.onFolded(result.config as Config)
-        setSaveState({ phase: "saved" })
+        setSaveState({ phase: "saved", notice: result?.notificationNotice })
         options.onSaved()
       }
     })
@@ -134,7 +134,8 @@ export function useConfigCommit(options: ConfigCommitOptions) {
    * it — sending it now would carry the fresh revision straight past the staleness
    * check and overwrite the very edit the reload went to fetch.
    */
-  const adoptRevision = useCallback((next: string) => {
+  const adoptRevision = useCallback((next: string, notificationNotice?: string) => {
+    setSaveState(notificationNotice ? { phase: "saved", notice: notificationNotice } : { phase: "idle" })
     if (queue.current.timer) clearTimeout(queue.current.timer)
     queue.current.timer = null
     queue.current.pending = null

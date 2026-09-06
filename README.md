@@ -119,8 +119,10 @@ per-seam "could NOT prove" sections.
 
 ### 2.2 — Settings
 
-- **The shadowed-refusal recovery is unproven end to end.** The repo's
-  only `#[ignore]`d test, blocked on #32.
+- **Notification delivery is not durable across a provider restart or removal.**
+  An opposing declaration's refused hot notice is retained only in the current
+  incarnation; saved settings remain and reconcile through declarations (#32).
+  The formerly ignored shadowed-refusal recovery now runs end to end.
 - **A mixed hot+cold patch across two layers cannot be applied
   atomically** (#28). The shipped shape is a whole refusal carrying an
   executable recovery.
@@ -331,7 +333,8 @@ Its own README carries these in full; the load-bearing ones:
   already-granted `topics` IS `PATCH /v1/profile/entries/{id}` today.
 - **The two chat topics are dispatchable and proven, and reached by no
   ported surface. (named here)** The ported shell has no composer (UI-6);
-  `before-patch-settings` is the one moment an operator can click.
+  `before-patch-settings` is reached by Settings; the shell also reaches
+  `after-build-navigation` for its agent-authored navigation customization.
 
 ### What is not here at all
 

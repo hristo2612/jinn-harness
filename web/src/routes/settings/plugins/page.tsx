@@ -5,6 +5,8 @@ import { PageLayout } from "@/components/page-layout"
 import { LargeTitleHeader } from "@/components/shell/large-title-header"
 import { PageScaffold } from "@/components/shell/page-scaffold"
 import { api, type PluginCatalogEntryWire } from "@/lib/api"
+import { NavigationExtension } from "./navigation-extension"
+import { NAVIGATION_ENTRY } from "@/lib/navigation-extension"
 import { PluginList } from "./plugin-list"
 import { NO_FOLDER_REASON, type CatalogRow } from "./plugin-row"
 import { PLUGIN_INVENTORY_KEY, useInventoryFollowsDisk, useTogglePlugin, type PluginStatus } from "./inventory"
@@ -97,7 +99,7 @@ function useToggleOnRows(inventory: ReturnType<typeof useCatalog>) {
   const [refusals, setRefusals] = useState<Record<string, string>>({})
   const withRefusals = {
     ...inventory,
-    data: inventory.data?.map((plugin) => ({ ...plugin, refusal: refusals[plugin.id] })),
+    data: inventory.data?.filter(plugin => plugin.id !== NAVIGATION_ENTRY || plugin.package !== "ext/jinn-ext-js-boa").map((plugin) => ({ ...plugin, refusal: refusals[plugin.id] })),
   } as typeof inventory
   const onToggle = (id: string, enabled: boolean) => {
     setRefusals(({ [id]: _cleared, ...rest }) => rest)
@@ -131,10 +133,10 @@ export default function PluginsSettingsPage() {
         <div>
 
           <div className="mt-[22px]">
+            <NavigationExtension />
             <PluginList inventory={withRefusals} onToggle={onToggle} onReveal={() => {}} />
             <p className="mt-3.5 px-1 text-[length:var(--text-caption1)] leading-relaxed text-[var(--text-tertiary)]">
-              An enabled plugin runs with the same authority the dashboard and the gateway have. Enable only the ones
-              you trust, the way you would a shell script.
+              Each plugin’s access follows its declared grants. Inspect the entry’s actual grants and observed runtime before changing it.
             </p>
             <p
               data-testid="plugins-admin-reason"

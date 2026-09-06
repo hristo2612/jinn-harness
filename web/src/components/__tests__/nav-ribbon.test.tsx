@@ -1,3 +1,4 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
 import { describe, it, expect, vi } from "vitest"
 import { render, screen, fireEvent, within } from "@testing-library/react"
 import { MemoryRouter } from "react-router-dom"
@@ -19,18 +20,18 @@ vi.mock("@/lib/app-routes", async (importOriginal) => {
 
 function renderRibbon(props: { listOpen: boolean; path?: string }) {
   return render(
-    <MemoryRouter initialEntries={[props.path ?? "/"]}>
+    <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={[props.path ?? "/"]}>
       <NavRibbon listOpen={props.listOpen} onToggleList={vi.fn()} />
-    </MemoryRouter>,
+    </MemoryRouter></QueryClientProvider>,
   )
 }
 
 describe("NavRibbon", () => {
   it("renders a brand-only top slot (no fold toggle) when mounted without list props", () => {
     const { container } = render(
-      <MemoryRouter initialEntries={["/org"]}>
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={["/org"]}>
         <NavRibbon />
-      </MemoryRouter>,
+      </MemoryRouter></QueryClientProvider>,
     )
     // The global (non-chat) rail has no list to fold → no toggle button.
     expect(screen.queryByLabelText("Show chats")).toBeNull()
@@ -43,9 +44,9 @@ describe("NavRibbon", () => {
     const { rerender } = renderRibbon({ listOpen: true })
     expect(screen.getByLabelText("Hide chats")).toBeTruthy()
     rerender(
-      <MemoryRouter initialEntries={["/"]}>
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={["/"]}>
         <NavRibbon listOpen={false} onToggleList={vi.fn()} />
-      </MemoryRouter>,
+      </MemoryRouter></QueryClientProvider>,
     )
     const toggle = screen.getByLabelText("Show chats")
     expect(toggle.getAttribute("aria-expanded")).toBe("false")
@@ -88,9 +89,9 @@ describe("NavRibbon", () => {
   describe("Chat icon open-only behavior", () => {
     function renderWith(opts: { listOpen: boolean; path: string; onToggleList: () => void }) {
       render(
-        <MemoryRouter initialEntries={[opts.path]}>
+        <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><MemoryRouter initialEntries={[opts.path]}>
           <NavRibbon listOpen={opts.listOpen} onToggleList={opts.onToggleList} />
-        </MemoryRouter>,
+        </MemoryRouter></QueryClientProvider>,
       )
       return screen.getByLabelText("Chat")
     }
