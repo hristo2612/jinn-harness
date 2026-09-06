@@ -1143,6 +1143,33 @@ fn conditional_ui_mutations_hold_the_same_revision_law_in_both_stores() {
                 "stale writes have no side effects"
             );
         }
+        let writes = std::thread::scope(|scope| {
+            let send = || {
+                post(
+                    port,
+                    &format!("{path}/comments"),
+                    &serde_json::json!({"body":"One simultaneous context write", "expected-revision":comment.body["revision"]}),
+                )
+            };
+            let first = scope.spawn(send);
+            let second = scope.spawn(send);
+            [first.join().unwrap(), second.join().unwrap()]
+        });
+        assert_eq!(
+            writes
+                .iter()
+                .filter(|response| response.status == 200)
+                .count(),
+            1,
+            "only one simultaneous write may use a revision"
+        );
+        assert_eq!(
+            record(port, store, &id)["comments"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
         assert_eq!(
             update(port, store, &id, "executing", "operator").status,
             200
