@@ -287,7 +287,7 @@ fn task_stop_and_busy(daemon: &Daemon, port: u16) {
         .contains("already running"));
     let stopped = delete(port, &format!("/v1/sessions/tasks/{session}/turns"));
     assert_eq!(stopped.status, 200, "{}", stopped.raw);
-    assert_reaped(&owned);
+    // DELETE acknowledges the request; the saved terminal outcome confirms it.
     let deadline = Instant::now() + Duration::from_secs(10);
     loop {
         let record = read(port, &path);
@@ -305,6 +305,7 @@ fn task_stop_and_busy(daemon: &Daemon, port: u16) {
         );
         std::thread::sleep(Duration::from_millis(250));
     }
+    assert_reaped(&owned);
     eprintln!("PASS actual Todo Stop: native worker/descendants absent; busy second task refused with saved failure; no automatic rerun");
 }
 
