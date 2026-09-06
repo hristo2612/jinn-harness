@@ -1,0 +1,3 @@
+export const action = 'inline-flex min-h-10 items-center justify-center gap-2 rounded-xl bg-[var(--fill-secondary)] px-4 py-2 text-sm font-medium text-[var(--text-primary)] transition-colors hover:bg-[var(--fill-tertiary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)] disabled:bg-[var(--bg-secondary)] disabled:text-[var(--text-secondary)]'
+export const input = 'min-h-11 w-full rounded-xl bg-[var(--fill-secondary)] px-3 py-3 text-[16px] leading-6 text-[var(--text-primary)] outline-none placeholder:text-[var(--text-secondary)] focus-visible:outline-2 focus-visible:outline-[var(--accent)]'
+export const caption = 'text-sm leading-relaxed text-[var(--text-secondary)]'

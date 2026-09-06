@@ -37,6 +37,50 @@ Events go on `jinn:todo/event`, one topic for the whole seam: `created`,
 `status-changed`, `transition-refused`, `commented`, `dispatched`,
 `dispatch-ended`, `closed`.
 
+## Conditional operator writes (UI-4a)
+
+A current record carries `revision`: one-based durable mutation order. Each
+created/status/refusal/comment/dispatch-start/dispatch-end record advances it;
+replay counts the same complete records, including recovery status writes. It is
+neither `api-version` nor the bounded event cursor. Old JSONL remains readable;
+unknown fields on known records remain carried through their history. An old
+wire record without a revision round-trips without a fabricated zero field.
+
+`update`, `comment` and `dispatch` accept optional `expected-revision`. A mismatch
+returns typed `refused` before persistence or dispatch side effects. Old callers
+that omit it retain their previous unconditional semantics. The UI always sends
+it. Conditional comments cannot append to terminal Todos. Ordinary illegal status
+moves still append their refused-attempt record; stale writes append nothing.
+Conditional blocked/needs-work status decisions require a nonblank note.
+
+Conditional `update` to `in-review` or `done` also requires `reviewed-dispatch`,
+matching the latest dispatch and its successful `done` ending. A running or
+failed latest attempt cannot be accepted using an older success. The status law
+still applies. The resulting status history saves `reviewed-dispatch` and
+`inspected-revision`; a new status write invalidates the previous inspection.
+This is an operator's review of model text, not authentication of separate roles.
+
+Optional `client-request` is an audit marker carried into the resulting comment,
+status change or dispatch. It is **not** an idempotency key. A dropped response is
+reconciled by reading the record; an unresolved write must not be resent
+automatically. Create uses the existing `spec.metadata` for its marker. HTTP
+callers use the wrapped `{dispatch, expected-revision, client-request}` request
+shape so dispatch controls remain on the outer request.
+
+The default task brief includes captured text, comments in sequence order and
+nonblank recorded decision notes. The **complete UTF-8 prompt** is limited to
+32 KiB, checked before any new dispatch/status/session side effect; nothing is
+silently truncated. Legacy explicit `dispatch.message` still overrides the brief,
+subject to the same complete-prompt bound. Tools remain denied by the existing
+session default. The UI fixes the task binding; the general service remains
+provider-neutral.
+
+Session/turn links are live until the terminal dispatch is journaled. On active
+restart a Todo may have no live link or partial answer: it reports interrupted
+and records its blocked recovery. Completed answers and their links survive.
+The UI reads a known live session for partial text and Stop, and the durable
+terminal dispatch for saved results. Model completion never advances Todo status.
+
 ## The status value space and its table
 
 `backlog | executing | in-review | blocked | done | cancelled`. CLOSED: a

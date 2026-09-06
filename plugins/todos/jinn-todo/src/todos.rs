@@ -70,6 +70,7 @@ pub enum Dispatching {
 }
 
 struct Live {
+    revision: u64,
     spec: TodoSpec,
     declared: Status,
     history: Vec<StatusChange>,
@@ -188,6 +189,7 @@ impl Todos {
         let created = replayed.created_ms;
         self.install(todo_id.to_owned(), replayed.spec, created);
         if let Some(live) = self.live.get_mut(todo_id) {
+            live.revision = replayed.revision;
             live.declared = replayed.declared_status;
             live.minted_comments = replayed.comments.len() as u64;
             live.minted_dispatches = replayed.dispatches.len() as u64;
@@ -202,6 +204,7 @@ impl Todos {
         self.live.insert(
             todo_id,
             Live {
+                revision: 1,
                 spec,
                 declared: Status::default(),
                 history: Vec::new(),
@@ -216,6 +219,79 @@ impl Todos {
                 dropped: 0,
             },
         );
+    }
+
+    /// Refuse a stale UI write before persistence or any session side effect.
+    /// Missing revisions preserve legacy caller behavior.
+    pub fn check_revision(&self, todo_id: &str, expected: Option<u64>) -> Result<(), TodoError> {
+        let live = self.live.get(todo_id).ok_or_else(|| not_found(todo_id))?;
+        if expected.is_some_and(|expected| expected != live.revision) {
+            let mut error = TodoError::new(
+                ErrorCode::Refused,
+                "This Todo changed. Refresh and inspect it before trying again.",
+            );
+            error
+                .extra
+                .insert("current-revision".into(), live.revision.into());
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    /// Conditional writes cannot append context to a terminal Todo.
+    pub fn check_comment(&self, request: &crate::CommentRequest) -> Result<(), TodoError> {
+        self.check_revision(&request.todo_id, request.expected_revision)?;
+        let live = self
+            .live
+            .get(&request.todo_id)
+            .ok_or_else(|| not_found(&request.todo_id))?;
+        if request.expected_revision.is_some() && live.declared.is_terminal() {
+            return Err(TodoError::new(
+                ErrorCode::Refused,
+                "This Todo is closed; record a new Todo for further work.",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Submit and accept bind to the inspected latest successful dispatch.
+    pub fn check_review(&self, request: &crate::UpdateRequest) -> Result<(), TodoError> {
+        self.check_revision(&request.todo_id, request.expected_revision)?;
+        let live = self
+            .live
+            .get(&request.todo_id)
+            .ok_or_else(|| not_found(&request.todo_id))?;
+        // Let the ordinary transition planner record illegal moves as before.
+        if !live.declared.allows_move_to(request.status) {
+            return Ok(());
+        }
+        if request.expected_revision.is_some()
+            && (request.status == Status::Blocked
+                || (live.declared == Status::InReview && request.status == Status::Executing))
+            && request
+                .note
+                .as_deref()
+                .is_none_or(|note| note.trim().is_empty())
+        {
+            return Err(TodoError::new(
+                ErrorCode::Invalid,
+                "A blocked or needs-work decision needs a reason.",
+            ));
+        }
+        if request.expected_revision.is_none() && request.reviewed_dispatch.is_none() {
+            return Ok(());
+        }
+        if matches!(request.status, Status::InReview | Status::Done) {
+            if request.expected_revision.is_none()
+                || !live.dispatches.last().is_some_and(|dispatch| {
+                    dispatch.status == DispatchStatus::Done
+                        && Some(&dispatch.dispatch_id) == request.reviewed_dispatch.as_ref()
+                })
+            {
+                return Err(TodoError::new(ErrorCode::Refused, "Inspect the latest successful result at the current revision before submitting or accepting it."));
+            }
+        }
+        Ok(())
     }
 
     /// The spec of one Todo.
@@ -299,6 +375,7 @@ impl Todos {
     /// the log either way, and a replay is what decides.
     pub fn commit_change(&mut self, todo_id: &str, change: &StatusChange) {
         if let Some(live) = self.live.get_mut(todo_id) {
+            live.revision += 1;
             live.declared = change.to;
             live.history.push(change.clone());
         }
@@ -309,6 +386,7 @@ impl Todos {
     /// but the attempt joins the record.
     pub fn commit_refusal(&mut self, todo_id: &str, refused: &RefusedChange) {
         if let Some(live) = self.live.get_mut(todo_id) {
+            live.revision += 1;
             live.refused.push(refused.clone());
         }
     }
@@ -381,6 +459,7 @@ impl Todos {
     /// Folds a comment that is already durable into the registry.
     pub fn commit_comment(&mut self, todo_id: &str, comment: &Comment) {
         if let Some(live) = self.live.get_mut(todo_id) {
+            live.revision += 1;
             live.minted_comments += 1;
             live.comments.push(comment.clone());
         }
@@ -415,6 +494,14 @@ impl Todos {
         actor: Option<String>,
         now_ms: u64,
     ) -> Result<Dispatching, TodoError> {
+        let record = self.record(todo_id).ok_or_else(|| not_found(todo_id))?;
+        let sent = crate::dispatch::send_request(spec, "", &record);
+        if sent["message"]
+            .as_str()
+            .is_some_and(|message| message.len() > crate::dispatch::PROMPT_BYTES)
+        {
+            return Err(TodoError::new(ErrorCode::Refused, "The complete Todo prompt exceeds 32 KiB; no dispatch was started. Record a smaller Todo."));
+        }
         if let Some(dispatch) = self.in_flight(todo_id) {
             return Err(TodoError::new(
                 ErrorCode::Refused,
@@ -453,6 +540,7 @@ impl Todos {
     /// into the registry.
     pub fn commit_dispatch(&mut self, todo_id: &str, dispatch: &Dispatch) {
         if let Some(live) = self.live.get_mut(todo_id) {
+            live.revision += 1;
             live.minted_dispatches += 1;
             live.dispatches.push(dispatch.clone());
         }
@@ -519,6 +607,10 @@ impl Todos {
     pub fn commit_end_dispatch(&mut self, todo_id: &str, ended: &Dispatch) {
         if let Some(dispatch) = self.dispatch_mut(todo_id, &ended.dispatch_id) {
             *dispatch = ended.clone();
+            self.live
+                .get_mut(todo_id)
+                .expect("dispatch belongs to Todo")
+                .revision += 1;
         }
     }
 
@@ -529,6 +621,7 @@ impl Todos {
         let live = self.live.get(todo_id)?;
         let (status, status_reason) = reported_status(live.declared, live.dispatches.last());
         Some(TodoRecord {
+            revision: live.revision,
             api_version: API_VERSION.to_owned(),
             todo_id: todo_id.to_owned(),
             store: self.store.clone(),

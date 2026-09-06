@@ -1,0 +1,25 @@
+{
+  "backlog": [
+    "executing",
+    "blocked",
+    "cancelled"
+  ],
+  "blocked": [
+    "executing",
+    "backlog",
+    "cancelled"
+  ],
+  "cancelled": [],
+  "done": [],
+  "executing": [
+    "in-review",
+    "blocked",
+    "cancelled"
+  ],
+  "in-review": [
+    "done",
+    "executing",
+    "blocked",
+    "cancelled"
+  ]
+}

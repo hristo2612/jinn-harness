@@ -70,3 +70,19 @@ The proofs live in `tests/composition/tests/moments.rs`.
 The real-composition proofs for this tree live in
 `tests/composition/tests/ui.rs`; the door's (`tests/composition/tests/auth.rs`)
 hold on it unchanged.
+
+## Todo journey (UI-4a)
+
+The kit also mounts `work-todos` (`jinn:todo.work`, `todo-history`) and
+`task-sessions` (`jinn:session.tasks`, `task-history`) with their scoped filesystem,
+clock, event and next-layer grants. The transport exposes both beside Chat.
+With `--codex-bin` and `--codex-home`, Chat and Todos share the existing single
+text worker; without it capture/manual tracking remains readable and dispatch
+reports the missing provider. The command must resolve to the native worker.
+The bounded journey and deferrals live in the arc's UI-4a amendment; the wire
+semantics live in `plugins/todos/jinn-todo/README.md`.
+
+`JINN_TODO_JOURNEY_ROOT` opts the new composition test into an actual metered Todo
+run. It must name a freshly rebuilt ui-kit root, with an isolated authenticated
+Codex home, a workspace directory, an unused port and no pre-existing sibling
+operator token before suite provisioning. A skip never proves the vendor path.

@@ -359,6 +359,38 @@ prerequisites, not workarounds.
 
 **Dependencies.** UI-3 (the board is live-updated), UI-1.
 
+### UI-4a — bounded Todo journey amendment (2026-09-06)
+
+The accepted first slice is capture title/body/acceptance → append context →
+bounded text task → real result → explicit operator review/close. It uses the
+current operator API and serial snapshot polling; the broader UI-4 board and
+UI-3 global feed are not prerequisites for this slice. Saved-text/comment editing
+or deletion, board/drag/ranking, org/delegation, tools, authenticated independent
+approvals, attachments and a generated wire-package framework remain deferred.
+
+The `ui` profile mounts one durable Todo store and a separate durable task-session
+store alongside Chat. Both use the existing denied-tool Codex text provider;
+this page fixes `codex/gpt-6-astra/high`, and busy is a visible refusal, not a queue.
+The contract's prompt bound, durable revision, conditional mutations and inspected
+result binding are defined in `plugins/todos/jinn-todo/README.md`. Completed task
+results survive restart. Active restart remains interrupted/blocked; missing live
+links and partial evidence are disclosed, never recovered by an automatic rerun.
+Stop addresses the linked session; Todo cancellation is not a worker-stop claim.
+
+The status-law decision above is retained through the small generated
+`web/src/lib/todo-status-table.json`, checked against the Rust definition.
+`cargo run -p jinn-todo --example status-table` regenerates it. The stale legacy
+board table is not used by UI-4a. Writes wait for acknowledgements; stale reads
+are fenced, and ambiguous writes are held until their request marker is witnessed.
+One operator reviews model text; actor strings do not authenticate reviewer roles.
+
+`web/port-map.txt` records the compact list/detail, capture drafts, revision-bound
+inspection, snapshot controller and contract adapters. Existing safe Markdown/copy,
+page layout and navigation are reused. Drafts survive route changes in tab storage;
+late acknowledgements do not erase newer text. Desktop/mobile, both themes,
+keyboard/IME, retained reading position and existing Chat/Settings/Plugins remain
+acceptance. New actual vendor and browser proofs complement the full repo gates.
+
 ### UI-5 - Workflows
 
 **Decision.** The editor compiles against a published wire package generated

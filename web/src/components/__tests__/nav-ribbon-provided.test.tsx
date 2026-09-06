@@ -9,7 +9,7 @@ const prefetchRoute = vi.fn()
 vi.mock("@/lib/route-prefetch", () => ({ prefetchRoute: (...args: unknown[]) => prefetchRoute(...args) }))
 
 /** UI-1 arc §9.7 amendment 10 (adaptation 15): the desktop rail at the SHIPPED
- *  route table — Settings and Plugins live, every other destination disabled
+ *  route table — Chat, Todos, Settings and Plugins live; remaining destinations disabled
  *  with its reason, and no click on one goes anywhere. */
 
 function Location() {
@@ -28,25 +28,26 @@ function renderAt(path: string) {
 describe("NavRibbon at the shipped route table", () => {
   it("renders Settings and Plugins as links, Plugins to /settings/plugins", () => {
     renderAt("/settings")
+    expect(screen.getByRole("link", { name: "Todos" }).getAttribute("href")).toBe("/todos")
     expect(screen.getByRole("link", { name: "Settings" }).getAttribute("href")).toBe("/settings")
     expect(screen.getByRole("link", { name: "Plugins" }).getAttribute("href")).toBe("/settings/plugins")
   })
 
   it("renders an absent destination disabled, with the reason as its title and in its label pill, and no href", () => {
     renderAt("/settings")
-    const todos = screen.getByRole("link", { name: "Todos" })
-    expect(todos.getAttribute("aria-disabled")).toBe("true")
-    expect(todos.getAttribute("href")).toBeNull()
-    expect(todos.getAttribute("title")).toBe(NOT_IN_PROFILE)
-    expect(todos.textContent).toContain(NOT_IN_PROFILE)
+    const workflows = screen.getByRole("link", { name: "Workflows" })
+    expect(workflows.getAttribute("aria-disabled")).toBe("true")
+    expect(workflows.getAttribute("href")).toBeNull()
+    expect(workflows.getAttribute("title")).toBe(NOT_IN_PROFILE)
+    expect(workflows.textContent).toContain(NOT_IN_PROFILE)
     expect(screen.getByRole("link", { name: "Settings" }).getAttribute("aria-disabled")).toBeNull()
   })
 
   it("navigates nowhere on a click or a hover of an absent destination", () => {
     renderAt("/settings")
-    const chat = screen.getByRole("link", { name: "Todos" })
-    fireEvent.pointerEnter(chat)
-    fireEvent.click(chat)
+    const absent = screen.getByRole("link", { name: "Workflows" })
+    fireEvent.pointerEnter(absent)
+    fireEvent.click(absent)
     expect(screen.getByTestId("location").textContent).toBe("/settings")
     expect(prefetchRoute).not.toHaveBeenCalledWith("/")
   })
@@ -59,6 +60,6 @@ describe("NavRibbon at the shipped route table", () => {
 
   it("keeps the 44px row for a disabled destination (the Taste floor is 34)", () => {
     renderAt("/settings")
-    expect(screen.getByRole("link", { name: "Todos" }).className).toContain("size-11")
+    expect(screen.getByRole("link", { name: "Workflows" }).className).toContain("size-11")
   })
 })

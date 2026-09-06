@@ -144,6 +144,12 @@ pub type TreeRequest = GetRequest;
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct UpdateRequest {
+    /// Latest successful dispatch inspected by the operator for submit/accept.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reviewed_dispatch: Option<String>,
+    /// Optional for legacy callers; UI writes always supply the inspected revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
     pub todo_id: String,
     pub status: Status,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -158,6 +164,9 @@ pub struct UpdateRequest {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct CommentRequest {
+    /// Optional for legacy callers; UI writes always supply the inspected revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
     pub todo_id: String,
     pub body: String,
     #[serde(default, flatten)]
@@ -212,6 +221,9 @@ pub struct DispatchSpec {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct DispatchRequest {
+    /// Optional for legacy callers; UI writes always supply the inspected revision.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_revision: Option<u64>,
     pub todo_id: String,
     pub dispatch: DispatchSpec,
     #[serde(default, flatten)]

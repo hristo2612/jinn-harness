@@ -867,3 +867,158 @@ fn ui4a_oversized_prompt_is_refused_before_any_dispatch_change() {
     );
     assert_eq!(todos.record(&created.todo_id).unwrap(), before);
 }
+
+#[test]
+fn ui4a_revision_survives_legacy_journal_and_rejects_stale_context_and_review() {
+    use crate::{CommentRequest, UpdateRequest};
+    let spec = crate::TodoSpec {
+        title: "Review text".into(),
+        ..Default::default()
+    };
+    let mut todos = crate::Todos::new("work");
+    let created = todos.plan_create(&spec, 0).unwrap();
+    todos.commit_create(&created, spec.clone(), 0);
+    let id = &created.todo_id;
+    let initial = todos.record(id).unwrap().revision;
+    let comment = todos.plan_comment(id, "Context", None, 1).unwrap();
+    assert_eq!(
+        todos.record(id).unwrap().revision,
+        initial,
+        "a failed append commits nothing"
+    );
+    todos.commit_comment(id, &comment);
+    assert!(todos.check_revision(id, Some(initial)).is_err());
+    assert!(todos
+        .check_comment(&CommentRequest {
+            todo_id: id.clone(),
+            body: "late".into(),
+            expected_revision: Some(initial),
+            ..Default::default()
+        })
+        .is_err());
+    let crate::Moved::Changed(change) = todos
+        .plan_update(id, crate::Status::Executing, None, None, 2)
+        .unwrap()
+    else {
+        panic!("lawful start")
+    };
+    todos.commit_change(id, &change);
+    let revision = todos.record(id).unwrap().revision;
+    assert!(todos
+        .check_review(&UpdateRequest {
+            todo_id: id.clone(),
+            status: crate::Status::InReview,
+            expected_revision: Some(revision),
+            reviewed_dispatch: Some("absent".into()),
+            ..Default::default()
+        })
+        .is_err());
+    let mut journal = crate::journal::Record::created(spec, 0).line();
+    journal.extend(crate::journal::Record::commented(&comment, 1).line());
+    journal.extend(
+        crate::journal::Record::status_changed(&change, 2)
+            .unwrap()
+            .line(),
+    );
+    let replayed = crate::journal::replay(&journal).unwrap().unwrap();
+    let mut recovered = crate::Todos::new("work");
+    recovered.adopt(id, replayed);
+    assert_eq!(recovered.record(id).unwrap().revision, revision);
+    assert!(recovered.check_revision(id, Some(initial)).is_err());
+    assert!(
+        recovered.check_revision(id, None).is_ok(),
+        "old callers remain compatible"
+    );
+}
+
+#[test]
+fn ui4a_status_table_is_generated_from_the_law() {
+    let actual: serde_json::Value = serde_json::from_str(include_str!(
+        "../../../../web/src/lib/todo-status-table.json"
+    ))
+    .unwrap();
+    let mut expected = serde_json::Map::new();
+    for status in crate::Status::ALL {
+        expected.insert(
+            status.tag().into(),
+            serde_json::to_value(status.allows()).unwrap(),
+        );
+    }
+    assert_eq!(actual, serde_json::Value::Object(expected));
+}
+
+#[test]
+fn ui4a_review_binds_latest_success_and_terminal_comments_cannot_reopen_work() {
+    let mut todos = crate::Todos::new("work");
+    let spec = crate::TodoSpec {
+        title: "Review".into(),
+        ..Default::default()
+    };
+    let created = todos.plan_create(&spec, 0).unwrap();
+    todos.commit_create(&created, spec, 0);
+    let id = &created.todo_id;
+    let crate::Dispatching::Opens { change, dispatch } = todos
+        .plan_dispatch(id, &crate::DispatchSpec::default(), None, 1)
+        .unwrap()
+    else {
+        panic!("dispatch allowed")
+    };
+    todos.commit_change(id, &change.unwrap());
+    todos.commit_dispatch(id, &dispatch);
+    let running_revision = todos.record(id).unwrap().revision;
+    let ended = todos
+        .plan_end_dispatch(
+            id,
+            &dispatch.dispatch_id,
+            crate::DispatchStatus::Done,
+            None,
+            "answer".into(),
+            2,
+        )
+        .unwrap();
+    todos.commit_end_dispatch(id, &ended);
+    assert!(
+        todos.check_revision(id, Some(running_revision)).is_err(),
+        "an ending advances the durable revision"
+    );
+    let mut request = crate::UpdateRequest {
+        todo_id: id.clone(),
+        status: crate::Status::InReview,
+        expected_revision: Some(todos.record(id).unwrap().revision),
+        reviewed_dispatch: Some(dispatch.dispatch_id.clone()),
+        ..Default::default()
+    };
+    assert!(todos.check_review(&request).is_ok());
+    request.reviewed_dispatch = Some("other".into());
+    assert!(todos.check_review(&request).is_err());
+    request.reviewed_dispatch = Some(dispatch.dispatch_id.clone());
+    let crate::Moved::Changed(review) = todos
+        .plan_update(id, crate::Status::InReview, None, None, 3)
+        .unwrap()
+    else {
+        panic!("legal review")
+    };
+    todos.commit_change(id, &review);
+    request.status = crate::Status::Done;
+    assert!(
+        todos.check_review(&request).is_err(),
+        "submit invalidates the previous inspection revision"
+    );
+    request.expected_revision = Some(todos.record(id).unwrap().revision);
+    assert!(todos.check_review(&request).is_ok());
+    let crate::Moved::Changed(close) = todos
+        .plan_update(id, crate::Status::Done, None, None, 4)
+        .unwrap()
+    else {
+        panic!("legal close")
+    };
+    todos.commit_change(id, &close);
+    assert!(todos
+        .check_comment(&crate::CommentRequest {
+            todo_id: id.clone(),
+            body: "late context".into(),
+            expected_revision: Some(todos.record(id).unwrap().revision),
+            ..Default::default()
+        })
+        .is_err());
+}

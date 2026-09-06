@@ -49,6 +49,16 @@ pub enum Status {
 }
 
 impl Status {
+    /// Every lawful status, used to generate the UI table from this definition.
+    pub const ALL: [Self; 6] = [
+        Self::Backlog,
+        Self::Executing,
+        Self::InReview,
+        Self::Blocked,
+        Self::Done,
+        Self::Cancelled,
+    ];
+
     /// Whether the status is an ending. A terminal status has no legal
     /// exit ([`Self::allows`] answers empty for one), so the two facts
     /// cannot disagree.

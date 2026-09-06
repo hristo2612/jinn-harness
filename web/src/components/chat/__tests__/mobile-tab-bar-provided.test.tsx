@@ -85,15 +85,16 @@ function renderAt(path: string) {
 }
 
 describe("MobileTabBar at the shipped route table", () => {
-  it("carries Chat, Settings and Plugins as links; unsupported tabs stay disabled", () => {
+  it("carries Chat, Todos, Settings and Plugins as links; unsupported tabs stay disabled", () => {
     renderAt("/settings")
     expect(screen.getAllByRole("link").map((tab) => tab.getAttribute("aria-label"))).toEqual(["Chat", "Todos", "Workflows", "Settings", "Plugins"])
-    for (const name of ["Todos", "Workflows"]) {
+    for (const name of ["Workflows"]) {
       const tab = screen.getByRole("link", { name })
       expect(tab.getAttribute("aria-disabled")).toBe("true")
       expect(tab.getAttribute("href")).toBeNull()
       expect(tab.getAttribute("title")).toBe(NOT_IN_PROFILE)
     }
+    expect(screen.getByRole("link", { name: "Todos" }).getAttribute("href")).toBe("/todos")
     expect(screen.getByRole("link", { name: "Chat" }).getAttribute("href")).toBe("/")
     expect(screen.getByRole("link", { name: "Plugins" }).getAttribute("href")).toBe("/settings/plugins")
     expect(screen.queryByRole("link", { name: "More" })).toBeNull()
@@ -101,7 +102,7 @@ describe("MobileTabBar at the shipped route table", () => {
 
   it("navigates nowhere when a disabled tab is tapped", () => {
     renderAt("/settings")
-    fireEvent.click(screen.getByRole("link", { name: "Todos" }))
+    fireEvent.click(screen.getByRole("link", { name: "Workflows" }))
     expect(screen.getByTestId("location").textContent).toBe("/settings")
   })
 
@@ -118,31 +119,31 @@ describe("MobileTabBar at the shipped route table", () => {
     // ever sees, so it is never the reason on this surface.
     window.innerWidth = 390
     renderAt("/settings")
-    const todos = screen.getByRole("link", { name: "Todos" })
-    const reason = within(todos).getByText(NOT_IN_PROFILE)
+    const workflows = screen.getByRole("link", { name: "Workflows" })
+    const reason = within(workflows).getByText(NOT_IN_PROFILE)
     expect(reason.getAttribute("aria-hidden")).toBeNull()
     expect(reason.id).not.toBe("")
     // The visible text is also the control's accessible description.
-    expect(todos.getAttribute("aria-describedby")).toBe(reason.id)
+    expect(workflows.getAttribute("aria-describedby")).toBe(reason.id)
     // Disabled yet focusable: a keyboard or a switch reaches the reason too.
-    expect(todos.getAttribute("aria-disabled")).toBe("true")
-    todos.focus()
-    expect(document.activeElement).toBe(todos)
+    expect(workflows.getAttribute("aria-disabled")).toBe("true")
+    workflows.focus()
+    expect(document.activeElement).toBe(workflows)
     // A tap navigates nowhere; the target keeps its height.
-    fireEvent.click(todos)
+    fireEvent.click(workflows)
     expect(screen.getByTestId("location").textContent).toBe("/settings")
-    expect(todos.className).toContain("min-h-[49px]")
+    expect(workflows.className).toContain("min-h-[49px]")
     // Adaptation 16: live labels make agent-authored renames visible on touch.
     expect(screen.getByRole("link", { name: "Settings" }).textContent).toBe("Settings")
     // A reason a finger can reach but cannot read is not delivered: composited
     // on the bar it clears AA text (≥ 4.5:1) in BOTH themes. Round 2 shipped it
     // at 1.46:1 dark / 1.58:1 light — text-tertiary under the tab's opacity-40.
     for (const [name, selector] of THEMES) {
-      expect(captionContrast(reason, todos, themeTokens(selector)), `${name} caption contrast`).toBeGreaterThanOrEqual(4.5)
+      expect(captionContrast(reason, workflows, themeTokens(selector)), `${name} caption contrast`).toBeGreaterThanOrEqual(4.5)
     }
     // Structurally: only the glyph dims. The caption sits outside every
     // opacity-reduced ancestor and carries the secondary token itself.
-    for (let el: HTMLElement | null = reason; el && el !== todos.parentElement; el = el.parentElement) {
+    for (let el: HTMLElement | null = reason; el && el !== workflows.parentElement; el = el.parentElement) {
       expect(el.className, `opacity on <${el.tagName.toLowerCase()} id=${el.id}>`).not.toMatch(/(?:^|\s)opacity-/)
     }
     expect(reason.className).toMatch(/(?:^|\s)text-\[var\(--text-secondary\)\]/)

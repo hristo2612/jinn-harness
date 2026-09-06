@@ -450,3 +450,16 @@ adapted	packages/web/src/routes/chat/page.tsx	src/routes/chat/page.tsx	UI-6a
 new	-	src/lib/__tests__/api-chat.test.ts
 new	-	src/components/chat/__tests__/text-chat.test.tsx
 new	-	src/hooks/__tests__/use-chat-rejection.test.tsx
+
+# UI-4a bounded Todo journey; scope and adaptations in the arc amendment.
+new	-	src/hooks/__tests__/use-todo-journey.test.ts	UI-4a
+new	-	src/hooks/use-todo-journey.ts	UI-4a
+new	-	src/lib/__tests__/api-todo-journey.test.ts	UI-4a
+new	-	src/lib/api-todo-journey.ts	UI-4a
+new	-	src/lib/todo-status-table.json	UI-4a
+new	-	src/routes/todos/capture.tsx	UI-4a
+new	-	src/routes/todos/detail.tsx	UI-4a
+new	-	src/routes/todos/drafts.ts	UI-4a
+new	-	src/routes/todos/journey.test.tsx	UI-4a
+new	-	src/routes/todos/page.tsx	UI-4a
+new	-	src/routes/todos/styles.ts	UI-4a
