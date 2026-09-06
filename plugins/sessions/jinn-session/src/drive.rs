@@ -127,7 +127,7 @@ mod tests {
     #[test]
     fn text_chat_context_keeps_completed_pairs_and_the_current_message() {
         let spec: SessionSpec = serde_json::from_value(serde_json::json!({
-            "transcript-context": true
+            "engine": {"engine":"codex"}, "transcript-context": true
         }))
         .unwrap();
         let turns = [
