@@ -449,3 +449,4 @@ verbatim	packages/web/src/lib/scroll-anchor.ts	src/lib/scroll-anchor.ts
 adapted	packages/web/src/routes/chat/page.tsx	src/routes/chat/page.tsx	UI-6a
 new	-	src/lib/__tests__/api-chat.test.ts
 new	-	src/components/chat/__tests__/text-chat.test.tsx
+new	-	src/hooks/__tests__/use-chat-rejection.test.tsx

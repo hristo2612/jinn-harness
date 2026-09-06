@@ -29,7 +29,8 @@ export interface ChatSummary {
   'created-ms': number
 }
 export class ChatHttpError extends Error {
-  constructor(public status: number, message: string) { super(message) }
+  constructor(public status: number, message: string, public code?: string, public storeCode?: string) { super(message) }
+  get rejected() { return ['refused', 'invalid', 'not-found', 'unauthenticated'].includes(this.storeCode ?? this.code ?? '') }
 }
 export function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('The chat service returned invalid data.')
@@ -59,7 +60,8 @@ async function response(res: Response): Promise<unknown> {
   if (!res.ok) {
     const error = object(value).error
     const details = error && typeof error === 'object' ? error as Record<string, unknown> : {}
-    throw new ChatHttpError(res.status, String(details.detail ?? details.message ?? `Chat request failed (${res.status}).`))
+    throw new ChatHttpError(res.status, String(details.detail ?? details.message ?? `Chat request failed (${res.status}).`),
+      typeof details.code === 'string' ? details.code : undefined, typeof details['store-code'] === 'string' ? details['store-code'] : undefined)
   }
   return value
 }
