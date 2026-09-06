@@ -54,6 +54,35 @@ pub fn run_request(spec: &SessionSpec, prompt: &str) -> serde_json::Value {
     request
 }
 
+/// Formats completed turns without changing the stored user-message identity.
+/// A rejected context never silently drops older turns.
+pub fn context_prompt(
+    spec: &SessionSpec,
+    turns: &[crate::Turn],
+    message: &str,
+) -> Result<String, crate::SessionError> {
+    if spec.transcript_context != Some(true) {
+        return Ok(message.to_owned());
+    }
+    let mut transcript = Vec::new();
+    for turn in turns.iter().filter(|turn| turn.status == TurnStatus::Done) {
+        transcript.push(serde_json::json!({"role":"user","content":turn.message}));
+        transcript.push(serde_json::json!({"role":"assistant","content":turn.answer}));
+    }
+    transcript.push(serde_json::json!({"role":"user","content":message}));
+    let prompt = format!(
+        "Continue this conversation. Answer its final user message. Conversation JSON:\n{}",
+        serde_json::to_string(&transcript).expect("text transcript encodes")
+    );
+    if prompt.len() > 32 * 1024 {
+        return Err(crate::SessionError::new(
+            crate::ErrorCode::Refused,
+            "This conversation exceeds the 32 KiB context limit. Start a new chat.",
+        ));
+    }
+    Ok(prompt)
+}
+
 /// How a run record ends this seam's turn, or `None` while it has not
 /// ended. A non-`done` ending always carries a reason, so no reader ever
 /// has to invent one.
@@ -94,6 +123,44 @@ pub fn ended(record: &RunRecord) -> Option<(TurnStatus, Option<String>)> {
 mod tests {
     use super::*;
     use jinn_engine::Usage;
+
+    #[test]
+    fn text_chat_context_keeps_completed_pairs_and_the_current_message() {
+        let spec: SessionSpec = serde_json::from_value(serde_json::json!({
+            "engine": {"engine":"codex"}, "transcript-context": true
+        }))
+        .unwrap();
+        let turns = [
+            crate::Turn {
+                message: "remember copper".into(),
+                answer: "finch".into(),
+                status: TurnStatus::Done,
+                ..Default::default()
+            },
+            crate::Turn {
+                message: "incomplete".into(),
+                answer: "partial".into(),
+                status: TurnStatus::Cancelled,
+                ..Default::default()
+            },
+        ];
+        let prompt = context_prompt(&spec, &turns, "follow up").unwrap();
+        let transcript: serde_json::Value =
+            serde_json::from_str(prompt.split_once('\n').unwrap().1).unwrap();
+        assert_eq!(
+            transcript,
+            serde_json::json!([
+                {"role":"user","content":"remember copper"},
+                {"role":"assistant","content":"finch"},
+                {"role":"user","content":"follow up"}
+            ])
+        );
+        assert_eq!(turns[0].message, "remember copper");
+        assert_eq!(
+            context_prompt(&SessionSpec::default(), &turns, "follow up").unwrap(),
+            "follow up"
+        );
+    }
 
     fn record(state: RunState) -> RunRecord {
         RunRecord {

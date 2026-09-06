@@ -409,6 +409,43 @@ kernel.
 
 **Dependencies.** UI-3, UI-2.
 
+### UI-6a — bounded text Chat amendment (2026-09-06)
+
+The first Chat delivery uses the existing session cursor, UI moments and the
+Codex provider. It does not wait for global events or the task/workflow screens.
+The broader UI-6 above remains the later parity map; UI-6a makes no claim to
+its attachment, tool-block, employee or global-event coverage.
+
+The mounted `/` surface provides one selected text conversation, fixed
+GPT-6 Astra/high with tools denied, actual partial text, completed-turn context,
+saved history, stop and recovery. Context is bounded at 32 KiB and overflow
+refuses before minting a turn. Existing Settings, Plugins and navigation moments
+remain mounted. Before-create permits no identity change; before-send permits a
+pure text transformation, displayed and persisted as that turn's message.
+
+Source reference: legacy `fd46e96ac5174a17fd1cf8251cda82ecf2b45a3f`, particularly
+`components/chat/message-markdown.tsx`, `chat-input.tsx`, the transcript inventory
+§2.1–2.13, `hooks/stick-geometry.ts` and `lib/scroll-anchor.ts`. The latter two
+leaves remain verbatim at the port gate's base. The text formatter retains safe
+Markdown, unfinished fences and trace disclosures; file/Todo viewers are omitted
+because this slice has no such surface. `text-transcript.tsx` adapts follow and
+anchor behavior to session turns; `text-code-block.tsx` supplies plain code/copy.
+`routes/chat/page.tsx` adapts list/detail and guarded composer interactions to
+these existing harness APIs. It intentionally has no attachment or tool control.
+The exact file attribution remains `web/port-map.txt`; its original source pin
+and gate stay intact. Route table/main and their navigation assertions now name
+Chat as provided. New Chat API, cursor and hook tests belong to this amendment.
+
+Acceptance is real-loader plus rebuilt-artifact proof at the unchanged kernel
+pin: actual vendor partials before terminal, contextual follow-up, transformed
+saved messages, cancellation and restart honesty, lost/late/duplicated event
+recovery, no blind send replay, both themes and desktop/mobile. Keyboard/IME,
+copy/Markdown, older-message anchoring, detached reading and settled-body render
+stability are part of the visible result. Full required gates remain mandatory.
+The provider is an opt-in bounded stdio app-server mode inside the existing
+Codex guest; legacy exec behavior is preserved. Unsupported tool/approval or
+protocol frames fail honestly. No new global service or kernel/pin change.
+
 ### UI-7 - The plugin tree
 
 **Decision.** The seven fixed contribution areas (inventory §1.3) become a

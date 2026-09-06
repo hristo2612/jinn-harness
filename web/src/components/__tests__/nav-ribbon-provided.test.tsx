@@ -44,7 +44,7 @@ describe("NavRibbon at the shipped route table", () => {
 
   it("navigates nowhere on a click or a hover of an absent destination", () => {
     renderAt("/settings")
-    const chat = screen.getByRole("link", { name: "Chat" })
+    const chat = screen.getByRole("link", { name: "Todos" })
     fireEvent.pointerEnter(chat)
     fireEvent.click(chat)
     expect(screen.getByTestId("location").textContent).toBe("/settings")

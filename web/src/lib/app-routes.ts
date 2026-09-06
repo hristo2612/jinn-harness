@@ -18,7 +18,7 @@ export interface AppRouteDescriptor {
 export const APP_ROUTES = [
   // UI-1 (docs/plans/ui-malleability-arc.md §4.2 item 5): Settings, Plugins, the
   // plugin splat, and two router-level redirects. Every other route is absent.
-  { id: "root-redirect", path: "/", availability: "always", surface: "settings" },
+  { id: "chat", path: "/", availability: "always", surface: "chat" },
   { id: "more-redirect", path: "/more", availability: "always", surface: "settings" },
   { id: "settings-plugins", path: "/settings/plugins", availability: "always", surface: "settings-plugins" },
   { id: "settings", path: "/settings", availability: "always", surface: "settings" },

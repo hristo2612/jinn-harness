@@ -670,6 +670,7 @@ version = "0.1.0"
 dependencies = [
  "api-kit",
  "cron-kit",
+ "engine-kit",
  "ext-kit",
  "jinn-cron",
  "jinn-ext",
@@ -677,6 +678,7 @@ dependencies = [
  "jinn-ui",
  "plugin-kit",
  "serde_json",
+ "session-kit",
  "sha2",
 ]
 

@@ -182,6 +182,15 @@ impl Sessions {
         let seq = self.next_seq(session_id);
         let record = SessionEvent::new(&self.store, session_id, seq, kind);
         if let Some(live) = self.live.get_mut(session_id) {
+            if let EventKind::Delta { turn_id, text } = &record.event.kind {
+                if let Some(turn) = live
+                    .turns
+                    .iter_mut()
+                    .find(|turn| &turn.turn_id == turn_id && !turn.status.is_terminal())
+                {
+                    turn.answer.push_str(text);
+                }
+            }
             live.events.push(record.clone());
             if live.events.len() > EVENT_RING {
                 let over = live.events.len() - EVENT_RING;
@@ -228,6 +237,7 @@ impl Sessions {
                 format!("session {session_id:?} already has a turn in flight"),
             ));
         }
+        crate::drive::context_prompt(&live.spec, &live.turns, message)?;
         live.minted_turns += 1;
         let turn_id = format!("{store}-{}-t{}", session_id, live.minted_turns);
         let seq = live.turns.len() as u64;

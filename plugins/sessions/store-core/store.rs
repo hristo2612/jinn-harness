@@ -34,8 +34,8 @@ use jinn_session::{
 };
 use serde::Deserialize;
 
-use crate::jinn::plugin::{clock, events, services};
 use crate::jinn::plugin::types::{DispatchMode, Selector};
+use crate::jinn::plugin::{clock, events, services};
 use crate::journal;
 
 /// The wake token every poll is scheduled under.
@@ -257,6 +257,8 @@ fn on_send(payload: &[u8]) -> Result<serde_json::Value, SessionError> {
     let spec = with_sessions(|sessions| sessions.spec(&session_id).cloned()).ok_or_else(|| {
         SessionError::new(ErrorCode::NotFound, format!("{session_id:?} is not here"))
     })?;
+    let history = with_sessions(|sessions| sessions.record(&session_id)).expect("spec exists");
+    let prompt = drive::context_prompt(&spec, &history.log, &request.message)?;
     let accepted = with_sessions(|sessions| sessions.send(&session_id, &request.message, now))?;
     if let Err(error) = journal::turn_started(&session_id, &accepted.turn_id, &request.message, now)
     {
@@ -283,7 +285,7 @@ fn on_send(payload: &[u8]) -> Result<serde_json::Value, SessionError> {
     let run = engine_call(
         &contract,
         jinn_engine::OP_RUN,
-        &serde_json::to_vec(&drive::run_request(&spec, &request.message)).expect("encodes"),
+        &serde_json::to_vec(&drive::run_request(&spec, &prompt)).expect("encodes"),
     );
     let run_id = match run.and_then(|accepted| {
         accepted
@@ -385,15 +387,14 @@ pub fn poll_once(now: u64) -> Result<bool, SessionError> {
             jinn_engine::OP_RUN_GET,
             &serde_json::to_vec(&serde_json::json!({ "run-id": drive.run_id })).expect("encodes"),
         );
-        let record: jinn_engine::RunRecord = match record
-            .and_then(|value| {
-                serde_json::from_value(value).map_err(|error| {
-                    SessionError::new(
-                        ErrorCode::Failed,
-                        format!("malformed engine run record: {error}"),
-                    )
-                })
-            }) {
+        let record: jinn_engine::RunRecord = match record.and_then(|value| {
+            serde_json::from_value(value).map_err(|error| {
+                SessionError::new(
+                    ErrorCode::Failed,
+                    format!("malformed engine run record: {error}"),
+                )
+            })
+        }) {
             Ok(record) => record,
             Err(error) => {
                 // The run is unreadable — the engine restarted, the
@@ -406,14 +407,18 @@ pub fn poll_once(now: u64) -> Result<bool, SessionError> {
                     TurnStatus::Failed,
                     Some(error.message),
                     now,
-                    String::new(),
+                    retained_answer(&session_id, &drive.turn_id),
                 )?;
                 continue;
             }
         };
         // Only the NEW text is a delta; a reader never sees a chunk twice.
-        if record.text.len() > drive.delivered {
-            let text = record.text[drive.delivered..].to_owned();
+        if let Some(text) = record
+            .text
+            .get(drive.delivered..)
+            .filter(|text| !text.is_empty())
+        {
+            let text = text.to_owned();
             record_event(
                 &session_id,
                 EventKind::Delta {
@@ -447,45 +452,76 @@ pub fn poll_once(now: u64) -> Result<bool, SessionError> {
     Ok(!DRIVING.lock().unwrap().is_empty())
 }
 
-/// `cancel`: the engine's run is asked to stop and the turn ends
-/// `cancelled` REGARDLESS. A cancel whose engine call failed still
-/// cancelled the turn — the alternative is a turn that reads as running
-/// with nothing driving it.
+fn retained_answer(session_id: &str, turn_id: &str) -> String {
+    with_sessions(|sessions| {
+        sessions
+            .turn_mut(session_id, turn_id)
+            .map(|turn| turn.answer.clone())
+    })
+    .unwrap_or_default()
+}
+
+/// A stop request is not a stopped process. Keep polling until the provider
+/// confirms an ending; a refused stop explicitly preserves that uncertainty.
 fn on_cancel(payload: &[u8]) -> Result<serde_json::Value, SessionError> {
     let request: GetRequest = decode(payload, "cancel")?;
     let now = now_ms()?;
-    let session_id = request.session_id.clone();
+    let session_id = request.session_id;
     let in_flight = with_sessions(|sessions| {
         sessions
             .in_flight(&session_id)
             .map(|turn| turn.turn_id.clone())
     });
     let Some(turn_id) = in_flight else {
-        // Nothing in flight: the record as it stands, unchanged. A
-        // terminal turn is never re-labelled.
         return record_of(&session_id);
     };
-    let drive = DRIVING.lock().unwrap().remove(&session_id);
-    let mut note = "cancelled by a caller".to_owned();
-    if let Some(drive) = drive {
-        if let Err(error) = engine_call(
-            &drive.contract,
-            jinn_engine::OP_CANCEL,
-            &serde_json::to_vec(&serde_json::json!({ "run-id": drive.run_id })).expect("encodes"),
-        ) {
-            // Said, not swallowed: the turn is cancelled and the reason
-            // records that the engine did not confirm it.
-            note = format!("cancelled by a caller; the engine did not confirm: {}", error.message);
+    let driving = DRIVING.lock().unwrap().get(&session_id).cloned();
+    let Some(driving) = driving else {
+        return Err(SessionError::new(
+            ErrorCode::Unavailable,
+            "Stop unconfirmed: no active engine handle",
+        ));
+    };
+    let answer = engine_call(
+        &driving.contract,
+        jinn_engine::OP_CANCEL,
+        &serde_json::to_vec(&serde_json::json!({"run-id":driving.run_id})).expect("encodes"),
+    )
+    .and_then(|value| {
+        serde_json::from_value::<jinn_engine::RunRecord>(value).map_err(|error| {
+            SessionError::new(ErrorCode::Failed, format!("invalid stop response: {error}"))
+        })
+    });
+    match answer {
+        Ok(record) => {
+            if let Some((status, reason)) = drive::ended(&record) {
+                DRIVING.lock().unwrap().remove(&session_id);
+                end_turn(&session_id, &turn_id, status, reason, now, record.text)?;
+            } else {
+                with_sessions(|sessions| {
+                    if let Some(turn) = sessions.turn_mut(&session_id, &turn_id) {
+                        turn.reason =
+                            Some("Stop requested; waiting for the engine to confirm.".into());
+                    }
+                });
+            }
+        }
+        Err(error) => {
+            // The record does not assert cancellation when the engine is unreachable.
+            DRIVING.lock().unwrap().remove(&session_id);
+            end_turn(
+                &session_id,
+                &turn_id,
+                TurnStatus::Failed,
+                Some(format!(
+                    "Stop unconfirmed: {}. The engine may still be running.",
+                    error.message
+                )),
+                now,
+                retained_answer(&session_id, &turn_id),
+            )?;
         }
     }
-    end_turn(
-        &session_id,
-        &turn_id,
-        TurnStatus::Cancelled,
-        Some(note),
-        now,
-        String::new(),
-    )?;
     wake_at(now)?;
     record_of(&session_id)
 }
@@ -511,12 +547,12 @@ fn record_of(session_id: &str) -> Result<serde_json::Value, SessionError> {
         })
 }
 
-fn decode<T: serde::de::DeserializeOwned>(
-    payload: &[u8],
-    what: &str,
-) -> Result<T, SessionError> {
+fn decode<T: serde::de::DeserializeOwned>(payload: &[u8], what: &str) -> Result<T, SessionError> {
     serde_json::from_slice(payload).map_err(|error| {
-        SessionError::new(ErrorCode::Invalid, format!("malformed {what} request: {error}"))
+        SessionError::new(
+            ErrorCode::Invalid,
+            format!("malformed {what} request: {error}"),
+        )
     })
 }
 
@@ -526,8 +562,9 @@ pub fn dispatch(operation: &str, payload: &[u8]) -> Answer {
     let outcome = match operation {
         OP_CREATE => on_create(payload),
         OP_SEND => on_send(payload),
-        OP_GET => decode::<GetRequest>(payload, "get")
-            .and_then(|request| record_of(&request.session_id)),
+        OP_GET => {
+            decode::<GetRequest>(payload, "get").and_then(|request| record_of(&request.session_id))
+        }
         OP_MESSAGES => decode::<MessagesRequest>(payload, "messages").and_then(|request| {
             with_sessions(|sessions| {
                 sessions.page(&request.session_id, request.offset, request.limit)
@@ -612,8 +649,8 @@ pub fn describe(provider: &str, durable: bool) -> Answer {
 /// A malformed config, an empty store id, or a journal this store could
 /// not read.
 pub fn activate(config_bytes: &[u8]) -> Result<StoreConfig, String> {
-    let config: StoreConfig =
-        serde_json::from_slice(config_bytes).map_err(|error| format!("malformed config: {error}"))?;
+    let config: StoreConfig = serde_json::from_slice(config_bytes)
+        .map_err(|error| format!("malformed config: {error}"))?;
     if config.store.is_empty() {
         return Err("config.store is the store id this provider serves; it cannot be empty".into());
     }

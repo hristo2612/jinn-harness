@@ -67,6 +67,8 @@
 //! message (which can quote the model's own text) is kept off the bus in
 //! [`Decoder::errors`], where the provider can read it.
 
+pub mod app_server;
+
 use std::collections::BTreeSet;
 
 use jinn_engine::{Event, ToolMode, ToolPolicy, Usage};
