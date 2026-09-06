@@ -83,6 +83,26 @@ fn kit(root: &Path, port: u16, every_ms: u64, tick_ms: u64, chat: Option<(&str, 
         Some(GREEN_BUDGET),
     ));
 
+    let tasks = build(&artifacts, "sessions", "jinn-session-fs");
+    let todos = build(&artifacts, "todos", "jinn-todo-fs");
+    entries.push(session_kit::store_entry(&session_kit::Store {
+        id: "task-sessions",
+        package: session_kit::FS_PACKAGE,
+        hash: &tasks,
+        store: "tasks",
+        dir: Some("task-history"),
+        engines: &["codex"],
+        poll_ms: 250,
+    }));
+    entries.push(todo_kit::store_entry(&todo_kit::Store {
+        id: "work-todos",
+        package: todo_kit::FS_PACKAGE,
+        hash: &todos,
+        store: "work",
+        dir: Some("todo-history"),
+        sessions: &["tasks"],
+        poll_ms: 250,
+    }));
     if let Some((command, codex_home)) = &chat {
         let home = root.join("chat-home");
         std::fs::create_dir_all(home.join("workspace")).expect("isolated chat workspace");
@@ -111,12 +131,22 @@ fn kit(root: &Path, port: u16, every_ms: u64, tick_ms: u64, chat: Option<(&str, 
             let grants = entry["config"]["grants"].as_array_mut().expect("grants");
             grants.extend(api_catalog_grants(&catalogs));
             entry["config"]["data"]["catalogs"] = serde_json::json!(catalogs);
+            entry["config"]["grants"]
+                .as_array_mut()
+                .expect("grants")
+                .extend(todo_kit::api_todo_grants(&["work"]));
+            entry["config"]["grants"]
+                .as_array_mut()
+                .expect("grants")
+                .extend(session_kit::api_store_grants(&["tasks"]));
+            entry["config"]["data"]["todo-stores"] = serde_json::json!(["work"]);
+            entry["config"]["data"]["stores"] = serde_json::json!(["tasks"]);
             if chat.is_some() {
                 entry["config"]["grants"]
                     .as_array_mut()
                     .expect("grants")
                     .extend(session_kit::api_store_grants(&["chat"]));
-                entry["config"]["data"]["stores"] = serde_json::json!(["chat"]);
+                entry["config"]["data"]["stores"] = serde_json::json!(["chat", "tasks"]);
             }
             mount_bundle_on(entry);
             mount_moments_on(entry);

@@ -20,6 +20,7 @@ let PairingScreen: ComponentType<Record<string, never>> | undefined
 // UI-1 (docs/plans/ui-malleability-arc.md §4.2 item 5): the route table is
 // Settings, Plugins, the plugin splat and two redirects; every other lazy route,
 // its prefetch registration, the Talk navigator and the service worker are gone.
+const TodosPage = lazyRoute(() => import('./routes/todos/page'), 'todos')
 const ChatPage = lazyRoute(() => import('./routes/chat/page'), 'chat')
 const SettingsPage = lazyRoute(() => import('./routes/settings/page'), 'settings')
 const PluginsSettingsPage = lazyRoute(() => import('./routes/settings/plugins/page'), 'settings-plugins')
@@ -70,6 +71,7 @@ function AppShell() {
 
 const routeElements: Partial<Record<AppRouteId, ReactNode>> = {
   chat: <ChatPage />,
+  todos: <TodosPage />,
   "more-redirect": <Navigate to="/settings" replace />,
   settings: <SettingsPage />,
   "settings-plugins": <PluginsSettingsPage />,

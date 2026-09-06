@@ -13,6 +13,12 @@ After M4 retires the legacy gateway repo, this repo is renamed to **`jinn`**.
 
 ## Status
 
+UI-4a adds a compact Todo journey: capture/context, a bounded text task, saved
+result and explicit operator review. See the UI-4a amendment in
+`docs/plans/ui-malleability-arc.md`, the `ui` profile and
+`docs/notes/2026-09-06-todo-journey.md` for scope, compatibility and evidence.
+
+
 The core service seams and the Settings/Plugins web surfaces run as plugins
 through the pinned daemon. This is not production parity; the limitations
 below remain part of the acceptance evidence.

@@ -900,6 +900,10 @@ fn a_status_no_durable_line_justifies_is_never_a_status_this_store_reports() {
     // not grow — the reported state is still exactly what the journal
     // holds, byte for byte.
     let after = record(port, DEFAULT_STORE, &todo);
+    assert_eq!(
+        after["revision"], before["revision"],
+        "failed append advances no revision"
+    );
     assert_eq!(after["status"], before["status"], "{after}");
     assert_eq!(
         after["declared-status"], before["declared-status"],
@@ -916,7 +920,7 @@ fn a_status_no_durable_line_justifies_is_never_a_status_this_store_reports() {
     let commented = post(
         port,
         &format!("/v1/todos/{DEFAULT_STORE}/{todo}/comments"),
-        &serde_json::json!({ "body": "started", "actor": "planner" }),
+        &serde_json::json!({ "body": "started", "actor": "planner", "expected-revision": before["revision"] }),
     );
     assert_ne!(commented.status, 200, "{}", commented.raw);
     assert_eq!(
@@ -932,6 +936,10 @@ fn a_status_no_durable_line_justifies_is_never_a_status_this_store_reports() {
     daemon.kill();
     let daemon = reboot(&root);
     let replayed = record(port, DEFAULT_STORE, &todo);
+    assert_eq!(
+        replayed["revision"], after["revision"],
+        "failed writes cannot alter replay revision"
+    );
     assert_eq!(replayed["status"], after["status"], "{replayed}");
     assert_eq!(
         replayed["declared-status"], after["declared-status"],
@@ -1094,4 +1102,127 @@ fn the_id_of_a_record_less_document_is_never_handed_to_a_new_todo() {
     record(port, DEFAULT_STORE, &fresh);
     record(port, DEFAULT_STORE, &real);
     daemon.interrupt();
+}
+
+#[test]
+fn conditional_ui_mutations_hold_the_same_revision_law_in_both_stores() {
+    let Some((daemon, port, _)) = booted("todos-conditional-ui") else {
+        return;
+    };
+    for store in [DEFAULT_STORE, MEMORY_STORE] {
+        let id = create(port, store, "conditional context");
+        let path = format!("/v1/todos/{store}/{id}");
+        let before = record(port, store, &id);
+        let comment = post(
+            port,
+            &format!("{path}/comments"),
+            &serde_json::json!({"body":"first", "expected-revision":before["revision"], "client-request":"context-1"}),
+        );
+        assert_eq!(comment.status, 200, "{}", comment.raw);
+        assert!(comment.body["revision"].as_u64().unwrap() > before["revision"].as_u64().unwrap());
+        assert_eq!(comment.body["comments"][0]["client-request"], "context-1");
+        for (action, mut body) in [
+            ("comments", serde_json::json!({"body":"stale"})),
+            ("status", serde_json::json!({"status":"executing"})),
+            (
+                "dispatch",
+                serde_json::json!({"dispatch":{"store":SESSION_STORE,"engine":{"engine":DEFAULT_ENGINE}}}),
+            ),
+        ] {
+            body["expected-revision"] = before["revision"].clone();
+            let refused = post(port, &format!("{path}/{action}"), &body);
+            assert_ne!(
+                refused.status, 200,
+                "stale {store}/{action}: {}",
+                refused.raw
+            );
+            assert_eq!(refused.body["error"]["store-code"], "refused");
+            assert_eq!(
+                record(port, store, &id),
+                comment.body,
+                "stale writes have no side effects"
+            );
+        }
+        let writes = std::thread::scope(|scope| {
+            let send = || {
+                post(
+                    port,
+                    &format!("{path}/comments"),
+                    &serde_json::json!({"body":"One simultaneous context write", "expected-revision":comment.body["revision"]}),
+                )
+            };
+            let first = scope.spawn(send);
+            let second = scope.spawn(send);
+            [first.join().unwrap(), second.join().unwrap()]
+        });
+        assert_eq!(
+            writes
+                .iter()
+                .filter(|response| response.status == 200)
+                .count(),
+            1,
+            "only one simultaneous write may use a revision"
+        );
+        assert_eq!(
+            record(port, store, &id)["comments"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(
+            update(port, store, &id, "executing", "operator").status,
+            200
+        );
+        let executing = record(port, store, &id);
+        let illegal = post(
+            port,
+            &format!("{path}/status"),
+            &serde_json::json!({"status":"done","expected-revision":executing["revision"],"client-request":"refused-1"}),
+        );
+        assert_ne!(illegal.status, 200);
+        let refused = record(port, store, &id);
+        assert_eq!(
+            refused["refused"].as_array().unwrap().len(),
+            1,
+            "illegal current moves remain recorded"
+        );
+        assert!(refused["revision"].as_u64().unwrap() > executing["revision"].as_u64().unwrap());
+        assert_eq!(refused["refused"][0]["client-request"], "refused-1");
+        unavailable_dispatch(port, store, SESSION_STORE, "missing-provider");
+        unavailable_dispatch(port, store, "missing-store", DEFAULT_ENGINE);
+    }
+    daemon.edit_profile_restarting(DEFAULT_ID, |document| {
+        entry_mut(document, DEFAULT_ID)["config"]["grants"]
+            .as_array_mut()
+            .unwrap()
+            .retain(|grant| {
+                grant != "jinn:session.default" && grant["contract"] != "jinn:session.default"
+            });
+    });
+    daemon.eventually("the store with no session grant to answer", || {
+        get(port, "/v1/todos/default").status == 200
+    });
+    unavailable_dispatch(port, DEFAULT_STORE, SESSION_STORE, DEFAULT_ENGINE);
+    daemon.interrupt();
+}
+
+fn unavailable_dispatch(port: u16, store: &str, session: &str, engine: &str) {
+    let id = create(port, store, "An unavailable route must fail honestly");
+    let before = record(port, store, &id);
+    let refused = post(
+        port,
+        &format!("/v1/todos/{store}/{id}/dispatch"),
+        &serde_json::json!({"dispatch":{"store":session,"engine":{"engine":engine}},
+            "expected-revision":before["revision"],"client-request":"unavailable-1"}),
+    );
+    assert_ne!(refused.status, 200, "{}", refused.raw);
+    let saved = record(port, store, &id);
+    assert_eq!(saved["dispatches"][0]["status"], "failed", "{saved}");
+    assert!(!saved["dispatches"][0]["reason"]
+        .as_str()
+        .unwrap()
+        .is_empty());
+    assert_eq!(saved["dispatches"][0]["client-request"], "unavailable-1");
+    assert!(saved["dispatches"][0].get("session-id").is_none());
 }

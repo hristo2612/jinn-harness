@@ -296,6 +296,7 @@ fn land_refusal(todo_id: &str, refused: &RefusedChange, now: u64) -> Result<(), 
 /// answer on the floor.
 fn on_update(payload: &[u8]) -> Result<serde_json::Value, TodoError> {
     let request: UpdateRequest = decode(payload, "update")?;
+    with_todos(|todos| todos.check_review(&request))?;
     let actor = request.attribution.check()?;
     let now = now_ms()?;
     let todo_id = request.todo_id.clone();
@@ -303,12 +304,34 @@ fn on_update(payload: &[u8]) -> Result<serde_json::Value, TodoError> {
         todos.plan_update(&todo_id, request.status, actor, request.note.clone(), now)
     })?;
     match moved {
-        Moved::Changed(change) => {
+        Moved::Changed(mut change) => {
+            if let Some(client) = request.extra.get("client-request") {
+                change.extra.insert("client-request".into(), client.clone());
+            }
+            if let Some(reviewed) = request.reviewed_dispatch.as_ref().filter(|_| {
+                matches!(
+                    request.status,
+                    jinn_todo::Status::InReview | jinn_todo::Status::Done
+                )
+            }) {
+                change
+                    .extra
+                    .insert("reviewed-dispatch".into(), reviewed.clone().into());
+                change.extra.insert(
+                    "inspected-revision".into(),
+                    request.expected_revision.into(),
+                );
+            }
             land_change(&todo_id, &change, now)?;
             wake_at(now)?;
             record_of(&todo_id)
         }
-        Moved::Refused(refused, error) => {
+        Moved::Refused(mut refused, error) => {
+            if let Some(client) = request.extra.get("client-request") {
+                refused
+                    .extra
+                    .insert("client-request".into(), client.clone());
+            }
             land_refusal(&todo_id, &refused, now)?;
             wake_at(now)?;
             Err(error)
@@ -319,10 +342,16 @@ fn on_update(payload: &[u8]) -> Result<serde_json::Value, TodoError> {
 /// `comment`.
 fn on_comment(payload: &[u8]) -> Result<serde_json::Value, TodoError> {
     let request: CommentRequest = decode(payload, "comment")?;
+    with_todos(|todos| todos.check_comment(&request))?;
     let actor = request.attribution.check()?;
     let now = now_ms()?;
     let todo_id = request.todo_id.clone();
-    let comment = with_todos(|todos| todos.plan_comment(&todo_id, &request.body, actor, now))?;
+    let mut comment = with_todos(|todos| todos.plan_comment(&todo_id, &request.body, actor, now))?;
+    if let Some(client) = request.extra.get("client-request") {
+        comment
+            .extra
+            .insert("client-request".into(), client.clone());
+    }
     journal::commented(&todo_id, &comment, now)?;
     with_todos(|todos| todos.commit_comment(&todo_id, &comment));
     record_event(
@@ -349,22 +378,33 @@ fn on_comment(payload: &[u8]) -> Result<serde_json::Value, TodoError> {
 /// happened.
 fn on_dispatch(payload: &[u8]) -> Result<serde_json::Value, TodoError> {
     let request: DispatchRequest = decode(payload, "dispatch")?;
+    with_todos(|todos| todos.check_revision(&request.todo_id, request.expected_revision))?;
     let actor = request.attribution.check()?;
     let now = now_ms()?;
     let todo_id = request.todo_id.clone();
     let spec = request.dispatch;
     let planned = with_todos(|todos| todos.plan_dispatch(&todo_id, &spec, actor, now))?;
-    let (change, dispatch) = match planned {
+    let (change, mut dispatch) = match planned {
         Dispatching::Opens { change, dispatch } => (change, dispatch),
         // A terminal Todo is not dispatched. The attempt is a fact and is
         // recorded exactly as any other refusal, before the caller hears
         // it.
-        Dispatching::Refused(refused, error) => {
+        Dispatching::Refused(mut refused, error) => {
+            if let Some(client) = request.extra.get("client-request") {
+                refused
+                    .extra
+                    .insert("client-request".into(), client.clone());
+            }
             land_refusal(&todo_id, &refused, now)?;
             wake_at(now)?;
             return Err(error);
         }
     };
+    if let Some(client) = request.extra.get("client-request") {
+        dispatch
+            .extra
+            .insert("client-request".into(), client.clone());
+    }
     if let Some(change) = &change {
         land_change(&todo_id, change, now)?;
     }
@@ -530,7 +570,11 @@ pub fn poll_once(now: u64) -> Result<bool, TodoError> {
                     &todo_id,
                     &drive.dispatch_id,
                     DispatchStatus::Failed,
-                    Some(format!("{}: {}", translate::LOST_SESSION_REASON, error.message)),
+                    Some(format!(
+                        "{}: {}",
+                        translate::LOST_SESSION_REASON,
+                        error.message
+                    )),
                     String::new(),
                     now,
                 )?;
@@ -569,7 +613,9 @@ pub fn dispatch(operation: &str, payload: &[u8]) -> Answer {
         OP_UPDATE => on_update(payload),
         OP_COMMENT => on_comment(payload),
         OP_DISPATCH => on_dispatch(payload),
-        OP_GET => decode::<GetRequest>(payload, "get").and_then(|request| record_of(&request.todo_id)),
+        OP_GET => {
+            decode::<GetRequest>(payload, "get").and_then(|request| record_of(&request.todo_id))
+        }
         OP_TREE => decode::<TreeRequest>(payload, "tree").and_then(|request| {
             with_todos(|todos| todos.tree(&request.todo_id))
                 .map(|tree| serde_json::to_value(tree).expect("encodes"))

@@ -170,6 +170,7 @@ impl Record {
             to: Some(change.to),
             actor: change.actor.clone(),
             note: change.note.clone(),
+            extra: change.extra.clone(),
             ..Self::new(Kind::StatusChanged, at_ms)
         })
     }
@@ -181,6 +182,7 @@ impl Record {
             from: Some(refused.from),
             to: Some(refused.to),
             actor: refused.actor.clone(),
+            extra: refused.extra.clone(),
             ..Self::new(Kind::TransitionRefused, at_ms)
         }
     }
@@ -192,6 +194,7 @@ impl Record {
             comment_id: Some(comment.comment_id.clone()),
             body: Some(comment.body.clone()),
             actor: comment.actor.clone(),
+            extra: comment.extra.clone(),
             ..Self::new(Kind::Commented, at_ms)
         }
     }
@@ -204,6 +207,7 @@ impl Record {
             dispatch_id: Some(dispatch.dispatch_id.clone()),
             session_store: Some(dispatch.session_store.clone()),
             engine: Some(dispatch.engine.clone()),
+            extra: dispatch.extra.clone(),
             ..Self::new(Kind::DispatchStarted, at_ms)
         }
     }
@@ -228,6 +232,7 @@ impl Record {
             dispatch_status: Some(dispatch.status),
             reason: dispatch.reason.clone(),
             answer: Some(dispatch.answer.clone()),
+            extra: dispatch.extra.clone(),
             ..Self::new(Kind::DispatchEnded, at_ms)
         })
     }
@@ -250,6 +255,7 @@ impl Record {
 /// open dispatch already conservative.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Replayed {
+    pub revision: u64,
     pub spec: TodoSpec,
     pub created_ms: u64,
     pub declared_status: Status,
@@ -305,6 +311,7 @@ pub fn replay(document: &[u8]) -> Result<Option<Replayed>, String> {
         }
         opened = true;
         apply(&mut replayed, record, line_no)?;
+        replayed.revision += 1;
     }
     if !opened {
         return Ok(None);
@@ -343,7 +350,7 @@ fn apply(replayed: &mut Replayed, record: Record, line: usize) -> Result<(), Str
                 actor: record.actor,
                 note: record.note,
                 at_ms,
-                extra: Extensions::new(),
+                extra: record.extra,
             });
         }
         Kind::TransitionRefused => {
@@ -355,7 +362,7 @@ fn apply(replayed: &mut Replayed, record: Record, line: usize) -> Result<(), Str
                 to,
                 actor: record.actor,
                 at_ms,
-                extra: Extensions::new(),
+                extra: record.extra,
             });
         }
         Kind::Commented => {
@@ -368,7 +375,7 @@ fn apply(replayed: &mut Replayed, record: Record, line: usize) -> Result<(), Str
                 body: record.body.unwrap_or_default(),
                 actor: record.actor,
                 at_ms,
-                extra: Extensions::new(),
+                extra: record.extra,
             });
         }
         Kind::DispatchStarted => {
@@ -385,6 +392,7 @@ fn apply(replayed: &mut Replayed, record: Record, line: usize) -> Result<(), Str
                 status: DispatchStatus::Interrupted,
                 reason: Some(INTERRUPTED_REASON.to_owned()),
                 started_ms: at_ms,
+                extra: record.extra,
                 ..Dispatch::default()
             });
         }
@@ -411,6 +419,7 @@ fn apply(replayed: &mut Replayed, record: Record, line: usize) -> Result<(), Str
                 .ok_or_else(|| {
                     format!("journal line {line}: dispatch {dispatch_id:?} never started")
                 })?;
+            dispatch.extra.extend(record.extra);
             dispatch.status = status;
             dispatch.session_id = record.session_id;
             dispatch.turn_id = record.turn_id;

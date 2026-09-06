@@ -33,6 +33,9 @@ use jinn_session::{SessionRecord, SessionSpec, TurnStatus};
 
 use crate::{DispatchSpec, DispatchStatus, TodoRecord};
 
+/// Complete UTF-8 prompt budget, including captured context.
+pub const PROMPT_BYTES: usize = 32 * 1024;
+
 /// The reason a dispatch whose session vanished carries.
 pub const LOST_SESSION_REASON: &str =
     "the session this dispatch was driving is no longer readable, so how far it got is not \
@@ -100,6 +103,30 @@ pub fn brief(todo: &TodoRecord) -> String {
         brief.push_str("\n\nAcceptance: ");
         brief.push_str(todo.acceptance.trim());
     }
+    let mut comments: Vec<_> = todo.comments.iter().collect();
+    comments.sort_by_key(|comment| comment.seq);
+    for comment in comments {
+        brief.push_str(&format!(
+            "\n\nContext {}: {}",
+            comment.seq + 1,
+            comment.body
+        ));
+    }
+    for change in &todo.history {
+        if let Some(note) = change
+            .note
+            .as_deref()
+            .filter(|note| !note.trim().is_empty())
+        {
+            brief.push_str(&format!(
+                "\n\nDecision note {} ({} -> {}): {}",
+                change.seq + 1,
+                change.from.tag(),
+                change.to.tag(),
+                note
+            ));
+        }
+    }
     brief
 }
 
@@ -148,6 +175,51 @@ mod tests {
             }],
             ..SessionRecord::default()
         }
+    }
+
+    #[test]
+    fn the_next_task_includes_recorded_needs_work_feedback() {
+        let todo = TodoRecord {
+            history: vec![crate::StatusChange {
+                from: crate::Status::InReview,
+                to: crate::Status::Executing,
+                note: Some("Use a shorter opening".into()),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        assert!(brief(&todo).contains("Use a shorter opening"));
+    }
+
+    #[test]
+    fn todo_context_is_included_in_sequence_order() {
+        let todo = TodoRecord {
+            title: "Draft an update".into(),
+            acceptance: "Include the deadline".into(),
+            comments: vec![
+                crate::Comment {
+                    seq: 1,
+                    body: "Deadline: Friday".into(),
+                    ..Default::default()
+                },
+                crate::Comment {
+                    seq: 0,
+                    body: "Audience: project team".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let sent = send_request(&DispatchSpec::default(), "s", &todo);
+        let prompt = sent["message"].as_str().unwrap();
+        assert!(
+            prompt.contains("Deadline: Friday"),
+            "context omitted: {prompt}"
+        );
+        assert!(
+            prompt.find("Audience: project team").unwrap()
+                < prompt.find("Deadline: Friday").unwrap()
+        );
     }
 
     #[test]

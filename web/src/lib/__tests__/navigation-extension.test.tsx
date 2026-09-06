@@ -17,8 +17,8 @@ it("uses the daemon's arrangement for both navigation surfaces", async () => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const wrapper = ({children}: {children: ReactNode}) => <QueryClientProvider client={client}>{children}</QueryClientProvider>
   const {result} = renderHook(() => useProvidedNavigation(false), {wrapper})
-  await waitFor(() => expect(result.current.items.map(x => x.label)).toEqual(["My tools", "Settings", "Chat"]))
-  expect(result.current.mobileItems.map(x => x.label)).toEqual(["My tools", "Settings", "Chat"])
+  await waitFor(() => expect(result.current.items.map(x => x.label)).toEqual(["My tools", "Settings", "Todos", "Chat"]))
+  expect(result.current.mobileItems.map(x => x.label)).toEqual(["My tools", "Settings", "Todos", "Chat"])
 })
 
 it("rejects a late response that started before an administration", async () => {

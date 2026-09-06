@@ -147,11 +147,18 @@ pub struct Comment {
     pub extra: Extensions,
 }
 
+fn zero_revision(revision: &u64) -> bool {
+    *revision == 0
+}
+
 /// One Todo's record: what `get`, `update`, `comment` and `dispatch`
 /// answer.
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub struct TodoRecord {
+    /// Durable mutation order, including refusals, dispatch endings and recovery.
+    #[serde(default, skip_serializing_if = "zero_revision")]
+    pub revision: u64,
     #[serde(default)]
     pub api_version: String,
     pub todo_id: String,

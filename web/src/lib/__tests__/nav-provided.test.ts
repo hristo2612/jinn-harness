@@ -31,9 +31,9 @@ describe("providedNavigationFor at the shipped route table", () => {
     expect(PLUGINS_NAV_ITEM).toMatchObject({ href: "/settings/plugins", label: "Plugins" })
   })
 
-  it("provides Chat, Settings and Plugins", () => {
+  it("provides Chat, Todos, Settings and Plugins", () => {
     expect(APP_ROUTES.some((route) => route.path === "/" && route.id === "chat")).toBe(true)
-    expect(providedHrefs(APP_ROUTES)).toEqual(["/", "/settings", "/settings/plugins"])
+    expect(providedHrefs(APP_ROUTES)).toEqual(["/", "/todos", "/settings", "/settings/plugins"])
   })
 
   it("names the reason an absent destination shows", () => {
@@ -44,7 +44,7 @@ describe("providedNavigationFor at the shipped route table", () => {
     const mobile = providedNavigationFor(false).mobileItems
     expect(mobile.map((item) => [item.href, item.provided])).toEqual([
       ["/", true],
-      ["/todos", false],
+      ["/todos", true],
       ["/workflow", false],
       ["/settings", true],
       ["/settings/plugins", true],
@@ -54,23 +54,23 @@ describe("providedNavigationFor at the shipped route table", () => {
 
 describe("providedNavigationFor derives from the table it is given (the mutant: a hardcoded list goes red here)", () => {
   it("provides one more destination when the table renders one more surface", () => {
-    const withTodos: AppRouteDescriptor[] = [
+    const withWorkflows: AppRouteDescriptor[] = [
       ...APP_ROUTES,
-      { id: "todos", path: "/todos", availability: "always", surface: "todos" },
+      { id: "workflow", path: "/workflow", availability: "always", surface: "workflow" },
     ]
-    expect(providedHrefs(withTodos)).toEqual(["/", "/todos", "/settings", "/settings/plugins"])
+    expect(providedHrefs(withWorkflows)).toEqual(["/", "/todos", "/workflow", "/settings", "/settings/plugins"])
   })
 
   it("keeps Plugins listed but not provided when the table does not render it", () => {
     const withoutPlugins = APP_ROUTES.filter((route) => route.id !== "settings-plugins")
     const items = providedNavigationFor(false, withoutPlugins).items
     expect(items.find((item) => item.href === "/settings/plugins")?.provided).toBe(false)
-    expect(providedHrefs(withoutPlugins)).toEqual(["/", "/settings"])
+    expect(providedHrefs(withoutPlugins)).toEqual(["/", "/todos", "/settings"])
   })
 
   it("never provides a surface through the plugin splat", () => {
     expect(APP_ROUTES.some((route) => route.path === "/*")).toBe(true)
-    expect(providedHrefs(APP_ROUTES)).not.toContain("/todos")
+    expect(providedHrefs(APP_ROUTES)).not.toContain("/workflow")
   })
 
   it("gives the verbatim mobile bar back for a table that renders More", () => {
@@ -81,6 +81,6 @@ describe("providedNavigationFor derives from the table it is given (the mutant: 
 
   it("treats a contributed row as provided by the plugin that contributed it", () => {
     disposers.push(contributions.register({ id: "inbox-demo:nav", area: AREAS.sidebarNav, data: { href: "/inbox-demo", label: "Inbox Demo" } }, "plugin:inbox-demo"))
-    expect(providedHrefs(APP_ROUTES)).toEqual(["/", "/settings", "/settings/plugins", "/inbox-demo"])
+    expect(providedHrefs(APP_ROUTES)).toEqual(["/", "/todos", "/settings", "/settings/plugins", "/inbox-demo"])
   })
 })
