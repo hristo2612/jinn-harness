@@ -463,3 +463,32 @@ fn a_reserved_id_from_another_store_moves_nothing() {
     sessions.reserve("not-a-number");
     assert_eq!(sessions.create(spec("echo"), 10).session_id, "default-1");
 }
+
+#[test]
+fn a_recovery_snapshot_contains_the_same_partial_answer_as_its_event() {
+    let mut sessions = Sessions::new("chat");
+    let id = sessions.create(spec("codex"), 1).session_id;
+    let turn = sessions.send(&id, "hello", 2).unwrap();
+    let event = sessions.record_event(
+        &id,
+        EventKind::Delta {
+            turn_id: turn.turn_id,
+            text: "A real prefix".into(),
+        },
+    );
+    let snapshot = serde_json::to_value(sessions.record(&id).unwrap()).unwrap();
+    assert_eq!(snapshot["log"][0]["answer"], "A real prefix");
+    assert_eq!(snapshot["event-after"], event.seq);
+}
+
+#[test]
+fn opted_in_context_overflow_is_refused_before_a_turn_exists() {
+    let mut sessions = Sessions::new("chat");
+    let spec: SessionSpec = serde_json::from_value(
+        serde_json::json!({"engine":{"engine":"codex"},"transcript-context":true}),
+    )
+    .unwrap();
+    let id = sessions.create(spec, 1).session_id;
+    assert!(sessions.send(&id, &"x".repeat(32 * 1024 + 1), 2).is_err());
+    assert_eq!(sessions.record(&id).unwrap().turns, 0);
+}

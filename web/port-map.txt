@@ -433,3 +433,19 @@ new	-	src/routes/settings/plugins/__tests__/navigation-admin.test.tsx	16
 new	-	src/routes/settings/plugins/__tests__/navigation-inspection.test.tsx	16
 new	-	src/routes/settings/__tests__/notification-order.test.tsx	13
 new	-	src/routes/settings/use-config-load.ts	13
+
+# UI-6a text Chat: bounded adaptations in docs/plans/ui-malleability-arc.md §UI-6.
+# Selected reference fd46e96ac5174a17fd1cf8251cda82ecf2b45a3f; gate base retained.
+adapted	packages/web/src/components/chat/message-markdown.tsx	src/components/chat/message-markdown.tsx	UI-6a
+new	-	src/components/chat/text-code-block.tsx
+new	-	src/components/chat/text-transcript.tsx
+new	-	src/hooks/__tests__/use-chat-session.test.tsx
+verbatim	packages/web/src/hooks/stick-geometry.ts	src/hooks/stick-geometry.ts
+new	-	src/hooks/use-chat-session.ts
+new	-	src/lib/__tests__/chat-events.test.ts
+new	-	src/lib/api-chat.ts
+new	-	src/lib/chat-events.ts
+verbatim	packages/web/src/lib/scroll-anchor.ts	src/lib/scroll-anchor.ts
+adapted	packages/web/src/routes/chat/page.tsx	src/routes/chat/page.tsx	UI-6a
+new	-	src/lib/__tests__/api-chat.test.ts
+new	-	src/components/chat/__tests__/text-chat.test.tsx

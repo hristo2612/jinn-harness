@@ -31,7 +31,7 @@ fn build_provider(artifacts: &Path, bundle_dir: &Path, name: &str) -> String {
     hash
 }
 
-fn kit(root: &Path, port: u16, every_ms: u64, tick_ms: u64) {
+fn kit(root: &Path, port: u16, every_ms: u64, tick_ms: u64, chat: Option<(&str, &str)>) {
     let artifacts = root.join("artifacts");
     let out = build_web();
     let files = archive(&out);
@@ -77,12 +77,43 @@ fn kit(root: &Path, port: u16, every_ms: u64, tick_ms: u64) {
         Some(GREEN_BUDGET),
     ));
 
+    if let Some((command, codex_home)) = chat {
+        let command = std::fs::canonicalize(command).expect("Codex executable exists");
+        let codex_home = std::fs::canonicalize(codex_home).expect("dedicated Codex home exists");
+        let home = root.join("chat-home");
+        std::fs::create_dir_all(home.join("workspace")).expect("isolated chat workspace");
+        let home = std::fs::canonicalize(home).expect("chat home exists");
+        let engine = build(&artifacts, "engines", "jinn-engine-codex");
+        let sessions = build(&artifacts, "sessions", "jinn-session-fs");
+        entries.push(engine_kit::provider_entry(&engine_kit::Provider {
+            id: "chat-codex", package: "engines/jinn-engine-codex", hash: &engine,
+            engine: "codex", command: Some(&command.to_string_lossy()), also_exec: &[],
+            env: &["HOME", "CODEX_HOME", "PATH"], models: &["gpt-6-astra"],
+            data: serde_json::json!({"text-chat":{"home":home,"codex-home":codex_home,"cwd":home.join("workspace")}}),
+        }));
+        entries.push(session_kit::store_entry(&session_kit::Store {
+            id: "chat-sessions",
+            package: session_kit::FS_PACKAGE,
+            hash: &sessions,
+            store: "chat",
+            dir: Some("chat-history"),
+            engines: &["codex"],
+            poll_ms: 250,
+        }));
+    }
     let catalogs = [MAIN_CATALOG, PARKED_CATALOG];
     for entry in &mut entries {
         if entry["id"] == PROVIDER_ID {
             let grants = entry["config"]["grants"].as_array_mut().expect("grants");
             grants.extend(api_catalog_grants(&catalogs));
             entry["config"]["data"]["catalogs"] = serde_json::json!(catalogs);
+            if chat.is_some() {
+                entry["config"]["grants"]
+                    .as_array_mut()
+                    .expect("grants")
+                    .extend(session_kit::api_store_grants(&["chat"]));
+                entry["config"]["data"]["stores"] = serde_json::json!(["chat"]);
+            }
             mount_bundle_on(entry);
             mount_moments_on(entry);
         }
@@ -122,7 +153,7 @@ fn variant(root: &Path, name: &str, marker: Option<&str>, corrupt: bool) {
 
 fn usage() -> ! {
     eprintln!(
-        "usage: ui-kit kit <root> --port N [--every-ms N] [--tick-ms N]\n       ui-kit variant <root> --name NAME [--marker TEXT] [--corrupt]"
+        "usage: ui-kit kit <root> --port N [--every-ms N] [--tick-ms N] [--codex-bin PATH --codex-home PATH]\n       ui-kit variant <root> --name NAME [--marker TEXT] [--corrupt]"
     );
     std::process::exit(2);
 }
@@ -140,11 +171,20 @@ fn main() {
             let port = flag(&args, "--port", usage)
                 .and_then(|port| u16::try_from(port).ok())
                 .unwrap_or_else(|| usage());
+            let chat = match (
+                text_flag(&args, "--codex-bin"),
+                text_flag(&args, "--codex-home"),
+            ) {
+                (Some(command), Some(home)) => Some((command, home)),
+                (None, None) => None,
+                _ => usage(),
+            };
             kit(
                 &root,
                 port,
                 flag(&args, "--every-ms", usage).unwrap_or(900_000),
                 flag(&args, "--tick-ms", usage).unwrap_or(jinn_cron::DEFAULT_TICK_MS),
+                chat,
             );
         }
         Some("variant") => variant(

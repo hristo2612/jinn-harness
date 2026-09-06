@@ -94,10 +94,6 @@
     "src/components/chat/media-preview.tsx": [
       "max-lines-per-function"
     ],
-    "src/components/chat/message-markdown.tsx": [
-      "complexity",
-      "max-lines-per-function"
-    ],
     "src/components/chat/message-media.tsx": [
       "max-lines-per-function"
     ],
@@ -283,11 +279,6 @@
     "src/routes/auth-provider.tsx": [
       "complexity",
       "max-depth",
-      "max-lines-per-function"
-    ],
-    "src/routes/chat/page.tsx": [
-      "@typescript-eslint/no-floating-promises",
-      "complexity",
       "max-lines-per-function"
     ],
     "src/routes/cron/detail.tsx": [

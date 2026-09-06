@@ -30,3 +30,6 @@ jinn-ui = { path = "../../plugins/ui/jinn-ui" }
 plugin-kit = { path = "../plugin-kit" }
 serde_json = "1.0"
 sha2 = "0.10"
+
+engine-kit = { path = "../engine-kit" }
+session-kit = { path = "../session-kit" }

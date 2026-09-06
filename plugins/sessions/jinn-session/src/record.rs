@@ -108,6 +108,9 @@ pub struct SessionRecord {
     /// The turns themselves, oldest first.
     #[serde(default)]
     pub log: Vec<Turn>,
+    /// Event watermark captured atomically with the answer. Absent after replay.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub event_after: Option<u64>,
     #[serde(default)]
     pub created_ms: u64,
     #[serde(default)]

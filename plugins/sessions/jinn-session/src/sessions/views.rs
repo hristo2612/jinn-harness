@@ -23,6 +23,7 @@ impl Sessions {
             status: status_of(live),
             turns: live.turns.len() as u64,
             log: live.turns.clone(),
+            event_after: live.events.last().map(|event| event.seq),
             created_ms: live.created_ms,
             metadata: live.spec.metadata.clone(),
             extra: Extensions::new(),
@@ -101,7 +102,19 @@ impl Sessions {
                 turns: live.turns.len() as u64,
                 owner: live.spec.attribution.owner.clone(),
                 created_ms: live.created_ms,
-                extra: Extensions::new(),
+                extra: [
+                    (
+                        "title".into(),
+                        serde_json::json!(live
+                            .turns
+                            .first()
+                            .map(|turn| turn.message.chars().take(80).collect::<String>())
+                            .unwrap_or_else(|| "New chat".into())),
+                    ),
+                    ("metadata".into(), serde_json::json!(live.spec.metadata)),
+                ]
+                .into_iter()
+                .collect(),
             })
             .collect()
     }

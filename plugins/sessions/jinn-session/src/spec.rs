@@ -49,6 +49,9 @@ pub struct SessionSpec {
     /// policy admits no tool.
     #[serde(default)]
     pub tools: ToolPolicy,
+    /// Opt in to bounded completed-turn context for text Chat.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transcript_context: Option<bool>,
     #[serde(default)]
     pub attribution: Attribution,
     /// Operator metadata, carried verbatim and never interpreted.

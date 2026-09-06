@@ -85,15 +85,16 @@ function renderAt(path: string) {
 }
 
 describe("MobileTabBar at the shipped route table", () => {
-  it("carries Chat, Todos and Workflows disabled and Settings, Plugins as links; no More", () => {
+  it("carries Chat, Settings and Plugins as links; unsupported tabs stay disabled", () => {
     renderAt("/settings")
     expect(screen.getAllByRole("link").map((tab) => tab.getAttribute("aria-label"))).toEqual(["Chat", "Todos", "Workflows", "Settings", "Plugins"])
-    for (const name of ["Chat", "Todos", "Workflows"]) {
+    for (const name of ["Todos", "Workflows"]) {
       const tab = screen.getByRole("link", { name })
       expect(tab.getAttribute("aria-disabled")).toBe("true")
       expect(tab.getAttribute("href")).toBeNull()
       expect(tab.getAttribute("title")).toBe(NOT_IN_PROFILE)
     }
+    expect(screen.getByRole("link", { name: "Chat" }).getAttribute("href")).toBe("/")
     expect(screen.getByRole("link", { name: "Plugins" }).getAttribute("href")).toBe("/settings/plugins")
     expect(screen.queryByRole("link", { name: "More" })).toBeNull()
   })

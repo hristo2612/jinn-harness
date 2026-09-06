@@ -56,7 +56,7 @@ use jinn_engine::{
     Event, Extensions, RunEvent, RunRequest, Runs, API_VERSION, EVENT_TOPIC, OP_CANCEL,
     OP_DESCRIBE, OP_RUN, OP_RUN_GET,
 };
-use jinn_engine_codex_wire::{argv, Decoder};
+use jinn_engine_codex_wire::{app_server::AppServer, argv, Decoder};
 use serde::Deserialize;
 
 wit_bindgen::generate!({
@@ -101,6 +101,17 @@ struct Config {
     poll_ms: u64,
     #[serde(default = "default_keep_runs")]
     keep_runs: usize,
+    #[serde(default)]
+    text_chat: Option<TextChat>,
+}
+
+/// Dedicated authenticated homes are profile input, never the daemon's home.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+struct TextChat {
+    home: String,
+    codex_home: String,
+    cwd: String,
 }
 
 fn default_poll_ms() -> u64 {
@@ -117,6 +128,8 @@ static RUNS: Mutex<Option<Runs>> = Mutex::new(None);
 static CHILDREN: Mutex<BTreeMap<String, u64>> = Mutex::new(BTreeMap::new());
 /// run id → its stream decoder.
 static DECODERS: Mutex<BTreeMap<String, Decoder>> = Mutex::new(BTreeMap::new());
+static APP_SERVERS: Mutex<BTreeMap<String, AppServer>> = Mutex::new(BTreeMap::new());
+static STOPPING: Mutex<BTreeMap<String, String>> = Mutex::new(BTreeMap::new());
 /// run id → the prompt bytes stdin has not accepted yet. `write-stdin` is
 /// non-blocking and answers a COUNT, so a prompt larger than the pipe's
 /// buffer is re-offered on later wakes rather than spun on here.
@@ -151,7 +164,6 @@ fn record_and_emit(run_id: &str, event: Event) {
         publish(Some(record));
     }
 }
-
 
 /// Bus records minted inside a `run` call and held until this provider's
 /// OWN fiber wakes. A provider must never emit from inside a handler the
@@ -204,6 +216,8 @@ fn fail(run_id: &str, code: ErrorCode, message: String) -> Answer {
 fn forget(run_id: &str) {
     CHILDREN.lock().unwrap().remove(run_id);
     DECODERS.lock().unwrap().remove(run_id);
+    APP_SERVERS.lock().unwrap().remove(run_id);
+    STOPPING.lock().unwrap().remove(run_id);
     PENDING.lock().unwrap().remove(run_id);
 }
 
@@ -240,6 +254,9 @@ fn pump_stdin(run_id: &str, handle: u64) -> Result<(), String> {
     }
     pending.remove(run_id);
     drop(pending);
+    if APP_SERVERS.lock().unwrap().contains_key(run_id) {
+        return Ok(());
+    }
     process::close_stdin(handle).map_err(|error| format!("close stdin: {error:?}"))
 }
 
@@ -261,6 +278,18 @@ fn drain(run_id: &str, handle: u64, which: ChildStream) -> (Vec<Event>, u64) {
                 bytes += data.len() as u64;
                 if let Some(decoder) = DECODERS.lock().unwrap().get_mut(run_id) {
                     events.extend(decoder.feed(&data));
+                }
+                if let Some(wire) = APP_SERVERS.lock().unwrap().get_mut(run_id) {
+                    events.extend(wire.feed(&data));
+                    let outgoing = wire.take_outgoing();
+                    if !outgoing.is_empty() {
+                        PENDING
+                            .lock()
+                            .unwrap()
+                            .entry(run_id.to_owned())
+                            .or_default()
+                            .extend(outgoing);
+                    }
                 }
             }
             Ok(ReadResult::WouldBlock | ReadResult::Eof) | Err(_) => break,
@@ -288,11 +317,28 @@ fn drain_and_account(run_id: &str, handle: u64) -> bool {
 
 /// Kills a live child and records why it ended.
 fn end_child(run_id: &str, handle: u64, reason: &str) {
+    if APP_SERVERS.lock().unwrap().contains_key(run_id) {
+        match process::kill(handle, Signal::Kill) {
+            Ok(()) => {
+                STOPPING
+                    .lock()
+                    .unwrap()
+                    .insert(run_id.to_owned(), reason.to_owned());
+            }
+            Err(error) => {
+                let record = RUNS
+                    .lock()
+                    .unwrap()
+                    .as_mut()
+                    .and_then(|runs| runs.fail(run_id, format!("stop unconfirmed: {error:?}")));
+                publish(record);
+                forget(run_id);
+            }
+        }
+        return;
+    }
     let _ = process::kill(handle, Signal::Terminate);
-    record_and_emit(
-        run_id,
-        Event::cancelled(reason.to_owned()),
-    );
+    record_and_emit(run_id, Event::cancelled(reason.to_owned()));
     forget(run_id);
 }
 
@@ -300,7 +346,21 @@ fn end_child(run_id: &str, handle: u64, reason: &str) {
 fn end_exited(run_id: &str, handle: u64, status: i32) {
     // Whatever the child wrote between the last drain and its exit.
     drain_and_account(run_id, handle);
-    let (flushed, usage, error) = {
+    let stopping = STOPPING.lock().unwrap().remove(run_id);
+    if let Some(reason) = stopping {
+        record_and_emit(run_id, Event::cancelled(reason));
+        forget(run_id);
+        return;
+    }
+    let app_result = APP_SERVERS.lock().unwrap().get_mut(run_id).map(|wire| {
+        let flushed = wire.flush();
+        (
+            flushed,
+            wire.usage(),
+            (!wire.errors().is_empty()).then(|| wire.errors().join("; ")),
+        )
+    });
+    let (flushed, usage, error) = app_result.unwrap_or_else(|| {
         let mut decoders = DECODERS.lock().unwrap();
         match decoders.get_mut(run_id) {
             Some(decoder) => {
@@ -313,15 +373,12 @@ fn end_exited(run_id: &str, handle: u64, status: i32) {
             }
             None => (Vec::new(), jinn_engine::Usage::default(), None),
         }
-    };
+    });
     for event in flushed {
         record_and_emit(run_id, event);
     }
     let truncated = record_of(run_id).is_some_and(|record| record.truncated);
-    record_and_emit(
-        run_id,
-        Event::exited(status, usage, truncated, error),
-    );
+    record_and_emit(run_id, Event::exited(status, usage, truncated, error));
     forget(run_id);
 }
 
@@ -346,6 +403,20 @@ fn poll(now_ms: u64, config: &Config) -> Result<(), GuestFault> {
             // `run` call already answered.
             continue;
         };
+        if STOPPING.lock().unwrap().contains_key(&run_id) {
+            match process::wait(handle, 0) {
+                Ok(WaitResult::Exited(status)) => end_exited(&run_id, handle, status),
+                Ok(WaitResult::Running) => {}
+                Err(error) => {
+                    let _ = fail(
+                        &run_id,
+                        ErrorCode::Failed,
+                        format!("stop unconfirmed: {error:?}"),
+                    );
+                }
+            }
+            continue;
+        }
         if let Err(detail) = pump_stdin(&run_id, handle) {
             end_child(&run_id, handle, &detail);
             continue;
@@ -353,6 +424,18 @@ fn poll(now_ms: u64, config: &Config) -> Result<(), GuestFault> {
         if drain_and_account(&run_id, handle) {
             end_child(&run_id, handle, "budget");
             continue;
+        }
+        if APP_SERVERS
+            .lock()
+            .unwrap()
+            .get(&run_id)
+            .is_some_and(AppServer::terminal)
+        {
+            if let Err(detail) = pump_stdin(&run_id, handle) {
+                end_child(&run_id, handle, &detail);
+                continue;
+            }
+            let _ = process::close_stdin(handle);
         }
         let over = RUNS
             .lock()
@@ -438,12 +521,11 @@ fn op_describe(config: &Config) -> Answer {
         models: config.models.clone(),
         default_model: config.default_model.clone(),
         capabilities: Capabilities {
-            // Codex reports ONE completed `agent_message`, never token
-            // deltas: this provider emits no `delta` and says so.
-            streaming: false,
+            // Exec reports completed messages; app-server reports actual deltas.
+            streaming: config.text_chat.is_some(),
             // `item.started` / `item.completed` of a tool item — captured
             // from a live run, not assumed.
-            tool_calls: true,
+            tool_calls: config.text_chat.is_none(),
             cancel: true,
             usage: true,
             external_cli: true,
@@ -472,6 +554,26 @@ fn op_run(config: &Config, payload: &[u8]) -> Answer {
             ),
         ));
     }
+    if config.text_chat.is_some()
+        && (request.tools.mode != jinn_engine::ToolMode::Denied || !request.secrets.is_empty())
+    {
+        return Answer::error(EngineError::new(
+            ErrorCode::Refused,
+            "Text Chat permits no tools or environment overrides",
+        ));
+    }
+    if config.text_chat.is_some()
+        && RUNS
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|runs| !runs.live_ids().is_empty())
+    {
+        return Answer::error(EngineError::new(
+            ErrorCode::Refused,
+            "A text Chat reply is already running. Wait for it or stop it first.",
+        ));
+    }
     let now_ms = match clock::now() {
         Ok(now_ms) => now_ms,
         Err(error) => {
@@ -492,7 +594,7 @@ fn op_run(config: &Config, payload: &[u8]) -> Answer {
     };
     let run_id = accepted.run_id.clone();
 
-    let env = match resolve_secrets(&request) {
+    let mut env = match resolve_secrets(&request) {
         Ok(env) => env,
         Err((code, message)) => return fail(&run_id, code, message),
     };
@@ -500,9 +602,23 @@ fn op_run(config: &Config, payload: &[u8]) -> Answer {
         .model
         .clone()
         .or_else(|| config.default_model.clone());
-    let args = argv(model.as_deref(), &request.tools);
+    let (args, cwd) = if let Some(chat) = &config.text_chat {
+        env.extend([
+            ("HOME".into(), chat.home.clone()),
+            ("CODEX_HOME".into(), chat.codex_home.clone()),
+        ]);
+        (
+            jinn_engine_codex_wire::app_server::argv(),
+            Some(chat.cwd.as_str()),
+        )
+    } else {
+        (
+            argv(model.as_deref(), &request.tools),
+            request.cwd.as_deref(),
+        )
+    };
 
-    let handle = match process::spawn(&config.command, &args, request.cwd.as_deref(), &env) {
+    let handle = match process::spawn(&config.command, &args, cwd, &env) {
         Ok(handle) => handle,
         // The kernel refused the executable, the cwd, or the env policy.
         Err(ProcessError::Denied(detail)) => {
@@ -524,14 +640,29 @@ fn op_run(config: &Config, payload: &[u8]) -> Answer {
     };
 
     CHILDREN.lock().unwrap().insert(run_id.clone(), handle);
-    DECODERS
-        .lock()
-        .unwrap()
-        .insert(run_id.clone(), Decoder::new());
-    PENDING
-        .lock()
-        .unwrap()
-        .insert(run_id.clone(), request.prompt.into_bytes());
+    let initial = if let Some(chat) = &config.text_chat {
+        let effort = serde_json::to_value(request.effort.unwrap_or(jinn_engine::Effort::High))
+            .expect("effort encodes")
+            .as_str()
+            .expect("effort string")
+            .to_owned();
+        let mut wire = AppServer::new(
+            request.prompt,
+            model.clone().unwrap_or_default(),
+            effort,
+            chat.cwd.clone(),
+        );
+        let initial = wire.take_outgoing();
+        APP_SERVERS.lock().unwrap().insert(run_id.clone(), wire);
+        initial
+    } else {
+        DECODERS
+            .lock()
+            .unwrap()
+            .insert(run_id.clone(), Decoder::new());
+        request.prompt.into_bytes()
+    };
+    PENDING.lock().unwrap().insert(run_id.clone(), initial);
     if let Err(detail) = pump_stdin(&run_id, handle) {
         let _ = process::kill(handle, Signal::Terminate);
         return fail(&run_id, ErrorCode::Failed, detail);
@@ -588,10 +719,7 @@ fn op_cancel(payload: &[u8]) -> Answer {
         match handle {
             Some(handle) => end_child(&run_id, handle, "cancel"),
             None => {
-                record_and_emit(
-                    &run_id,
-                    Event::cancelled("cancel".to_owned()),
-                );
+                record_and_emit(&run_id, Event::cancelled("cancel".to_owned()));
                 forget(&run_id);
             }
         }
@@ -615,6 +743,8 @@ impl Guest for Provider {
         *RUNS.lock().unwrap() = Some(Runs::new(&config.engine));
         CHILDREN.lock().unwrap().clear();
         DECODERS.lock().unwrap().clear();
+        APP_SERVERS.lock().unwrap().clear();
+        STOPPING.lock().unwrap().clear();
         PENDING.lock().unwrap().clear();
         *CONFIG.lock().unwrap() = Some(config);
         effects::register("jinn-engine-codex on duty", EFFECT_TOKEN)

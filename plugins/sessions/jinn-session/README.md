@@ -151,3 +151,20 @@ records live.
 `stores_in` turns `(entry-id, provisions)` pairs — as `jinn:introspect`
 reports them — into the stores a composition holds: the KERNEL's
 knowledge, not a table a consumer keeps.
+
+## Opt-in text Chat context and recovery snapshots
+
+`SessionSpec.transcript-context: true` composes completed user/assistant pairs
+and the new user message for each engine run. The stored message stays unchanged.
+The combined UTF-8 prompt is capped at 32 KiB; overflow refuses before a new turn
+is minted, with an instruction to start a new chat. Omitted/false preserves the
+existing single-message engine request. Cancelled, failed and interrupted turns
+are visible history and are excluded from completed-turn context.
+
+A live record includes optional `event-after`, captured under the same registry
+lock as its answer prefixes. Readers can resume strictly after that watermark.
+Running prefixes live in memory; confirmed cancellation writes the retained
+prefix as its terminal answer. A restart still recovers a nonterminal journal
+turn as interrupted, with no claim that partial text was durably saved.
+List summaries add title and creation metadata for saved-chat discovery and
+readback of uncertain creation, without changing existing fields.

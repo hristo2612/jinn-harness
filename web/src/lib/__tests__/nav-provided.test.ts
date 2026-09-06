@@ -31,9 +31,9 @@ describe("providedNavigationFor at the shipped route table", () => {
     expect(PLUGINS_NAV_ITEM).toMatchObject({ href: "/settings/plugins", label: "Plugins" })
   })
 
-  it("marks exactly Settings and Plugins provided; a redirect at / never provides Chat", () => {
-    expect(APP_ROUTES.some((route) => route.path === "/" && route.id === "root-redirect")).toBe(true)
-    expect(providedHrefs(APP_ROUTES)).toEqual(["/settings", "/settings/plugins"])
+  it("provides Chat, Settings and Plugins", () => {
+    expect(APP_ROUTES.some((route) => route.path === "/" && route.id === "chat")).toBe(true)
+    expect(providedHrefs(APP_ROUTES)).toEqual(["/", "/settings", "/settings/plugins"])
   })
 
   it("names the reason an absent destination shows", () => {
@@ -43,7 +43,7 @@ describe("providedNavigationFor at the shipped route table", () => {
   it("puts the provided overflow surfaces in the More slot on mobile, absent primaries disabled", () => {
     const mobile = providedNavigationFor(false).mobileItems
     expect(mobile.map((item) => [item.href, item.provided])).toEqual([
-      ["/", false],
+      ["/", true],
       ["/todos", false],
       ["/workflow", false],
       ["/settings", true],
@@ -58,14 +58,14 @@ describe("providedNavigationFor derives from the table it is given (the mutant: 
       ...APP_ROUTES,
       { id: "todos", path: "/todos", availability: "always", surface: "todos" },
     ]
-    expect(providedHrefs(withTodos)).toEqual(["/todos", "/settings", "/settings/plugins"])
+    expect(providedHrefs(withTodos)).toEqual(["/", "/todos", "/settings", "/settings/plugins"])
   })
 
   it("keeps Plugins listed but not provided when the table does not render it", () => {
     const withoutPlugins = APP_ROUTES.filter((route) => route.id !== "settings-plugins")
     const items = providedNavigationFor(false, withoutPlugins).items
     expect(items.find((item) => item.href === "/settings/plugins")?.provided).toBe(false)
-    expect(providedHrefs(withoutPlugins)).toEqual(["/settings"])
+    expect(providedHrefs(withoutPlugins)).toEqual(["/", "/settings"])
   })
 
   it("never provides a surface through the plugin splat", () => {
@@ -81,6 +81,6 @@ describe("providedNavigationFor derives from the table it is given (the mutant: 
 
   it("treats a contributed row as provided by the plugin that contributed it", () => {
     disposers.push(contributions.register({ id: "inbox-demo:nav", area: AREAS.sidebarNav, data: { href: "/inbox-demo", label: "Inbox Demo" } }, "plugin:inbox-demo"))
-    expect(providedHrefs(APP_ROUTES)).toEqual(["/settings", "/settings/plugins", "/inbox-demo"])
+    expect(providedHrefs(APP_ROUTES)).toEqual(["/", "/settings", "/settings/plugins", "/inbox-demo"])
   })
 })
