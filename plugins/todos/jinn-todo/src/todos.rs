@@ -281,15 +281,14 @@ impl Todos {
         if request.expected_revision.is_none() && request.reviewed_dispatch.is_none() {
             return Ok(());
         }
-        if matches!(request.status, Status::InReview | Status::Done) {
-            if request.expected_revision.is_none()
+        if matches!(request.status, Status::InReview | Status::Done)
+            && (request.expected_revision.is_none()
                 || !live.dispatches.last().is_some_and(|dispatch| {
                     dispatch.status == DispatchStatus::Done
                         && Some(&dispatch.dispatch_id) == request.reviewed_dispatch.as_ref()
-                })
-            {
-                return Err(TodoError::new(ErrorCode::Refused, "Inspect the latest successful result at the current revision before submitting or accepting it."));
-            }
+                }))
+        {
+            return Err(TodoError::new(ErrorCode::Refused, "Inspect the latest successful result at the current revision before submitting or accepting it."));
         }
         Ok(())
     }
