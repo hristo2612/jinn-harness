@@ -1196,7 +1196,9 @@ fn conditional_ui_mutations_hold_the_same_revision_law_in_both_stores() {
         entry_mut(document, DEFAULT_ID)["config"]["grants"]
             .as_array_mut()
             .unwrap()
-            .retain(|grant| grant["contract"] != "jinn:session.default");
+            .retain(|grant| {
+                grant != "jinn:session.default" && grant["contract"] != "jinn:session.default"
+            });
     });
     daemon.eventually("the store with no session grant to answer", || {
         get(port, "/v1/todos/default").status == 200
