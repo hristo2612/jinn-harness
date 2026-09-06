@@ -151,6 +151,37 @@ mod tests {
     }
 
     #[test]
+    fn todo_context_is_included_in_sequence_order() {
+        let todo = TodoRecord {
+            title: "Draft an update".into(),
+            acceptance: "Include the deadline".into(),
+            comments: vec![
+                crate::Comment {
+                    seq: 1,
+                    body: "Deadline: Friday".into(),
+                    ..Default::default()
+                },
+                crate::Comment {
+                    seq: 0,
+                    body: "Audience: project team".into(),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        };
+        let sent = send_request(&DispatchSpec::default(), "s", &todo);
+        let prompt = sent["message"].as_str().unwrap();
+        assert!(
+            prompt.contains("Deadline: Friday"),
+            "context omitted: {prompt}"
+        );
+        assert!(
+            prompt.find("Audience: project team").unwrap()
+                < prompt.find("Deadline: Friday").unwrap()
+        );
+    }
+
+    #[test]
     fn a_turn_that_has_not_ended_ends_nothing() {
         assert!(ended(&record(TurnStatus::Running, None), "t-1").is_none());
         // A turn this dispatch does not own is not an ending either.

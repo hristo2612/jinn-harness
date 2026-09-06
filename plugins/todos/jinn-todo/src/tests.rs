@@ -848,3 +848,22 @@ fn a_reserved_id_from_another_store_moves_nothing() {
         "default-1"
     );
 }
+
+#[test]
+fn ui4a_oversized_prompt_is_refused_before_any_dispatch_change() {
+    let mut todos = crate::Todos::new("work");
+    let spec = crate::TodoSpec {
+        title: "bounded".into(),
+        body: "界".repeat(12000),
+        ..Default::default()
+    };
+    let created = todos.plan_create(&spec, 0).unwrap();
+    todos.commit_create(&created, spec, 0);
+    let before = todos.record(&created.todo_id).unwrap();
+    let result = todos.plan_dispatch(&created.todo_id, &crate::DispatchSpec::default(), None, 1);
+    assert!(
+        result.is_err(),
+        "oversized UTF-8 prompt must be refused before dispatch"
+    );
+    assert_eq!(todos.record(&created.todo_id).unwrap(), before);
+}
